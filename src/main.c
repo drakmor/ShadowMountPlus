@@ -104,6 +104,38 @@ struct UfsCache {
 };
 struct UfsCache ufs_cache[MAX_UFS_MOUNTS];
 
+static void copy_cstr(char *dst, size_t dst_size, const char *src) {
+  if (dst_size == 0)
+    return;
+  if (!src)
+    src = "";
+  snprintf(dst, dst_size, "%s", src);
+}
+
+static void cache_game_entry(const char *path, const char *title_id,
+                             const char *title_name) {
+  for (int k = 0; k < MAX_PENDING; k++) {
+    if (!cache[k].valid) {
+      copy_cstr(cache[k].path, sizeof(cache[k].path), path);
+      copy_cstr(cache[k].title_id, sizeof(cache[k].title_id), title_id);
+      copy_cstr(cache[k].title_name, sizeof(cache[k].title_name), title_name);
+      cache[k].valid = true;
+      return;
+    }
+  }
+}
+
+static void cache_ufs_mount(const char *path, unsigned md_unit) {
+  for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
+    if (!ufs_cache[k].valid) {
+      copy_cstr(ufs_cache[k].path, sizeof(ufs_cache[k].path), path);
+      ufs_cache[k].md_unit = md_unit;
+      ufs_cache[k].valid = true;
+      return;
+    }
+  }
+}
+
 // --- LOGGING ---
 void log_to_file(const char *fmt, va_list args) {
   mkdir(LOG_DIR, 0777);
@@ -123,10 +155,13 @@ void log_to_file(const char *fmt, va_list args) {
 }
 void log_debug(const char *fmt, ...) {
   va_list args;
+  va_list args_copy;
   va_start(args, fmt);
+  va_copy(args_copy, args);
   vprintf(fmt, args);
   printf("\n");
-  log_to_file(fmt, args);
+  log_to_file(fmt, args_copy);
+  va_end(args_copy);
   va_end(args);
 }
 
@@ -206,12 +241,14 @@ static int remount_system_ex(void) {
       IOVEC_ENTRY("ignoreacl"), IOVEC_ENTRY(NULL)};
   return nmount(iov, IOVEC_SIZE(iov), MNT_UPDATE);
 }
+
 static int mount_nullfs(const char *src, const char *dst) {
   struct iovec iov[] = {IOVEC_ENTRY("fstype"), IOVEC_ENTRY("nullfs"),
                         IOVEC_ENTRY("from"),   IOVEC_ENTRY(src),
                         IOVEC_ENTRY("fspath"), IOVEC_ENTRY(dst)};
   return nmount(iov, IOVEC_SIZE(iov), MNT_RDONLY);
 }
+
 static int copy_dir(const char *src, const char *dst) {
   mkdir(dst, 0777);
   DIR *d = opendir(src);
@@ -249,6 +286,7 @@ static int copy_dir(const char *src, const char *dst) {
   closedir(d);
   return 0;
 }
+
 int copy_file(const char *src, const char *dst) {
   char buf[8192];
   FILE *fs = fopen(src, "rb");
@@ -268,26 +306,53 @@ int copy_file(const char *src, const char *dst) {
 }
 
 // --- UFS2 IMAGE MOUNTING ---
-static void build_iovec(struct iovec **iov, int *iovlen, const char *name,
+static bool build_iovec(struct iovec **iov, int *iovlen, const char *name,
                         const void *val, size_t len) {
-  int i;
-  if (*iovlen < 0)
-    return;
-  i = *iovlen;
-  *iov = realloc(*iov, sizeof(**iov) * (i + 2));
-  if (*iov == NULL) {
-    *iovlen = -1;
-    return;
-  }
-  (*iov)[i].iov_base = strdup(name);
+  int i = *iovlen;
+  struct iovec *tmp = realloc(*iov, sizeof(**iov) * (i + 2));
+  if (!tmp)
+    return false;
+  *iov = tmp;
+
+  char *name_copy = strdup(name);
+  if (!name_copy)
+    return false;
+
+  (*iov)[i].iov_base = name_copy;
   (*iov)[i].iov_len = strlen(name) + 1;
   i++;
   (*iov)[i].iov_base = (void *)val;
-  if (len == (size_t)-1) {
+  if (len == (size_t)-1)
     len = val ? strlen((const char *)val) + 1 : 0;
-  }
   (*iov)[i].iov_len = (int)len;
-  *iovlen = ++i;
+  *iovlen = i + 1;
+  return true;
+}
+
+static void free_iovec(struct iovec *iov, int iovlen) {
+  if (!iov)
+    return;
+  for (int i = 0; i < iovlen; i += 2)
+    free(iov[i].iov_base);
+  free(iov);
+}
+
+static void detach_md_unit(unsigned md_unit) {
+  int mdctl = open("/dev/mdctl", O_RDWR);
+  if (mdctl < 0) {
+    log_debug("  [UFS] open /dev/mdctl for detach failed: %s", strerror(errno));
+    return;
+  }
+
+  struct md_ioctl mdio;
+  memset(&mdio, 0, sizeof(mdio));
+  mdio.md_version = MDIOVERSION;
+  mdio.md_unit = md_unit;
+  if (ioctl(mdctl, MDIOCDETACH, &mdio) != 0) {
+    log_debug("  [UFS] MDIOCDETACH /dev/md%u failed: %s", md_unit,
+              strerror(errno));
+  }
+  close(mdctl);
 }
 
 static bool is_ufs_image(const char *name) {
@@ -306,6 +371,34 @@ static void strip_extension(const char *filename, char *out, size_t out_size) {
   out[len] = '\0';
 }
 
+static void build_ufs_mount_point(const char *file_path, char *mount_point,
+                                  size_t mount_point_size) {
+  const char *filename = strrchr(file_path, '/');
+  filename = filename ? filename + 1 : file_path;
+  char mount_name[MAX_PATH];
+  strip_extension(filename, mount_name, sizeof(mount_name));
+  snprintf(mount_point, mount_point_size, "%s/%s", UFS_MOUNT_BASE, mount_name);
+}
+
+static void unmount_ufs_image(const char *file_path, unsigned md_unit) {
+  char mount_point[MAX_PATH];
+  build_ufs_mount_point(file_path, mount_point, sizeof(mount_point));
+
+  if (unmount(mount_point, 0) != 0) {
+    int unmount_err = errno;
+    if (unmount_err != ENOENT && unmount_err != EINVAL) {
+      if (unmount(mount_point, MNT_FORCE) != 0 && errno != ENOENT &&
+          errno != EINVAL) {
+        log_debug("  [UFS] unmount failed for %s: %s", mount_point,
+                  strerror(errno));
+      }
+    }
+  }
+
+  if (md_unit != 0)
+    detach_md_unit(md_unit);
+}
+
 static bool mount_ufs_image(const char *file_path) {
   // Check if already in UFS cache
   for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
@@ -313,15 +406,11 @@ static bool mount_ufs_image(const char *file_path) {
       return true;
   }
 
-  // Extract filename and strip extension for mount point name
+  // Extract filename for logs and mount point
   const char *filename = strrchr(file_path, '/');
   filename = filename ? filename + 1 : file_path;
-  char mount_name[MAX_PATH];
-  strip_extension(filename, mount_name, sizeof(mount_name));
-
   char mount_point[MAX_PATH];
-  snprintf(mount_point, sizeof(mount_point), "%s/%s", UFS_MOUNT_BASE,
-           mount_name);
+  build_ufs_mount_point(file_path, mount_point, sizeof(mount_point));
 
   // Check if already mounted (e.g. from previous run)
   struct stat mst;
@@ -341,14 +430,7 @@ static bool mount_ufs_image(const char *file_path) {
       if (count > 0) {
         log_debug("  [UFS] Already mounted: %s", mount_point);
         // Add to cache so we don't re-check
-        for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
-          if (!ufs_cache[k].valid) {
-            strncpy(ufs_cache[k].path, file_path, MAX_PATH);
-            ufs_cache[k].md_unit = 0;
-            ufs_cache[k].valid = true;
-            break;
-          }
-        }
+        cache_ufs_mount(file_path, 0);
         return true;
       }
     }
@@ -387,8 +469,8 @@ static bool mount_ufs_image(const char *file_path) {
   mdio.md_type = MD_VNODE;
   mdio.md_file = (char *)file_path;
   mdio.md_mediasize = st.st_size;
-  mdio.md_sectorsize = 4096; // was 512
-  mdio.md_options = MD_AUTOUNIT | MD_READONLY;
+  mdio.md_sectorsize = 512; // was 512
+  mdio.md_options = MD_AUTOUNIT | MD_READONLY | MD_ASYNC; 
 
   int ret = ioctl(mdctl, MDIOCATTACH, &mdio);
   if (ret != 0) {
@@ -408,13 +490,18 @@ static bool mount_ufs_image(const char *file_path) {
 
   struct iovec *iov = NULL;
   int iovlen = 0;
-  build_iovec(&iov, &iovlen, "from", devname, (size_t)-1);
-  build_iovec(&iov, &iovlen, "fspath", mount_point, (size_t)-1);
-  build_iovec(&iov, &iovlen, "fstype", "exfatfs", (size_t)-1);
-  build_iovec(&iov, &iovlen, "large", "yes", (size_t)-1);
-  build_iovec(&iov, &iovlen, "timezone", "static", (size_t)-1);
-  build_iovec(&iov, &iovlen, "async", NULL, (size_t)-1);
-  build_iovec(&iov, &iovlen, "ignoreacl",NULL, (size_t)-1);
+  if (!build_iovec(&iov, &iovlen, "from", devname, (size_t)-1) ||
+      !build_iovec(&iov, &iovlen, "fspath", mount_point, (size_t)-1) ||
+      !build_iovec(&iov, &iovlen, "fstype", "exfatfs", (size_t)-1) ||
+      !build_iovec(&iov, &iovlen, "large", "yes", (size_t)-1) ||
+      !build_iovec(&iov, &iovlen, "timezone", "static", (size_t)-1) ||
+      !build_iovec(&iov, &iovlen, "async", NULL, (size_t)-1) ||
+      !build_iovec(&iov, &iovlen, "ignoreacl", NULL, (size_t)-1)) {
+    log_debug("  [UFS] build_iovec failed");
+    free_iovec(iov, iovlen);
+    detach_md_unit(mdio.md_unit);
+    return false;
+  }
 
   ret = nmount(iov, iovlen, MNT_RDONLY);
   if (ret != 0) {
@@ -423,32 +510,27 @@ static bool mount_ufs_image(const char *file_path) {
     ret = nmount(iov, iovlen, 0);
     if (ret != 0) {
       log_debug("  [UFS] nmount failed: %s", strerror(errno));
-      free(iov);
+      free_iovec(iov, iovlen);
+      detach_md_unit(mdio.md_unit);
       return false;
     }
   }
-  free(iov);
+  free_iovec(iov, iovlen);
 
   log_debug("  [UFS] Mounted %s -> %s", devname, mount_point);
 
   // Cache it
-  for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
-    if (!ufs_cache[k].valid) {
-      strncpy(ufs_cache[k].path, file_path, MAX_PATH);
-      ufs_cache[k].md_unit = mdio.md_unit;
-      ufs_cache[k].valid = true;
-      break;
-    }
-  }
+  cache_ufs_mount(file_path, mdio.md_unit);
 
   return true;
 }
 
 static void scan_ufs_images() {
-  // Clean stale UFS cache entries
+  // UFS cache handles mount/unmount lifecycle only.
   for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
     if (ufs_cache[k].valid && access(ufs_cache[k].path, F_OK) != 0) {
-      log_debug("  [UFS] Cache invalidated: %s", ufs_cache[k].path);
+      log_debug("  [UFS] Source removed, unmounting: %s", ufs_cache[k].path);
+      unmount_ufs_image(ufs_cache[k].path, ufs_cache[k].md_unit);
       ufs_cache[k].valid = false;
     }
   }
@@ -484,6 +566,15 @@ static void scan_ufs_images() {
   }
 }
 
+static void shutdown_ufs_mounts(void) {
+  for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
+    if (!ufs_cache[k].valid)
+      continue;
+    unmount_ufs_image(ufs_cache[k].path, ufs_cache[k].md_unit);
+    ufs_cache[k].valid = false;
+  }
+}
+
 // --- JSON  ---
 static int extract_json_string(const char *json, const char *key, char *out,
                                size_t out_size) {
@@ -510,6 +601,9 @@ static int extract_json_string(const char *json, const char *key, char *out,
 }
 
 bool get_game_info(const char *base_path, char *out_id, char *out_name) {
+  out_id[0] = '\0';
+  out_name[0] = '\0';
+
   char path[MAX_PATH];
   snprintf(path, sizeof(path), "%s/sce_sys/param.json", base_path);
   FILE *f = fopen(path, "rb");
@@ -532,7 +626,7 @@ bool get_game_info(const char *base_path, char *out_id, char *out_name) {
                                   MAX_TITLE_NAME) != 0)
             extract_json_string(buf, "titleName", out_name, MAX_TITLE_NAME);
           if (strlen(out_name) == 0)
-            strncpy(out_name, out_id, MAX_TITLE_NAME);
+            copy_cstr(out_name, MAX_TITLE_NAME, out_id);
           free(buf);
           fclose(f);
           return true;
@@ -682,17 +776,7 @@ void scan_all_paths() {
 
       char title_id[MAX_TITLE_ID];
       char title_name[MAX_TITLE_NAME];
-      if (get_game_info(full_path, title_id, title_name)) {
-        for (int k = 0; k < MAX_PENDING; k++) {
-          if (!cache[k].valid) {
-            strncpy(cache[k].path, full_path, MAX_PATH);
-            strncpy(cache[k].title_id, title_id, MAX_TITLE_ID);
-            strncpy(cache[k].title_name, title_name, MAX_TITLE_NAME);
-            cache[k].valid = true;
-            break;
-          }
-        }
-      } else {
+      if (!get_game_info(full_path, title_id, title_name)) {
         continue;
       }
 
@@ -718,7 +802,9 @@ void scan_all_paths() {
         is_remount = false;
       }
 
-      mount_and_install(full_path, title_id, title_name, is_remount);
+      if (mount_and_install(full_path, title_id, title_name, is_remount)) {
+        cache_game_entry(full_path, title_id, title_name);
+      }
     }
     closedir(d);
   }
@@ -734,7 +820,7 @@ int main() {
   remove(LOG_FILE);
   mkdir(LOG_DIR, 0777);
 
-  log_debug("SHADOWMOUNT v1.4 START");
+  log_debug("SHADOWMOUNT v1.4 START exFAT");
 
   // --- MOUNT UFS IMAGES ---
   scan_ufs_images();
@@ -744,10 +830,10 @@ int main() {
 
   if (new_games == 0) {
     // SCENARIO A: Nothing to do.
-    notify_system("ShadowMount v1.4: Library Ready.\n- VoidWhisper");
+    notify_system("ShadowMount v1.4 exFAT: Library Ready.\n- VoidWhisper");
   } else {
     // SCENARIO B: Work needed.
-    notify_system("ShadowMount v1.4: Found %d Games. Executing...", new_games);
+    notify_system("ShadowMount v1.4 exFAT: Found %d Games. Executing...", new_games);
 
     // Run the scan immediately to process them
     scan_all_paths();
@@ -759,14 +845,14 @@ int main() {
   // --- DAEMON LOOP ---
   int lock = open(LOCK_FILE, O_CREAT | O_EXCL | O_RDWR, 0666);
   if (lock < 0 && errno == EEXIST) {
+    sceUserServiceTerminate();
     return 0;
   }
 
   while (true) {
     if (access(KILL_FILE, F_OK) == 0) {
       remove(KILL_FILE);
-      remove(LOCK_FILE);
-      return 0;
+      break;
     }
 
     // Sleep FIRST since we either just finished scan above, or library was
@@ -777,6 +863,10 @@ int main() {
     scan_all_paths();
   }
 
+  if (lock >= 0)
+    close(lock);
+  shutdown_ufs_mounts();
+  remove(LOCK_FILE);
   sceUserServiceTerminate();
   return 0;
 }
