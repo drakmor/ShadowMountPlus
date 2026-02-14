@@ -1123,14 +1123,14 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     int last_errno = 0;
     uint16_t option_flags[2];
     size_t option_flags_count = 0;
-    bool prefer_rw = (pfs_profile && !pfs_profile->read_only);
+    bool mount_read_only = !(pfs_profile && !pfs_profile->read_only);
+    bool prefer_rw = !mount_read_only;
 
     if (prefer_rw) {
       option_flags[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_RW;
       option_flags[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_DEFAULT;
     } else {
       option_flags[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_DEFAULT;
-      option_flags[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_RW;
     }
 
     req.sc = LVD_ATTACH_SC;
@@ -1232,23 +1232,29 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     return false;
   }
 
+  bool mount_read_only = !(pfs_profile && !pfs_profile->read_only);
   unsigned int first_mount_flags = MNT_RDONLY;
   unsigned int second_mount_flags = 0;
   const char *first_mode = "rdonly";
   const char *second_mode = "rw";
-  if (pfs_profile && !pfs_profile->read_only) {
+  bool allow_mount_mode_fallback = false;
+
+  if (!mount_read_only) {
     first_mount_flags = 0;
     second_mount_flags = MNT_RDONLY;
     first_mode = "rw";
     second_mode = "rdonly";
+    allow_mount_mode_fallback = true;
   }
 
   ret = nmount(iov, iovlen, first_mount_flags);
   if (ret != 0) {
-    log_debug("  [IMG][%s] nmount %s failed: %s, trying %s...",
-              backend_name(attach_backend), first_mode, strerror(errno),
-              second_mode);
-    ret = nmount(iov, iovlen, second_mount_flags);
+    if (allow_mount_mode_fallback) {
+      log_debug("  [IMG][%s] nmount %s failed: %s, trying %s...",
+                backend_name(attach_backend), first_mode, strerror(errno),
+                second_mode);
+      ret = nmount(iov, iovlen, second_mount_flags);
+    }
     if (ret != 0) {
       log_debug("  [IMG][%s] nmount failed: %s", backend_name(attach_backend),
                 strerror(errno));
