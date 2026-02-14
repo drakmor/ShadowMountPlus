@@ -2,15 +2,20 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
+#include <signal.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
-#include <sys/mdioctl.h>
 #include <sys/mount.h>
+#include <sys/mdioctl.h>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -18,13 +23,13 @@
 #include <time.h>
 #include <unistd.h>
 
-
 #include <ps5/kernel.h>
 
 // --- Configuration ---
 #define SCAN_INTERVAL_US 3000000
 #define MAX_PENDING 512
 #define MAX_UFS_MOUNTS 64
+#define MAX_NULLFS_MOUNTS MAX_PENDING
 #define MAX_PATH 1024
 #define MAX_TITLE_ID 32
 #define MAX_TITLE_NAME 256
@@ -36,6 +41,163 @@
 #define TOAST_FILE "/data/shadowmount/notify.txt"
 #define IOVEC_ENTRY(x) {(void *)(x), (x) ? strlen(x) + 1 : 0}
 #define IOVEC_SIZE(x) (sizeof(x) / sizeof(struct iovec))
+// 1 = use legacy /dev/mdctl backend for .exfat images, 0 = use LVD for all.
+#define EXFAT_ATTACH_USE_MDCTL 1
+
+// --- LVD Definitions ---
+#define LVD_CTRL_PATH "/dev/lvdctl"
+#define MD_CTRL_PATH "/dev/mdctl"
+#define SCE_LVD_IOC_ATTACH 0xC0286D00
+#define SCE_LVD_IOC_DETACH 0xC0286D01
+#define LVD_ATTACH_IO_VERSION 1
+#define LVD_ATTACH_SC 0x0001000000000002ULL
+#define LVD_ATTACH_OPTION_FLAGS_DEFAULT 0x8
+#define LVD_ATTACH_OPTION_FLAGS_RW 0x9
+#define LVD_ATTACH_IMAGE_TYPE 0
+#define LVD_ATTACH_LAYER_COUNT 1
+#define LVD_ATTACH_LAYER_ARRAY_SIZE 3
+#define LVD_ENTRY_TYPE_FILE 1
+#define LVD_ENTRY_FLAG_NO_BITMAP 0x1
+#define LVD_NODE_WAIT_US 100000
+#define LVD_NODE_WAIT_RETRIES 100
+
+// --- devpfs/pfs option profiles  ---
+#define DEVPFS_BUDGET_GAME "game"
+#define DEVPFS_BUDGET_SYSTEM "system"
+#define DEVPFS_MKEYMODE_SD "SD"
+
+#define DEVPFS_MOUNT_FLAG_CREATE_WS 0x0001u
+#define DEVPFS_MOUNT_FLAG_MULTIMNT 0x0002u
+#define DEVPFS_MOUNT_FLAG_BLKONRESLV 0x0004u
+#define DEVPFS_MOUNT_FLAG_HOTUPDATE 0x0010u
+#define DEVPFS_MOUNT_FLAG_NOMULTILAYEREDMNT 0x0080u
+#define DEVPFS_MOUNT_FLAG_FSMPSTAT 0x0100u
+#define DEVPFS_MOUNT_FLAG_BLKONREAD 0x0200u
+#define DEVPFS_MOUNT_FLAG_IGNORESPARSE 0x0400u
+#define DEVPFS_MOUNT_FLAG_FORCERW 0x1000u
+#define DEVPFS_MOUNT_FLAG_FGC_DEPLOYED 0x2000u
+#define DEVPFS_MOUNT_FLAG_WS_MGMT 0x4000u
+#define DEVPFS_MOUNT_FLAG_NORWMNT 0x8000u
+
+#define DEVPFS_FLAGS_SHELL_DEFAULT 0x0032u
+#define DEVPFS_FLAGS_SHELL_FGC 0x009Fu
+#define DEVPFS_FLAGS_SHELL_FGC_DISC 0x4022u
+#define DEVPFS_FLAGS_SHELL_FGC_NORW 0x8022u
+
+typedef struct {
+  // +0x00: 1 -> mount read-only, 0 -> allow write.
+  uint32_t ro;
+  // +0x04: reserved in observed Shell/FSMP callers.
+  uint32_t reserved0;
+  // +0x08: logical budget/domain string, usually "game" or "system".
+  const char *budget_id;
+  // +0x10: reserved in observed Shell/FSMP callers.
+  uint32_t reserved1;
+  // +0x14: bitmask consumed by devpfs mount logic.
+  uint32_t flags;
+  // +0x18: optional "maxpkgszingib" value (GiB), 0 means not set.
+  uint64_t max_pkg_gib;
+} devpfs_mount_opt_t;
+
+typedef struct {
+  // Human-readable profile id for logs.
+  const char *name;
+  // Raw option payload mapped to FSMP mount behavior.
+  devpfs_mount_opt_t opt;
+} devpfs_mount_profile_t;
+
+_Static_assert(offsetof(devpfs_mount_opt_t, ro) == 0x00,
+               "devpfs_mount_opt_t.ro offset");
+_Static_assert(offsetof(devpfs_mount_opt_t, budget_id) == 0x08,
+               "devpfs_mount_opt_t.budget_id offset");
+_Static_assert(offsetof(devpfs_mount_opt_t, flags) == 0x14,
+               "devpfs_mount_opt_t.flags offset");
+_Static_assert(offsetof(devpfs_mount_opt_t, max_pkg_gib) == 0x18,
+               "devpfs_mount_opt_t.max_pkg_gib offset");
+_Static_assert(sizeof(devpfs_mount_opt_t) == 0x20,
+               "devpfs_mount_opt_t size");
+
+typedef struct {
+  // Human-readable profile id for logs.
+  const char *name;
+  // Preferred mount mode for initial nmount/attach attempt.
+  bool read_only;
+  // PFS nmount "budgetid".
+  const char *budget_id;
+  // PFS nmount "mkeymode".
+  const char *mkeymode;
+  // PFS nmount "sigverify" (0/1).
+  bool sigverify;
+  // PFS nmount "playgo" (0/1).
+  bool playgo;
+  // PFS nmount "disc" (0/1).
+  bool disc;
+} pfs_mount_profile_t;
+
+static const pfs_mount_profile_t k_pfs_profile_shell_default = {
+    .name = "shell_default",
+    .read_only = true,
+    .budget_id = DEVPFS_BUDGET_GAME,
+    .mkeymode = DEVPFS_MKEYMODE_SD,
+    .sigverify = false,
+    .playgo = false,
+    .disc = false,
+};
+
+typedef struct {
+  // 1=file, 2=block device, etc. (kernel-defined values).
+  uint16_t source_type;
+  // Layer behavior flags (e.g. no bitmap mapping).
+  uint8_t entry_flags;
+  // Must be zero.
+  uint8_t reserved0;
+  // Must be zero.
+  uint32_t reserved1;
+  // Backing file or device path.
+  const char *path;
+  // Data start offset in backing object (bytes).
+  uint64_t offset;
+  // Data size exposed via this layer (bytes).
+  uint64_t size;
+  // Optional bitmap file path.
+  const char *bitmap_path;
+  // Bitmap offset in bitmap file (bytes).
+  uint64_t bitmap_offset;
+  // Bitmap size (bytes), 0 when bitmap is unused.
+  uint64_t bitmap_size;
+} lvd_kernel_layer_t;
+
+typedef struct {
+  // Protocol version for /dev/lvdctl ioctl payload.
+  uint32_t io_version;
+  // Input: usually -1 for auto-assign. Output: created lvd unit id.
+  int32_t device_id;
+  // Security/context selector used by shell callers.
+  uint64_t sc;
+  // Encoded option length derived from option flags.
+  uint16_t option_len;
+  // LVD image type id (0 for regular single-image flow).
+  uint16_t image_type;
+  // Number of valid entries in layers_ptr.
+  uint32_t layer_count;
+  // Total exported virtual size (bytes).
+  uint64_t device_size;
+  // Pointer to layer array in user payload.
+  lvd_kernel_layer_t *layers_ptr;
+} lvd_ioctl_attach_t;
+
+typedef struct {
+  // Must be zero.
+  uint32_t reserved0;
+  // Target lvd unit id to detach.
+  int32_t device_id;
+  // Reserved padding required by kernel ABI.
+  uint8_t reserved[0x20];
+} lvd_ioctl_detach_t;
+
+_Static_assert(sizeof(lvd_kernel_layer_t) == 0x38, "lvd_kernel_layer_t size");
+_Static_assert(sizeof(lvd_ioctl_attach_t) == 0x28, "lvd_ioctl_attach_t size");
+_Static_assert(sizeof(lvd_ioctl_detach_t) == 0x28, "lvd_ioctl_detach_t size");
 
 // --- SDK Imports ---
 int sceAppInstUtilInitialize(void);
@@ -97,12 +259,44 @@ struct GameCache {
 };
 struct GameCache cache[MAX_PENDING];
 
+typedef enum {
+  ATTACH_BACKEND_NONE = 0,
+  // /dev/lvdctl -> /dev/lvdN
+  ATTACH_BACKEND_LVD,
+  // /dev/mdctl -> /dev/mdN
+  ATTACH_BACKEND_MD,
+} attach_backend_t;
+
 struct UfsCache {
+  // Absolute source image path.
   char path[MAX_PATH];
-  unsigned md_unit;
+  // Attached unit id (lvdN/mdN), -1 when unknown.
+  int unit_id;
+  // Backend used for this entry.
+  attach_backend_t backend;
+  // Slot occupancy flag.
   bool valid;
 };
 struct UfsCache ufs_cache[MAX_UFS_MOUNTS];
+
+struct NullfsCache {
+  // Mounted target path in /system_ex/app/...
+  char mount_point[MAX_PATH];
+  // Slot occupancy flag.
+  bool valid;
+};
+struct NullfsCache nullfs_cache[MAX_NULLFS_MOUNTS];
+
+static volatile sig_atomic_t g_stop_requested = 0;
+
+typedef enum {
+  IMAGE_FS_UNKNOWN = 0,
+  IMAGE_FS_UFS,
+  IMAGE_FS_EXFAT,
+  IMAGE_FS_PFS,
+} image_fs_type_t;
+
+static const char *backend_name(attach_backend_t backend);
 
 static void copy_cstr(char *dst, size_t dst_size, const char *src) {
   if (dst_size == 0)
@@ -125,15 +319,94 @@ static void cache_game_entry(const char *path, const char *title_id,
   }
 }
 
-static void cache_ufs_mount(const char *path, unsigned md_unit) {
+static void cache_ufs_mount(const char *path, int unit_id,
+                            attach_backend_t backend) {
+  for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
+    if (ufs_cache[k].valid && strcmp(ufs_cache[k].path, path) == 0) {
+      ufs_cache[k].unit_id = unit_id;
+      ufs_cache[k].backend = backend;
+      return;
+    }
+  }
+
   for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
     if (!ufs_cache[k].valid) {
       copy_cstr(ufs_cache[k].path, sizeof(ufs_cache[k].path), path);
-      ufs_cache[k].md_unit = md_unit;
+      ufs_cache[k].unit_id = unit_id;
+      ufs_cache[k].backend = backend;
       ufs_cache[k].valid = true;
       return;
     }
   }
+}
+
+static void cache_nullfs_mount(const char *mount_point) {
+  for (int k = 0; k < MAX_NULLFS_MOUNTS; k++) {
+    if (nullfs_cache[k].valid &&
+        strcmp(nullfs_cache[k].mount_point, mount_point) == 0) {
+      return;
+    }
+  }
+  for (int k = 0; k < MAX_NULLFS_MOUNTS; k++) {
+    if (!nullfs_cache[k].valid) {
+      copy_cstr(nullfs_cache[k].mount_point, sizeof(nullfs_cache[k].mount_point),
+                mount_point);
+      nullfs_cache[k].valid = true;
+      return;
+    }
+  }
+}
+
+static void invalidate_nullfs_mount(const char *mount_point) {
+  for (int k = 0; k < MAX_NULLFS_MOUNTS; k++) {
+    if (!nullfs_cache[k].valid)
+      continue;
+    if (strcmp(nullfs_cache[k].mount_point, mount_point) == 0) {
+      nullfs_cache[k].valid = false;
+      nullfs_cache[k].mount_point[0] = '\0';
+      return;
+    }
+  }
+}
+
+static void on_signal(int sig) {
+  (void)sig;
+  g_stop_requested = 1;
+}
+
+static void install_signal_handlers(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = on_signal;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGTERM, &sa, NULL);
+  sigaction(SIGINT, &sa, NULL);
+  sigaction(SIGHUP, &sa, NULL);
+  sigaction(SIGQUIT, &sa, NULL);
+}
+
+static bool should_stop_requested(void) {
+  if (g_stop_requested)
+    return true;
+  if (access(KILL_FILE, F_OK) == 0) {
+    remove(KILL_FILE);
+    return true;
+  }
+  return false;
+}
+
+static bool sleep_with_stop_check(unsigned int total_us) {
+  const unsigned int chunk_us = 200000;
+  unsigned int slept = 0;
+  while (slept < total_us) {
+    if (should_stop_requested())
+      return true;
+    unsigned int remain = total_us - slept;
+    unsigned int step = remain < chunk_us ? remain : chunk_us;
+    sceKernelUsleep(step);
+    slept += step;
+  }
+  return should_stop_requested();
 }
 
 // --- LOGGING ---
@@ -141,15 +414,18 @@ void log_to_file(const char *fmt, va_list args) {
   mkdir(LOG_DIR, 0777);
   FILE *fp = fopen(LOG_FILE, "a");
   if (fp) {
+    va_list args_file;
     time_t rawtime;
     struct tm *timeinfo;
     char buffer[80];
     time(&rawtime);
     timeinfo = localtime(&rawtime);
     strftime(buffer, sizeof(buffer), "%H:%M:%S", timeinfo);
+    va_copy(args_file, args);
     fprintf(fp, "[%s] ", buffer);
-    vfprintf(fp, fmt, args);
+    vfprintf(fp, fmt, args_file);
     fprintf(fp, "\n");
+    va_end(args_file);
     fclose(fp);
   }
 }
@@ -201,6 +477,29 @@ bool is_data_mounted(const char *title_id) {
   return (access(path, F_OK) == 0);
 }
 
+static bool read_mount_link(const char *title_id, char *out, size_t out_size) {
+  if (out_size == 0)
+    return false;
+  out[0] = '\0';
+
+  char lnk_path[MAX_PATH];
+  snprintf(lnk_path, sizeof(lnk_path), "/user/app/%s/mount.lnk", title_id);
+  FILE *f = fopen(lnk_path, "r");
+  if (!f)
+    return false;
+
+  if (!fgets(out, (int)out_size, f)) {
+    fclose(f);
+    out[0] = '\0';
+    return false;
+  }
+  fclose(f);
+
+  size_t len = strcspn(out, "\r\n");
+  out[len] = '\0';
+  return out[0] != '\0';
+}
+
 // --- FAST STABILITY CHECK ---
 bool wait_for_stability_fast(const char *path, const char *name) {
   struct stat st;
@@ -249,11 +548,38 @@ static int mount_nullfs(const char *src, const char *dst) {
   return nmount(iov, IOVEC_SIZE(iov), MNT_RDONLY);
 }
 
+static bool unmount_nullfs_mount(const char *mount_point) {
+  if (unmount(mount_point, 0) == 0) {
+    invalidate_nullfs_mount(mount_point);
+    return true;
+  }
+
+  int err = errno;
+  if (err == ENOENT || err == EINVAL) {
+    invalidate_nullfs_mount(mount_point);
+    return true;
+  }
+
+  log_debug("  [MOUNT] unmount failed for %s: %s, trying force...",
+            mount_point, strerror(err));
+  if (unmount(mount_point, MNT_FORCE) == 0 || errno == ENOENT ||
+      errno == EINVAL) {
+    invalidate_nullfs_mount(mount_point);
+    return true;
+  }
+
+  log_debug("  [MOUNT] force unmount failed for %s: %s", mount_point,
+            strerror(errno));
+  return false;
+}
+
 static int copy_dir(const char *src, const char *dst) {
-  mkdir(dst, 0777);
+  if (mkdir(dst, 0777) != 0 && errno != EEXIST)
+    return -1;
   DIR *d = opendir(src);
   if (!d)
     return -1;
+  int ret = 0;
   struct dirent *e;
   char ss[MAX_PATH], dd[MAX_PATH];
   struct stat st;
@@ -262,29 +588,55 @@ static int copy_dir(const char *src, const char *dst) {
       continue;
     snprintf(ss, sizeof(ss), "%s/%s", src, e->d_name);
     snprintf(dd, sizeof(dd), "%s/%s", dst, e->d_name);
-    if (stat(ss, &st) != 0)
-      continue;
-    if (S_ISDIR(st.st_mode))
-      copy_dir(ss, dd);
+    if (stat(ss, &st) != 0) {
+      ret = -1;
+      break;
+    }
+    if (S_ISDIR(st.st_mode)) {
+      if (copy_dir(ss, dd) != 0) {
+        ret = -1;
+        break;
+      }
+    }
     else {
       FILE *fs = fopen(ss, "rb");
-      if (!fs)
-        continue;
+      if (!fs) {
+        ret = -1;
+        break;
+      }
       FILE *fd = fopen(dd, "wb");
       if (!fd) {
         fclose(fs);
-        continue;
+        ret = -1;
+        break;
       }
       char buf[8192];
-      size_t n;
-      while ((n = fread(buf, 1, sizeof(buf), fs)) > 0)
-        fwrite(buf, 1, n, fd);
-      fclose(fd);
-      fclose(fs);
+      bool copy_ok = true;
+      while (copy_ok) {
+        size_t n = fread(buf, 1, sizeof(buf), fs);
+        if (n > 0 && fwrite(buf, 1, n, fd) != n)
+          copy_ok = false;
+        if (n < sizeof(buf)) {
+          if (ferror(fs))
+            copy_ok = false;
+          break;
+        }
+      }
+      if (fflush(fd) != 0)
+        copy_ok = false;
+      if (fclose(fd) != 0)
+        copy_ok = false;
+      if (fclose(fs) != 0)
+        copy_ok = false;
+      if (!copy_ok) {
+        ret = -1;
+        break;
+      }
     }
   }
-  closedir(d);
-  return 0;
+  if (closedir(d) != 0)
+    ret = -1;
+  return ret;
 }
 
 int copy_file(const char *src, const char *dst) {
@@ -297,15 +649,29 @@ int copy_file(const char *src, const char *dst) {
     fclose(fs);
     return -1;
   }
-  size_t n;
-  while ((n = fread(buf, 1, sizeof(buf), fs)) > 0)
-    fwrite(buf, 1, n, fd);
-  fclose(fd);
-  fclose(fs);
-  return 0;
+  int ret = 0;
+  while (true) {
+    size_t n = fread(buf, 1, sizeof(buf), fs);
+    if (n > 0 && fwrite(buf, 1, n, fd) != n) {
+      ret = -1;
+      break;
+    }
+    if (n < sizeof(buf)) {
+      if (ferror(fs))
+        ret = -1;
+      break;
+    }
+  }
+  if (fflush(fd) != 0)
+    ret = -1;
+  if (fclose(fd) != 0)
+    ret = -1;
+  if (fclose(fs) != 0)
+    ret = -1;
+  return ret;
 }
 
-// --- UFS2 IMAGE MOUNTING ---
+// --- UFS2 IMAGE MOUNTING (LVD) ---
 static bool build_iovec(struct iovec **iov, int *iovlen, const char *name,
                         const void *val, size_t len) {
   int i = *iovlen;
@@ -318,7 +684,7 @@ static bool build_iovec(struct iovec **iov, int *iovlen, const char *name,
   if (!name_copy)
     return false;
 
-  (*iov)[i].iov_base = name_copy;
+  (*iov)[i].iov_base = name_copy; 
   (*iov)[i].iov_len = strlen(name) + 1;
   i++;
   (*iov)[i].iov_base = (void *)val;
@@ -337,29 +703,179 @@ static void free_iovec(struct iovec *iov, int iovlen) {
   free(iov);
 }
 
-static void detach_md_unit(unsigned md_unit) {
-  int mdctl = open("/dev/mdctl", O_RDWR);
-  if (mdctl < 0) {
-    log_debug("  [UFS] open /dev/mdctl for detach failed: %s", strerror(errno));
+static bool wait_for_dev_node_state(const char *devname, bool should_exist) {
+  for (int i = 0; i < LVD_NODE_WAIT_RETRIES; i++) {
+    bool exists = (access(devname, F_OK) == 0);
+    if (exists == should_exist)
+      return true;
+    sceKernelUsleep(LVD_NODE_WAIT_US);
+  }
+
+  return false;
+}
+
+static bool wait_for_lvd_node_state(int unit_id, bool should_exist) {
+  char devname[64];
+  snprintf(devname, sizeof(devname), "/dev/lvd%d", unit_id);
+  return wait_for_dev_node_state(devname, should_exist);
+}
+
+static bool wait_for_md_node_state(int unit_id, bool should_exist) {
+  char devname[64];
+  snprintf(devname, sizeof(devname), "/dev/md%d", unit_id);
+  return wait_for_dev_node_state(devname, should_exist);
+}
+
+static uint16_t lvd_option_len_from_flags(uint16_t options) {
+  // Mirrors sceFsLvdAttachSingleDefaultImage option-size logic.
+  if ((options & 0x800E) != 0) {
+    return (uint16_t)((options & 0xFFFF8000) + ((options & 2) << 6) +
+                      (8 * (options & 1)) + (2 * ((options >> 2) & 1)) +
+                      (2 * (options & 8)) + 4);
+  }
+  return (uint16_t)(8 * (options & 1) + 4);
+}
+
+static bool parse_unit_from_dev_path(const char *dev_path, const char *prefix,
+                                     int *unit_out) {
+  size_t prefix_len = strlen(prefix);
+  if (!dev_path || strncmp(dev_path, prefix, prefix_len) != 0)
+    return false;
+
+  char *end = NULL;
+  long unit = strtol(dev_path + prefix_len, &end, 10);
+  if (end == dev_path + prefix_len || *end != '\0' || unit < 0 ||
+      unit > INT_MAX)
+    return false;
+
+  *unit_out = (int)unit;
+  return true;
+}
+
+static bool resolve_device_from_mount(const char *mount_point,
+                                      attach_backend_t *backend_out,
+                                      int *unit_out) {
+  struct statfs sfs;
+  if (statfs(mount_point, &sfs) != 0)
+    return false;
+
+  const char *from = sfs.f_mntfromname;
+  if (parse_unit_from_dev_path(from, "/dev/lvd", unit_out)) {
+    *backend_out = ATTACH_BACKEND_LVD;
+    return true;
+  }
+  if (parse_unit_from_dev_path(from, "/dev/md", unit_out)) {
+    *backend_out = ATTACH_BACKEND_MD;
+    return true;
+  }
+  return false;
+}
+
+// LVD Detach Helper
+static void detach_lvd_unit(int unit_id) {
+  if (unit_id < 0)
+    return;
+
+  int fd = open(LVD_CTRL_PATH, O_RDWR);
+  if (fd < 0) {
+    log_debug("  [IMG][%s] open %s for detach failed: %s",
+              backend_name(ATTACH_BACKEND_LVD), LVD_CTRL_PATH, strerror(errno));
     return;
   }
 
-  struct md_ioctl mdio;
-  memset(&mdio, 0, sizeof(mdio));
-  mdio.md_version = MDIOVERSION;
-  mdio.md_unit = md_unit;
-  if (ioctl(mdctl, MDIOCDETACH, &mdio) != 0) {
-    log_debug("  [UFS] MDIOCDETACH /dev/md%u failed: %s", md_unit,
-              strerror(errno));
+  lvd_ioctl_detach_t req;
+  memset(&req, 0, sizeof(req));
+  req.device_id = unit_id;
+
+  if (ioctl(fd, SCE_LVD_IOC_DETACH, &req) != 0) {
+    log_debug("  [IMG][%s] detach %d failed: %s",
+              backend_name(ATTACH_BACKEND_LVD), unit_id, strerror(errno));
   }
-  close(mdctl);
+  close(fd);
+
+  if (!wait_for_lvd_node_state(unit_id, false)) {
+    log_debug("  [IMG][%s] device node still present after detach: /dev/lvd%d",
+              backend_name(ATTACH_BACKEND_LVD), unit_id);
+  }
 }
 
-static bool is_ufs_image(const char *name) {
+static void detach_md_unit(int unit_id) {
+  if (unit_id < 0)
+    return;
+
+  int fd = open(MD_CTRL_PATH, O_RDWR);
+  if (fd < 0) {
+    log_debug("  [IMG][%s] open %s for detach failed: %s",
+              backend_name(ATTACH_BACKEND_MD), MD_CTRL_PATH, strerror(errno));
+    return;
+  }
+
+  struct md_ioctl req;
+  memset(&req, 0, sizeof(req));
+  req.md_version = MDIOVERSION;
+  req.md_unit = (unsigned int)unit_id;
+
+  if (ioctl(fd, MDIOCDETACH, &req) != 0) {
+    int err = errno;
+    req.md_options = MD_FORCE;
+    if (ioctl(fd, MDIOCDETACH, &req) != 0) {
+      log_debug("  [IMG][%s] detach %d failed: %s",
+                backend_name(ATTACH_BACKEND_MD), unit_id, strerror(errno));
+    } else {
+      log_debug("  [IMG][%s] detach %d forced after error: %s",
+                backend_name(ATTACH_BACKEND_MD), unit_id, strerror(err));
+    }
+  }
+  close(fd);
+
+  if (!wait_for_md_node_state(unit_id, false)) {
+    log_debug("  [IMG][%s] device node still present after detach: /dev/md%d",
+              backend_name(ATTACH_BACKEND_MD), unit_id);
+  }
+}
+
+static void detach_attached_unit(attach_backend_t backend, int unit_id) {
+  if (backend == ATTACH_BACKEND_MD)
+    detach_md_unit(unit_id);
+  else if (backend == ATTACH_BACKEND_LVD)
+    detach_lvd_unit(unit_id);
+}
+
+static image_fs_type_t detect_image_fs_type(const char *name) {
   const char *dot = strrchr(name, '.');
   if (!dot)
-    return false;
-  return (strcasecmp(dot, ".ffpkg") == 0 || strcasecmp(dot, ".dat") == 0);
+    return IMAGE_FS_UNKNOWN;
+  if (strcasecmp(dot, ".ffpkg") == 0)
+    return IMAGE_FS_UFS;
+  if (strcasecmp(dot, ".exfat") == 0)
+    return IMAGE_FS_EXFAT;
+  if (strcasecmp(dot, ".ffpfs") == 0)
+    return IMAGE_FS_PFS;
+  return IMAGE_FS_UNKNOWN;
+}
+
+static const char *image_fs_name(image_fs_type_t fs_type) {
+  switch (fs_type) {
+  case IMAGE_FS_UFS:
+    return "ufs";
+  case IMAGE_FS_EXFAT:
+    return "exfatfs";
+  case IMAGE_FS_PFS:
+    return "pfs";
+  default:
+    return "unknown";
+  }
+}
+
+static const char *backend_name(attach_backend_t backend) {
+  switch (backend) {
+  case ATTACH_BACKEND_LVD:
+    return "LVD";
+  case ATTACH_BACKEND_MD:
+    return "MD";
+  default:
+    return "UNKNOWN";
+  }
 }
 
 static void strip_extension(const char *filename, char *out, size_t out_size) {
@@ -371,35 +887,76 @@ static void strip_extension(const char *filename, char *out, size_t out_size) {
   out[len] = '\0';
 }
 
-static void build_ufs_mount_point(const char *file_path, char *mount_point,
-                                  size_t mount_point_size) {
+static const char *mount_fs_suffix(image_fs_type_t fs_type) {
+  switch (fs_type) {
+  case IMAGE_FS_UFS:
+    return "ufs";
+  case IMAGE_FS_EXFAT:
+    return "exfat";
+  case IMAGE_FS_PFS:
+    return "pfs";
+  default:
+    return "unknown";
+  }
+}
+
+static void build_ufs_mount_point(const char *file_path, image_fs_type_t fs_type,
+                                  char *mount_point, size_t mount_point_size) {
   const char *filename = strrchr(file_path, '/');
   filename = filename ? filename + 1 : file_path;
   char mount_name[MAX_PATH];
   strip_extension(filename, mount_name, sizeof(mount_name));
-  snprintf(mount_point, mount_point_size, "%s/%s", UFS_MOUNT_BASE, mount_name);
+  snprintf(mount_point, mount_point_size, "%s/%s-%s", UFS_MOUNT_BASE,
+           mount_name, mount_fs_suffix(fs_type));
 }
 
-static void unmount_ufs_image(const char *file_path, unsigned md_unit) {
+static void unmount_ufs_image(const char *file_path, int unit_id,
+                              attach_backend_t backend) {
   char mount_point[MAX_PATH];
-  build_ufs_mount_point(file_path, mount_point, sizeof(mount_point));
+  image_fs_type_t fs_type = detect_image_fs_type(file_path);
+  build_ufs_mount_point(file_path, fs_type, mount_point, sizeof(mount_point));
+  int resolved_unit = unit_id;
+  attach_backend_t resolved_backend = backend;
+  bool can_detach = true;
 
+  if (resolved_unit < 0 || resolved_backend == ATTACH_BACKEND_NONE) {
+    if (!resolve_device_from_mount(mount_point, &resolved_backend,
+                                   &resolved_unit)) {
+      resolved_backend = ATTACH_BACKEND_NONE;
+      resolved_unit = -1;
+    }
+  }
+
+  // Try standard unmount
   if (unmount(mount_point, 0) != 0) {
     int unmount_err = errno;
     if (unmount_err != ENOENT && unmount_err != EINVAL) {
       if (unmount(mount_point, MNT_FORCE) != 0 && errno != ENOENT &&
           errno != EINVAL) {
-        log_debug("  [UFS] unmount failed for %s: %s", mount_point,
-                  strerror(errno));
+        log_debug("  [IMG][%s] unmount failed for %s: %s",
+                  backend_name(resolved_backend), mount_point, strerror(errno));
+        can_detach = false;
       }
     }
   }
 
-  if (md_unit != 0)
-    detach_md_unit(md_unit);
+  if (!can_detach)
+    return;
+
+  if (resolved_backend == ATTACH_BACKEND_NONE) {
+    log_debug("  [IMG][%s] detach skipped for %s (backend unknown)",
+              backend_name(resolved_backend), mount_point);
+    return;
+  }
+
+  detach_attached_unit(resolved_backend, resolved_unit);
 }
 
-static bool mount_ufs_image(const char *file_path) {
+static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
+  const pfs_mount_profile_t *pfs_profile = NULL;
+  if (fs_type == IMAGE_FS_PFS)
+    pfs_profile = &k_pfs_profile_shell_default;
+
   // Check if already in UFS cache
   for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
     if (ufs_cache[k].valid && strcmp(ufs_cache[k].path, file_path) == 0)
@@ -410,12 +967,11 @@ static bool mount_ufs_image(const char *file_path) {
   const char *filename = strrchr(file_path, '/');
   filename = filename ? filename + 1 : file_path;
   char mount_point[MAX_PATH];
-  build_ufs_mount_point(file_path, mount_point, sizeof(mount_point));
+  build_ufs_mount_point(file_path, fs_type, mount_point, sizeof(mount_point));
 
-  // Check if already mounted (e.g. from previous run)
+  // Check if directory exists and is populated
   struct stat mst;
   if (stat(mount_point, &mst) == 0 && S_ISDIR(mst.st_mode)) {
-    // Check if there's content inside (already mounted)
     DIR *check = opendir(mount_point);
     if (check) {
       int count = 0;
@@ -428,10 +984,18 @@ static bool mount_ufs_image(const char *file_path) {
       }
       closedir(check);
       if (count > 0) {
-        log_debug("  [UFS] Already mounted: %s", mount_point);
-        // Add to cache so we don't re-check
-        cache_ufs_mount(file_path, 0);
-        return true;
+        attach_backend_t existing_backend = ATTACH_BACKEND_NONE;
+        int existing_unit = -1;
+        if (resolve_device_from_mount(mount_point, &existing_backend,
+                                      &existing_unit)) {
+          log_debug("  [IMG][%s] Already mounted: %s",
+                    backend_name(existing_backend), mount_point);
+          cache_ufs_mount(file_path, existing_unit, existing_backend);
+          return true;
+        }
+        log_debug("  [IMG] Mount point exists and is non-empty but is not an "
+                  "active mount, reattaching: %s",
+                  mount_point);
       }
     }
   }
@@ -439,103 +1003,291 @@ static bool mount_ufs_image(const char *file_path) {
   // Get file size
   struct stat st;
   if (stat(file_path, &st) != 0) {
-    log_debug("  [UFS] stat failed for %s: %s", file_path, strerror(errno));
+    log_debug("  [IMG] stat failed for %s: %s", file_path, strerror(errno));
     return false;
   }
 
   // Stability check - wait if file is still being written
   double age = difftime(time(NULL), st.st_mtime);
   if (age < 10.0) {
-    log_debug("  [UFS] %s modified %.0fs ago, waiting...", filename, age);
+    log_debug("  [IMG] %s modified %.0fs ago, waiting...", filename, age);
     return false;
   }
 
-  log_debug("  [UFS] Mounting image: %s -> %s", file_path, mount_point);
+  log_debug("  [IMG] Mounting image (%s): %s -> %s", image_fs_name(fs_type),
+            file_path, mount_point);
 
   // Create mount point
   mkdir(UFS_MOUNT_BASE, 0777);
   mkdir(mount_point, 0777);
 
-  // Attach as md device
-  int mdctl = open("/dev/mdctl", O_RDWR);
-  if (mdctl < 0) {
-    log_debug("  [UFS] open /dev/mdctl failed: %s", strerror(errno));
-    return false;
-  }
+  attach_backend_t attach_backend = ATTACH_BACKEND_LVD;
+  if (fs_type == IMAGE_FS_EXFAT && EXFAT_ATTACH_USE_MDCTL)
+    attach_backend = ATTACH_BACKEND_MD;
+  log_debug("  [IMG][%s] attach backend selected for %s",
+            backend_name(attach_backend), file_path);
 
-  struct md_ioctl mdio;
-  memset(&mdio, 0, sizeof(mdio));
-  mdio.md_version = MDIOVERSION;
-  mdio.md_type = MD_VNODE;
-  mdio.md_file = (char *)file_path;
-  mdio.md_mediasize = st.st_size;
-  mdio.md_sectorsize = 512; // was 512
-  mdio.md_options = MD_AUTOUNIT | MD_READONLY | MD_ASYNC; 
+  int ret = -1;
+  int unit_id = -1;
+  char devname[64];
+  memset(devname, 0, sizeof(devname));
 
-  int ret = ioctl(mdctl, MDIOCATTACH, &mdio);
-  if (ret != 0) {
-    mdio.md_options = MD_AUTOUNIT;
-    ret = ioctl(mdctl, MDIOCATTACH, &mdio);
-    if (ret != 0) {
-      log_debug("  [UFS] MDIOCATTACH failed: %s", strerror(errno));
-      close(mdctl);
+  if (attach_backend == ATTACH_BACKEND_MD) {
+    int md_fd = open(MD_CTRL_PATH, O_RDWR);
+    if (md_fd < 0) {
+      log_debug("  [IMG][%s] open %s failed: %s",
+                backend_name(attach_backend), MD_CTRL_PATH, strerror(errno));
       return false;
     }
+
+    struct md_ioctl req;
+    memset(&req, 0, sizeof(req));
+    req.md_version = MDIOVERSION;
+    req.md_type = MD_VNODE;
+    req.md_file = (char *)file_path;
+    req.md_mediasize = st.st_size;
+    req.md_sectorsize = 512;
+
+    int last_errno = 0;
+    const unsigned int option_flags[] = {MD_AUTOUNIT | MD_READONLY | MD_ASYNC,
+                                         MD_AUTOUNIT};
+    for (size_t i = 0; i < sizeof(option_flags) / sizeof(option_flags[0]);
+         i++) {
+      req.md_options = option_flags[i];
+      log_debug("  [IMG][%s] attach try: options=0x%x",
+                backend_name(attach_backend), req.md_options);
+      ret = ioctl(md_fd, MDIOCATTACH, &req);
+      if (ret == 0)
+        break;
+      last_errno = errno;
+      log_debug("  [IMG][%s] attach retry with options=0x%x failed: %s",
+                backend_name(attach_backend), req.md_options,
+                strerror(last_errno));
+    }
+    close(md_fd);
+
+    if (ret != 0) {
+      errno = last_errno;
+      log_debug("  [IMG][%s] attach failed: %s (ret: 0x%x)",
+                backend_name(attach_backend), strerror(errno), ret);
+      return false;
+    }
+
+    unit_id = (int)req.md_unit;
+    if (unit_id < 0) {
+      log_debug("  [IMG][%s] attach returned invalid unit: %d",
+                backend_name(attach_backend), unit_id);
+      return false;
+    }
+
+    if (!wait_for_md_node_state(unit_id, true)) {
+      log_debug("  [IMG][%s] device node did not appear: /dev/md%d",
+                backend_name(attach_backend), unit_id);
+      detach_md_unit(unit_id);
+      return false;
+    }
+
+    snprintf(devname, sizeof(devname), "/dev/md%d", unit_id);
+    log_debug("  [IMG][%s] attach returned unit=%d",
+              backend_name(attach_backend), unit_id);
+  } else {
+    int lvd_fd = open(LVD_CTRL_PATH, O_RDWR);
+    if (lvd_fd < 0) {
+      log_debug("  [IMG][%s] open %s failed: %s",
+                backend_name(attach_backend), LVD_CTRL_PATH, strerror(errno));
+      return false;
+    }
+
+    lvd_kernel_layer_t *layers =
+        calloc(LVD_ATTACH_LAYER_ARRAY_SIZE, sizeof(*layers));
+    if (!layers) {
+      log_debug("  [IMG] calloc layers failed");
+      close(lvd_fd);
+      return false;
+    }
+
+    layers[0].source_type = LVD_ENTRY_TYPE_FILE;
+    layers[0].entry_flags = LVD_ENTRY_FLAG_NO_BITMAP;
+    layers[0].path = file_path;
+    layers[0].offset = 0;
+    layers[0].size = st.st_size;
+
+    lvd_ioctl_attach_t req;
+    memset(&req, 0, sizeof(req));
+    req.io_version = LVD_ATTACH_IO_VERSION;
+    req.image_type = LVD_ATTACH_IMAGE_TYPE;
+    req.layer_count = LVD_ATTACH_LAYER_COUNT;
+    req.device_size = (uint64_t)st.st_size;
+    req.layers_ptr = layers;
+
+    int last_errno = 0;
+    uint16_t option_flags[2];
+    size_t option_flags_count = 0;
+    bool prefer_rw = (pfs_profile && !pfs_profile->read_only);
+
+    if (prefer_rw) {
+      option_flags[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_RW;
+      option_flags[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_DEFAULT;
+    } else {
+      option_flags[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_DEFAULT;
+      option_flags[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_RW;
+    }
+
+    req.sc = LVD_ATTACH_SC;
+    for (size_t i = 0; i < option_flags_count; i++) {
+      req.option_len = lvd_option_len_from_flags(option_flags[i]);
+      req.device_id = -1;
+      log_debug("  [IMG][%s] attach try: ver=%u sc=0x%lx options=0x%x len=0x%x",
+                backend_name(attach_backend),
+                req.io_version, req.sc, option_flags[i], req.option_len);
+
+      ret = ioctl(lvd_fd, SCE_LVD_IOC_ATTACH, &req);
+      if (ret == 0)
+        break;
+
+      last_errno = errno;
+      log_debug("  [IMG][%s] attach retry with options=0x%x option_len=0x%x "
+                "failed: %s",
+                backend_name(attach_backend), option_flags[i], req.option_len,
+                strerror(last_errno));
+    }
+    close(lvd_fd);
+    unit_id = req.device_id;
+    free(layers);
+
+    if (ret != 0) {
+      errno = last_errno;
+      log_debug("  [IMG][%s] attach failed: %s (ret: 0x%x)",
+                backend_name(attach_backend), strerror(errno), ret);
+      return false;
+    }
+
+    if (unit_id < 0) {
+      log_debug("  [IMG][%s] attach returned invalid unit: %d",
+                backend_name(attach_backend), unit_id);
+      return false;
+    }
+    log_debug("  [IMG][%s] attach returned unit=%d",
+              backend_name(attach_backend), unit_id);
+
+    if (!wait_for_lvd_node_state(unit_id, true)) {
+      log_debug("  [IMG][%s] device node did not appear: /dev/lvd%d",
+                backend_name(attach_backend), unit_id);
+      detach_lvd_unit(unit_id);
+      return false;
+    }
+
+    snprintf(devname, sizeof(devname), "/dev/lvd%d", unit_id);
   }
 
-  char devname[64];
-  snprintf(devname, sizeof(devname), "/dev/md%u", mdio.md_unit);
-  log_debug("  [UFS] Attached as %s", devname);
-  close(mdctl);
+  log_debug("  [IMG][%s] Attached as %s", backend_name(attach_backend), devname);
 
+  // --- MOUNT FILESYSTEM ---
   struct iovec *iov = NULL;
   int iovlen = 0;
-  if (!build_iovec(&iov, &iovlen, "from", devname, (size_t)-1) ||
-      !build_iovec(&iov, &iovlen, "fspath", mount_point, (size_t)-1) ||
-      !build_iovec(&iov, &iovlen, "fstype", "exfatfs", (size_t)-1) ||
-      !build_iovec(&iov, &iovlen, "large", "yes", (size_t)-1) ||
-      !build_iovec(&iov, &iovlen, "timezone", "static", (size_t)-1) ||
-      !build_iovec(&iov, &iovlen, "async", NULL, (size_t)-1) ||
-      !build_iovec(&iov, &iovlen, "ignoreacl", NULL, (size_t)-1)) {
-    log_debug("  [UFS] build_iovec failed");
+  bool iov_ok = false;
+  char pfs_errmsg[256];
+  memset(pfs_errmsg, 0, sizeof(pfs_errmsg));
+
+  if (fs_type == IMAGE_FS_UFS) {
+    iov_ok = build_iovec(&iov, &iovlen, "from", devname, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "fspath", mount_point, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "fstype", "ufs", (size_t)-1);
+  } else if (fs_type == IMAGE_FS_EXFAT) {
+    iov_ok = build_iovec(&iov, &iovlen, "from", devname, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "fspath", mount_point, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "fstype", "exfatfs", (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "large", "yes", (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "timezone", "static", (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "async", NULL, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "ignoreacl", NULL, (size_t)-1);
+  } else if (fs_type == IMAGE_FS_PFS) {
+    const char *sigverify = pfs_profile->sigverify ? "1" : "0";
+    const char *playgo = pfs_profile->playgo ? "1" : "0";
+    const char *disc = pfs_profile->disc ? "1" : "0";
+    log_debug("  [IMG][%s] PFS profile=%s ro=%d budgetid=%s mkeymode=%s "
+              "sigverify=%s playgo=%s disc=%s",
+              backend_name(attach_backend), pfs_profile->name,
+              pfs_profile->read_only ? 1 : 0, pfs_profile->budget_id,
+              pfs_profile->mkeymode, sigverify, playgo, disc);
+
+    iov_ok = build_iovec(&iov, &iovlen, "from", devname, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "fspath", mount_point, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "fstype", "pfs", (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "sigverify", sigverify, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "mkeymode", pfs_profile->mkeymode,
+                         (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "budgetid", pfs_profile->budget_id,
+                         (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "playgo", playgo, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "disc", disc, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "errmsg", pfs_errmsg,
+                         sizeof(pfs_errmsg));
+  }
+  if (!iov_ok) {
+    log_debug("  [IMG][%s] build_iovec failed for fstype=%s",
+              backend_name(attach_backend), image_fs_name(fs_type));
     free_iovec(iov, iovlen);
-    detach_md_unit(mdio.md_unit);
+    detach_attached_unit(attach_backend, unit_id);
     return false;
   }
 
-  ret = nmount(iov, iovlen, MNT_RDONLY);
+  unsigned int first_mount_flags = MNT_RDONLY;
+  unsigned int second_mount_flags = 0;
+  const char *first_mode = "rdonly";
+  const char *second_mode = "rw";
+  if (pfs_profile && !pfs_profile->read_only) {
+    first_mount_flags = 0;
+    second_mount_flags = MNT_RDONLY;
+    first_mode = "rw";
+    second_mode = "rdonly";
+  }
+
+  ret = nmount(iov, iovlen, first_mount_flags);
   if (ret != 0) {
-    log_debug("  [UFS] nmount rdonly failed: %s, trying rw...",
-              strerror(errno));
-    ret = nmount(iov, iovlen, 0);
+    log_debug("  [IMG][%s] nmount %s failed: %s, trying %s...",
+              backend_name(attach_backend), first_mode, strerror(errno),
+              second_mode);
+    ret = nmount(iov, iovlen, second_mount_flags);
     if (ret != 0) {
-      log_debug("  [UFS] nmount failed: %s", strerror(errno));
+      log_debug("  [IMG][%s] nmount failed: %s", backend_name(attach_backend),
+                strerror(errno));
       free_iovec(iov, iovlen);
-      detach_md_unit(mdio.md_unit);
+      detach_attached_unit(attach_backend, unit_id);
       return false;
     }
   }
   free_iovec(iov, iovlen);
 
-  log_debug("  [UFS] Mounted %s -> %s", devname, mount_point);
+  log_debug("  [IMG][%s] Mounted (%s) %s -> %s", backend_name(attach_backend),
+            image_fs_name(fs_type), devname, mount_point);
 
   // Cache it
-  cache_ufs_mount(file_path, mdio.md_unit);
+  cache_ufs_mount(file_path, unit_id, attach_backend);
 
   return true;
 }
 
 static void scan_ufs_images() {
+  if (should_stop_requested())
+    return;
+
   // UFS cache handles mount/unmount lifecycle only.
   for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
+    if (should_stop_requested())
+      return;
     if (ufs_cache[k].valid && access(ufs_cache[k].path, F_OK) != 0) {
-      log_debug("  [UFS] Source removed, unmounting: %s", ufs_cache[k].path);
-      unmount_ufs_image(ufs_cache[k].path, ufs_cache[k].md_unit);
+      log_debug("  [IMG][%s] Source removed, unmounting: %s",
+                backend_name(ufs_cache[k].backend), ufs_cache[k].path);
+      unmount_ufs_image(ufs_cache[k].path, ufs_cache[k].unit_id,
+                        ufs_cache[k].backend);
       ufs_cache[k].valid = false;
     }
   }
 
   for (int i = 0; SCAN_PATHS[i] != NULL; i++) {
+    if (should_stop_requested())
+      return;
     // Skip the UFS mount base itself to avoid recursion
     if (strcmp(SCAN_PATHS[i], UFS_MOUNT_BASE) == 0)
       continue;
@@ -546,9 +1298,14 @@ static void scan_ufs_images() {
 
     struct dirent *entry;
     while ((entry = readdir(d)) != NULL) {
+      if (should_stop_requested()) {
+        closedir(d);
+        return;
+      }
       if (entry->d_name[0] == '.')
         continue;
-      if (!is_ufs_image(entry->d_name))
+      image_fs_type_t fs_type = detect_image_fs_type(entry->d_name);
+      if (fs_type == IMAGE_FS_UNKNOWN)
         continue;
 
       char full_path[MAX_PATH];
@@ -560,7 +1317,7 @@ static void scan_ufs_images() {
       if (stat(full_path, &st) != 0 || !S_ISREG(st.st_mode))
         continue;
 
-      mount_ufs_image(full_path);
+      mount_ufs_image(full_path, fs_type);
     }
     closedir(d);
   }
@@ -570,8 +1327,18 @@ static void shutdown_ufs_mounts(void) {
   for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
     if (!ufs_cache[k].valid)
       continue;
-    unmount_ufs_image(ufs_cache[k].path, ufs_cache[k].md_unit);
+    unmount_ufs_image(ufs_cache[k].path, ufs_cache[k].unit_id,
+                      ufs_cache[k].backend);
     ufs_cache[k].valid = false;
+  }
+}
+
+static void shutdown_nullfs_mounts(void) {
+  for (int k = 0; k < MAX_NULLFS_MOUNTS; k++) {
+    if (!nullfs_cache[k].valid)
+      continue;
+    unmount_nullfs_mount(nullfs_cache[k].mount_point);
+    nullfs_cache[k].valid = false;
   }
 }
 
@@ -607,35 +1374,66 @@ bool get_game_info(const char *base_path, char *out_id, char *out_name) {
   char path[MAX_PATH];
   snprintf(path, sizeof(path), "%s/sce_sys/param.json", base_path);
   FILE *f = fopen(path, "rb");
-  if (f) {
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (len > 0) {
-      char *buf = (char *)malloc(len + 1);
-      if (buf) {
-        fread(buf, 1, len, f);
-        buf[len] = '\0';
-        int res = extract_json_string(buf, "titleId", out_id, MAX_TITLE_ID);
-        if (res != 0)
-          res = extract_json_string(buf, "title_id", out_id, MAX_TITLE_ID);
-        if (res == 0) {
-          const char *en_ptr = strstr(buf, "\"en-US\"");
-          const char *search_start = en_ptr ? en_ptr : buf;
-          if (extract_json_string(search_start, "titleName", out_name,
-                                  MAX_TITLE_NAME) != 0)
-            extract_json_string(buf, "titleName", out_name, MAX_TITLE_NAME);
-          if (strlen(out_name) == 0)
-            copy_cstr(out_name, MAX_TITLE_NAME, out_id);
-          free(buf);
-          fclose(f);
-          return true;
-        }
-        free(buf);
-      }
-    }
+  if (!f)
+    return false;
+
+  size_t cap = 4096;
+  size_t len = 0;
+  char *buf = (char *)malloc(cap + 1);
+  if (!buf) {
     fclose(f);
+    return false;
   }
+
+  bool read_ok = true;
+  while (read_ok) {
+    if (len == cap) {
+      if (cap > (SIZE_MAX / 2)) {
+        read_ok = false;
+        break;
+      }
+      size_t new_cap = cap * 2;
+      char *tmp = (char *)realloc(buf, new_cap + 1);
+      if (!tmp) {
+        read_ok = false;
+        break;
+      }
+      buf = tmp;
+      cap = new_cap;
+    }
+
+    size_t chunk = cap - len;
+    size_t n = fread(buf + len, 1, chunk, f);
+    len += n;
+    if (n < chunk) {
+      if (ferror(f))
+        read_ok = false;
+      break;
+    }
+  }
+  fclose(f);
+
+  if (!read_ok || len == 0) {
+    free(buf);
+    return false;
+  }
+
+  buf[len] = '\0';
+  int res = extract_json_string(buf, "titleId", out_id, MAX_TITLE_ID);
+  if (res != 0)
+    res = extract_json_string(buf, "title_id", out_id, MAX_TITLE_ID);
+  if (res == 0) {
+    const char *en_ptr = strstr(buf, "\"en-US\"");
+    const char *search_start = en_ptr ? en_ptr : buf;
+    if (extract_json_string(search_start, "titleName", out_name,
+                            MAX_TITLE_NAME) != 0)
+      extract_json_string(buf, "titleName", out_name, MAX_TITLE_NAME);
+    if (strlen(out_name) == 0)
+      copy_cstr(out_name, MAX_TITLE_NAME, out_id);
+    free(buf);
+    return true;
+  }
+  free(buf);
   return false;
 }
 
@@ -643,11 +1441,17 @@ bool get_game_info(const char *base_path, char *out_id, char *out_name) {
 int count_new_candidates() {
   int count = 0;
   for (int i = 0; SCAN_PATHS[i] != NULL; i++) {
+    if (should_stop_requested())
+      break;
     DIR *d = opendir(SCAN_PATHS[i]);
     if (!d)
       continue;
     struct dirent *entry;
     while ((entry = readdir(d)) != NULL) {
+      if (should_stop_requested()) {
+        closedir(d);
+        return count;
+      }
       if (entry->d_name[0] == '.')
         continue;
       char full_path[MAX_PATH];
@@ -656,10 +1460,23 @@ int count_new_candidates() {
 
       char title_id[MAX_TITLE_ID];
       char title_name[MAX_TITLE_NAME];
-      if (!get_game_info(full_path, title_id, title_name))
+      if (!get_game_info(full_path, title_id, title_name)) {
+        size_t ufs_prefix_len = strlen(UFS_MOUNT_BASE);
+        if (strncmp(full_path, UFS_MOUNT_BASE, ufs_prefix_len) == 0 &&
+            (full_path[ufs_prefix_len] == '/' || full_path[ufs_prefix_len] == '\0')) {
+          log_debug("  [SCAN] missing/invalid param.json: %s", full_path);
+        }
         continue;
-      if (is_installed(title_id) && is_data_mounted(title_id))
-        continue;
+      }
+      bool installed = is_installed(title_id);
+      bool mounted = is_data_mounted(title_id);
+      if (installed && mounted) {
+        char tracked_path[MAX_PATH];
+        if (read_mount_link(title_id, tracked_path, sizeof(tracked_path)) &&
+            strcmp(tracked_path, full_path) == 0) {
+          continue;
+        }
+      }
 
       bool already_seen = false;
       for (int k = 0; k < MAX_PENDING; k++) {
@@ -684,16 +1501,31 @@ bool mount_and_install(const char *src_path, const char *title_id,
   char user_app_dir[MAX_PATH];
   char user_sce_sys[MAX_PATH];
   char src_sce_sys[MAX_PATH];
+  bool nullfs_mounted = false;
 
   // MOUNT
   snprintf(system_ex_app, sizeof(system_ex_app), "/system_ex/app/%s", title_id);
   mkdir(system_ex_app, 0777);
-  remount_system_ex();
-  unmount(system_ex_app, 0);
+  if (remount_system_ex() != 0) {
+    log_debug("  [MOUNT] remount_system_ex failed: %s", strerror(errno));
+    return false;
+  }
+  if (unmount(system_ex_app, 0) != 0 && errno != ENOENT && errno != EINVAL) {
+    log_debug("  [MOUNT] pre-unmount failed for %s: %s, trying force...",
+              system_ex_app, strerror(errno));
+    if (unmount(system_ex_app, MNT_FORCE) != 0 && errno != ENOENT &&
+        errno != EINVAL) {
+      log_debug("  [MOUNT] pre-force-unmount failed for %s: %s", system_ex_app,
+                strerror(errno));
+      return false;
+    }
+  }
   if (mount_nullfs(src_path, system_ex_app) < 0) {
     log_debug("  [MOUNT] FAIL: %s", strerror(errno));
     return false;
   }
+  nullfs_mounted = true;
+  cache_nullfs_mount(system_ex_app);
 
   // COPY FILES
   if (!is_remount) {
@@ -703,12 +1535,23 @@ bool mount_and_install(const char *src_path, const char *title_id,
     mkdir(user_sce_sys, 0777);
 
     snprintf(src_sce_sys, sizeof(src_sce_sys), "%s/sce_sys", src_path);
-    copy_dir(src_sce_sys, user_sce_sys);
+    if (copy_dir(src_sce_sys, user_sce_sys) != 0) {
+      log_debug("  [COPY] Failed to copy sce_sys: %s -> %s", src_sce_sys,
+                user_sce_sys);
+      if (nullfs_mounted)
+        unmount_nullfs_mount(system_ex_app);
+      return false;
+    }
 
     char icon_src[MAX_PATH], icon_dst[MAX_PATH];
     snprintf(icon_src, sizeof(icon_src), "%s/sce_sys/icon0.png", src_path);
     snprintf(icon_dst, sizeof(icon_dst), "/user/app/%s/icon0.png", title_id);
-    copy_file(icon_src, icon_dst);
+    if (copy_file(icon_src, icon_dst) != 0) {
+      log_debug("  [COPY] Failed to copy icon: %s -> %s", icon_src, icon_dst);
+      if (nullfs_mounted)
+        unmount_nullfs_mount(system_ex_app);
+      return false;
+    }
   } else {
     log_debug("  [SPEED] Skipping file copy (Assets already exist)");
   }
@@ -734,15 +1577,21 @@ bool mount_and_install(const char *src_path, const char *title_id,
     // Silent on restore/remount to avoid spam
   } else {
     log_debug("  [REG] FAIL: 0x%x", res);
+    if (nullfs_mounted)
+      unmount_nullfs_mount(system_ex_app);
     return false;
   }
   return true;
 }
 
 void scan_all_paths() {
+  if (should_stop_requested())
+    return;
 
   // Cache Cleaner
   for (int k = 0; k < MAX_PENDING; k++) {
+    if (should_stop_requested())
+      return;
     if (cache[k].valid) {
       if (access(cache[k].path, F_OK) != 0) {
         cache[k].valid = false;
@@ -751,12 +1600,18 @@ void scan_all_paths() {
   }
 
   for (int i = 0; SCAN_PATHS[i] != NULL; i++) {
+    if (should_stop_requested())
+      return;
     DIR *d = opendir(SCAN_PATHS[i]);
     if (!d)
       continue;
 
     struct dirent *entry;
     while ((entry = readdir(d)) != NULL) {
+      if (should_stop_requested()) {
+        closedir(d);
+        return;
+      }
 
       if (entry->d_name[0] == '.')
         continue;
@@ -777,13 +1632,23 @@ void scan_all_paths() {
       char title_id[MAX_TITLE_ID];
       char title_name[MAX_TITLE_NAME];
       if (!get_game_info(full_path, title_id, title_name)) {
+        size_t ufs_prefix_len = strlen(UFS_MOUNT_BASE);
+        if (strncmp(full_path, UFS_MOUNT_BASE, ufs_prefix_len) == 0 &&
+            (full_path[ufs_prefix_len] == '/' || full_path[ufs_prefix_len] == '\0')) {
+          log_debug("  [SCAN] missing/invalid param.json: %s", full_path);
+        }
         continue;
       }
 
       // 1. Skip if perfect
       bool installed = is_installed(title_id);
-      if (installed && is_data_mounted(title_id)) {
-        continue;
+      bool mounted = is_data_mounted(title_id);
+      if (installed && mounted) {
+        char tracked_path[MAX_PATH];
+        if (read_mount_link(title_id, tracked_path, sizeof(tracked_path)) &&
+            strcmp(tracked_path, full_path) == 0) {
+          continue;
+        }
       }
 
       // 2. Decide Action
@@ -811,16 +1676,36 @@ void scan_all_paths() {
 }
 
 int main() {
+  int lock = -1;
+
   // Initialize services
   sceUserServiceInitialize(0);
   sceAppInstUtilInitialize();
   kernel_set_ucred_authid(-1, 0x4801000000000013L);
+  install_signal_handlers();
 
-  remove(LOCK_FILE);
-  remove(LOG_FILE);
   mkdir(LOG_DIR, 0777);
+  lock = open(LOCK_FILE, O_CREAT | O_RDWR, 0666);
+  if (lock < 0) {
+    printf("[LOCK] Failed to create %s: %s\n", LOCK_FILE, strerror(errno));
+    sceUserServiceTerminate();
+    return 1;
+  }
+  if (flock(lock, LOCK_EX | LOCK_NB) != 0) {
+    if (errno == EWOULDBLOCK || errno == EAGAIN) {
+      close(lock);
+      sceUserServiceTerminate();
+      return 0;
+    }
+    printf("[LOCK] Failed to lock %s: %s\n", LOCK_FILE, strerror(errno));
+    close(lock);
+    sceUserServiceTerminate();
+    return 1;
+  }
 
-  log_debug("SHADOWMOUNT v1.4 START exFAT");
+  remove(LOG_FILE);
+
+  log_debug("SHADOWMOUNT+ v1.4 START exFAT/UFS/LVD/MD");
 
   // --- MOUNT UFS IMAGES ---
   scan_ufs_images();
@@ -830,43 +1715,41 @@ int main() {
 
   if (new_games == 0) {
     // SCENARIO A: Nothing to do.
-    notify_system("ShadowMount v1.4 exFAT: Library Ready.\n- VoidWhisper");
+    notify_system("ShadowMount+ v1.4 exFAT/UFS: Library Ready.\n- VoidWhisper/Gezine/earthonion/Drakmor");
   } else {
     // SCENARIO B: Work needed.
-    notify_system("ShadowMount v1.4 exFAT: Found %d Games. Executing...", new_games);
+    notify_system("ShadowMount+ v1.4 exFAT/UFS: Found %d Games. Executing...", new_games);
 
     // Run the scan immediately to process them
     scan_all_paths();
 
     // Completion Message
-    notify_system("Library Synchronized. - VoidWhisper");
+    notify_system("Library Synchronized.");
   }
 
   // --- DAEMON LOOP ---
-  int lock = open(LOCK_FILE, O_CREAT | O_EXCL | O_RDWR, 0666);
-  if (lock < 0 && errno == EEXIST) {
-    sceUserServiceTerminate();
-    return 0;
-  }
-
   while (true) {
-    if (access(KILL_FILE, F_OK) == 0) {
-      remove(KILL_FILE);
+    if (should_stop_requested()) {
+      log_debug("[SHUTDOWN] stop requested");
       break;
     }
 
     // Sleep FIRST since we either just finished scan above, or library was
     // ready.
-    sceKernelUsleep(SCAN_INTERVAL_US);
+    if (sleep_with_stop_check(SCAN_INTERVAL_US)) {
+      log_debug("[SHUTDOWN] stop requested during sleep");
+      break;
+    }
 
     scan_ufs_images();
     scan_all_paths();
   }
 
-  if (lock >= 0)
-    close(lock);
+  shutdown_nullfs_mounts();
   shutdown_ufs_mounts();
-  remove(LOCK_FILE);
+  if (lock >= 0) {
+    close(lock);
+  }
   sceUserServiceTerminate();
   return 0;
 }
