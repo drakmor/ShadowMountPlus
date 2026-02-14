@@ -45,14 +45,31 @@
 #define EXFAT_ATTACH_USE_MDCTL 1
 
 // --- LVD Definitions ---
+// Observed parameter variants in refs/libSceFsInternalForVsh.sprx.c:
+// - ioctl: ATTACH=0xC0286D00, DETACH=0xC0286D01, ATTACH2 path=0xC0286D09.
+// - option flags accepted by sceFsLvdAttachSingleImage input: bits {0x1,0x4,0x8}.
+// - shell single-image flow uses option flags 0x8 (RO/default) and 0x9 (RW).
+// - option_len derived from option flags: 0x8->0x14, 0x9->0x1C.
+// - image_type values accepted by validator: 0..0xC (13 values total).
+//   current code uses image_type=0 (single image).
+// - layer source_type observed: 1=file, 2=char/block-like source (/dev/sbram0).
+// - layer entry flag bit0 is "no bitmap file specified".
 #define LVD_CTRL_PATH "/dev/lvdctl"
 #define MD_CTRL_PATH "/dev/mdctl"
 #define SCE_LVD_IOC_ATTACH 0xC0286D00
 #define SCE_LVD_IOC_DETACH 0xC0286D01
 #define LVD_ATTACH_IO_VERSION 1
+// Observed SC for shell-compatible attach payload.
 #define LVD_ATTACH_SC 0x0001000000000002ULL
 #define LVD_ATTACH_OPTION_FLAGS_DEFAULT 0x8
 #define LVD_ATTACH_OPTION_FLAGS_RW 0x9
+// Raw option bits are normalized by sceFsLvdAttachCommon before validation:
+// raw:0x1->norm:0x08, raw:0x2->norm:0x80, raw:0x4->norm:0x02, raw:0x8->norm:0x10.
+// The normalized masks are then checked against validator constraints (0x82/0x92).
+// Reference notes: docs/fs_mounting_re_notes.md ("Raw option bits -> validator bits").
+// LVD image type 0 is the "single image" path used by this project.
+// Other image types (for example 5/7/12) are used by transaction/download/partial flows,
+// but are intentionally not used by this single-image attach path.
 #define LVD_ATTACH_IMAGE_TYPE 0
 #define LVD_ATTACH_LAYER_COUNT 1
 #define LVD_ATTACH_LAYER_ARRAY_SIZE 3
@@ -62,22 +79,30 @@
 #define LVD_NODE_WAIT_RETRIES 100
 
 // --- devpfs/pfs option profiles  ---
+// PFS nmount key/value variants observed in refs:
+// - fstype: "pfs", "transaction_pfs", "ppr_pfs"
+// - mkeymode: "SD"
+// - budgetid:  "game"/"system" in init paths
+// - sigverify/playgo/disc: "0" or "1"
+// - optional keys in specific flows: ekpfs/eekpfs, eekc, pubkey_ver, key_ver,
+//   finalized, ppkg_opt, sblock_offset, maxpkgszingib
 #define DEVPFS_BUDGET_GAME "game"
 #define DEVPFS_BUDGET_SYSTEM "system"
 #define DEVPFS_MKEYMODE_SD "SD"
 
-#define DEVPFS_MOUNT_FLAG_CREATE_WS 0x0001u
-#define DEVPFS_MOUNT_FLAG_MULTIMNT 0x0002u
-#define DEVPFS_MOUNT_FLAG_BLKONRESLV 0x0004u
-#define DEVPFS_MOUNT_FLAG_HOTUPDATE 0x0010u
-#define DEVPFS_MOUNT_FLAG_NOMULTILAYEREDMNT 0x0080u
-#define DEVPFS_MOUNT_FLAG_FSMPSTAT 0x0100u
-#define DEVPFS_MOUNT_FLAG_BLKONREAD 0x0200u
-#define DEVPFS_MOUNT_FLAG_IGNORESPARSE 0x0400u
-#define DEVPFS_MOUNT_FLAG_FORCERW 0x1000u
-#define DEVPFS_MOUNT_FLAG_FGC_DEPLOYED 0x2000u
-#define DEVPFS_MOUNT_FLAG_WS_MGMT 0x4000u
-#define DEVPFS_MOUNT_FLAG_NORWMNT 0x8000u
+// devpfs mount flag bit to nmount-key mapping (FSMP path):
+#define DEVPFS_MOUNT_FLAG_CREATE_WS 0x0001u          // create workspace
+#define DEVPFS_MOUNT_FLAG_MULTIMNT 0x0002u           // "multimnt"
+#define DEVPFS_MOUNT_FLAG_BLKONRESLV 0x0004u         // "blkonreslv"
+#define DEVPFS_MOUNT_FLAG_HOTUPDATE 0x0010u          // "hotupdate"
+#define DEVPFS_MOUNT_FLAG_NOMULTILAYEREDMNT 0x0080u  // "nomultilayeredmnt"
+#define DEVPFS_MOUNT_FLAG_FSMPSTAT 0x0100u           // "fsmpstat"
+#define DEVPFS_MOUNT_FLAG_BLKONREAD 0x0200u          // "blkonread"
+#define DEVPFS_MOUNT_FLAG_IGNORESPARSE 0x0400u       // "ignoresparse"
+#define DEVPFS_MOUNT_FLAG_FORCERW 0x1000u            // "forcerw"
+#define DEVPFS_MOUNT_FLAG_FGC_DEPLOYED 0x2000u       // "fgc-deployed"
+#define DEVPFS_MOUNT_FLAG_WS_MGMT 0x4000u            // "ws-mgmt"
+#define DEVPFS_MOUNT_FLAG_NORWMNT 0x8000u            // "norwmnt"
 
 #define DEVPFS_FLAGS_SHELL_DEFAULT 0x0032u
 #define DEVPFS_FLAGS_SHELL_FGC 0x009Fu
@@ -122,9 +147,9 @@ typedef struct {
   const char *name;
   // Preferred mount mode for initial nmount/attach attempt.
   bool read_only;
-  // PFS nmount "budgetid".
+  // PFS nmount "budgetid" ("game", "system").
   const char *budget_id;
-  // PFS nmount "mkeymode".
+  // PFS nmount "mkeymode" ("SD").
   const char *mkeymode;
   // PFS nmount "sigverify" (0/1).
   bool sigverify;
@@ -145,9 +170,9 @@ static const pfs_mount_profile_t k_pfs_profile_shell_default = {
 };
 
 typedef struct {
-  // 1=file, 2=block device, etc. (kernel-defined values).
+  // Source object class (observed: 1=file, 2=device-like source).
   uint16_t source_type;
-  // Layer behavior flags (e.g. no bitmap mapping).
+  // Layer behavior flags (observed bit0 = no bitmap file path).
   uint8_t entry_flags;
   // Must be zero.
   uint8_t reserved0;
@@ -168,15 +193,15 @@ typedef struct {
 } lvd_kernel_layer_t;
 
 typedef struct {
-  // Protocol version for /dev/lvdctl ioctl payload.
+  // Protocol version for /dev/lvdctl ioctl payload (valid <=1).
   uint32_t io_version;
   // Input: usually -1 for auto-assign. Output: created lvd unit id.
   int32_t device_id;
-  // Security/context selector used by shell callers.
+  // Security/context selector used by shell callers (this project uses 0x...0002).
   uint64_t sc;
-  // Encoded option length derived from option flags.
+  // Encoded option length derived from option flags (0x14 for 0x8, 0x1C for 0x9).
   uint16_t option_len;
-  // LVD image type id (0 for regular single-image flow).
+  // LVD image type id (validator accepts 0..0xC; this code uses 0).
   uint16_t image_type;
   // Number of valid entries in layers_ptr.
   uint32_t layer_count;
@@ -727,7 +752,11 @@ static bool wait_for_md_node_state(int unit_id, bool should_exist) {
 }
 
 static uint16_t lvd_option_len_from_flags(uint16_t options) {
-  // Mirrors sceFsLvdAttachSingleDefaultImage option-size logic.
+  // Exact mirror of dr_lvd_attach_sub_7810 option-size derivation:
+  // refs/libSceFsInternalForVsh.sprx.c (sceFsLvdAttachCommon, around +0x8295).
+  // Practical values for this project:
+  // - flags 0x8 (default/RO): option_len 0x14
+  // - flags 0x9 (RW):         option_len 0x1C
   if ((options & 0x800E) != 0) {
     return (uint16_t)((options & 0xFFFF8000) + ((options & 2) << 6) +
                       (8 * (options & 1)) + (2 * ((options >> 2) & 1)) +
@@ -1205,6 +1234,9 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     const char *sigverify = pfs_profile->sigverify ? "1" : "0";
     const char *playgo = pfs_profile->playgo ? "1" : "0";
     const char *disc = pfs_profile->disc ? "1" : "0";
+    // PFS mount requires this key set for shell-compatible behavior:
+    // sigverify, mkeymode, budgetid, playgo, disc, errmsg.
+    // Keep these explicit even when values are "0"/defaults.
     log_debug("  [IMG][%s] PFS profile=%s ro=%d budgetid=%s mkeymode=%s "
               "sigverify=%s playgo=%s disc=%s",
               backend_name(attach_backend), pfs_profile->name,
