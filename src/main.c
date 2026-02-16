@@ -32,6 +32,7 @@
 #define MAX_NULLFS_MOUNTS MAX_PENDING
 #define MAX_FAILED_MOUNT_ATTEMPTS 3
 #define MAX_MISSING_PARAM_SCAN_ATTEMPTS 3
+#define MAX_IMAGE_MOUNT_ATTEMPTS 3
 #define MAX_PATH 1024
 #define MAX_TITLE_ID 32
 #define MAX_TITLE_NAME 256
@@ -65,13 +66,15 @@
 #define LVD_ATTACH_OPTION_NORM_DD_RO 0x16
 #define LVD_ATTACH_OPTION_NORM_DD_RW 0x1E
 #define LVD_SECTOR_SIZE_EXFAT 512u
-#define LVD_SECTOR_SIZE_UFS_PFS 4096u
+#define LVD_SECTOR_SIZE_UFS 4096u
+#define LVD_SECTOR_SIZE_PFS 4096u
 
 // Raw option bits are normalized by sceFsLvdAttachCommon before validation:
 // raw:0x1->norm:0x08, raw:0x2->norm:0x80, raw:0x4->norm:0x02, raw:0x8->norm:0x10.
 // The normalized masks are then checked against validator constraints (0x82/0x92).
 #define LVD_ATTACH_IMAGE_TYPE 0
 #define LVD_ATTACH_IMAGE_TYPE_UFS_DOWNLOAD_DATA 7
+#define LVD_ATTACH_IMAGE_TYPE_PFS_SAVE_DATA 5
 #define LVD_ATTACH_LAYER_COUNT 1
 #define LVD_ATTACH_LAYER_ARRAY_SIZE 3
 #define LVD_ENTRY_TYPE_FILE 1
@@ -91,6 +94,9 @@
 #define DEVPFS_BUDGET_GAME "game"
 #define DEVPFS_BUDGET_SYSTEM "system"
 #define DEVPFS_MKEYMODE_SD "SD"
+// 4x64-bit PFS key encoded as 64 hex chars (same effective zero key as makepfs.c).
+#define PFS_ZERO_EKPFS_KEY_HEX \
+  "0000000000000000000000000000000000000000000000000000000000000000"
 
 // devpfs mount flag bit to nmount-key mapping (FSMP path):
 #define DEVPFS_MOUNT_FLAG_CREATE_WS 0x0001u          // create workspace
@@ -163,8 +169,8 @@ typedef struct {
 
 static const pfs_mount_profile_t k_pfs_profile_shell_default = {
     .name = "shell_default",
-    .read_only = true,
-    .budget_id = DEVPFS_BUDGET_GAME,
+    .read_only = false,
+    .budget_id = DEVPFS_BUDGET_SYSTEM,
     .mkeymode = DEVPFS_MKEYMODE_SD,
     .sigverify = false,
     .playgo = false,
@@ -293,7 +299,9 @@ struct AttemptCache {
   char title_id[MAX_TITLE_ID];
   uint8_t mount_reg_attempts;
   uint8_t config_attempts;
+  uint8_t image_mount_attempts;
   bool config_limit_logged;
+  bool image_mount_limit_logged;
   bool valid;
 };
 struct AttemptCache attempt_cache[MAX_PENDING];
@@ -388,7 +396,9 @@ static struct AttemptCache *get_or_create_attempt_entry(const char *path) {
     attempt_cache[k].title_id[0] = '\0';
     attempt_cache[k].mount_reg_attempts = 0;
     attempt_cache[k].config_attempts = 0;
+    attempt_cache[k].image_mount_attempts = 0;
     attempt_cache[k].config_limit_logged = false;
+    attempt_cache[k].image_mount_limit_logged = false;
     attempt_cache[k].valid = true;
     return &attempt_cache[k];
   }
@@ -411,7 +421,9 @@ static void prune_attempt_cache(void) {
     attempt_cache[k].valid = false;
     attempt_cache[k].mount_reg_attempts = 0;
     attempt_cache[k].config_attempts = 0;
+    attempt_cache[k].image_mount_attempts = 0;
     attempt_cache[k].config_limit_logged = false;
+    attempt_cache[k].image_mount_limit_logged = false;
     attempt_cache[k].path[0] = '\0';
     attempt_cache[k].title_id[0] = '\0';
   }
@@ -482,6 +494,37 @@ static uint8_t bump_failed_mount_attempts(const char *path,
   if (entry->mount_reg_attempts < UINT8_MAX)
     entry->mount_reg_attempts++;
   return entry->mount_reg_attempts;
+}
+
+static bool is_image_mount_limited(const char *path) {
+  struct AttemptCache *entry = find_attempt_entry(path);
+  if (!entry)
+    return false;
+  return entry->image_mount_attempts >= MAX_IMAGE_MOUNT_ATTEMPTS;
+}
+
+static uint8_t bump_image_mount_attempts(const char *path) {
+  struct AttemptCache *entry = get_or_create_attempt_entry(path);
+  if (!entry)
+    return MAX_IMAGE_MOUNT_ATTEMPTS;
+  if (entry->image_mount_attempts < UINT8_MAX)
+    entry->image_mount_attempts++;
+  if (entry->image_mount_attempts >= MAX_IMAGE_MOUNT_ATTEMPTS &&
+      !entry->image_mount_limit_logged) {
+    log_debug("  [IMG] retry limit reached (%u/%u), skipping image: %s",
+              (unsigned)entry->image_mount_attempts,
+              (unsigned)MAX_IMAGE_MOUNT_ATTEMPTS, path);
+    entry->image_mount_limit_logged = true;
+  }
+  return entry->image_mount_attempts;
+}
+
+static void clear_image_mount_attempts(const char *path) {
+  struct AttemptCache *entry = find_attempt_entry(path);
+  if (!entry)
+    return;
+  entry->image_mount_attempts = 0;
+  entry->image_mount_limit_logged = false;
 }
 
 static void cache_ufs_mount(const char *path, int unit_id,
@@ -894,8 +937,9 @@ static bool wait_for_md_node_state(int unit_id, bool should_exist) {
 static uint32_t get_lvd_sector_size(image_fs_type_t fs_type) {
   switch (fs_type) {
   case IMAGE_FS_UFS:
+    return LVD_SECTOR_SIZE_UFS;
   case IMAGE_FS_PFS:
-    return LVD_SECTOR_SIZE_UFS_PFS;
+    return LVD_SECTOR_SIZE_PFS;
   case IMAGE_FS_EXFAT:
   default:
     return LVD_SECTOR_SIZE_EXFAT;
@@ -1304,8 +1348,11 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     lvd_ioctl_attach_t req;
     memset(&req, 0, sizeof(req));
     req.io_version = LVD_ATTACH_IO_VERSION;
-    req.image_type = (fs_type == IMAGE_FS_UFS) ? LVD_ATTACH_IMAGE_TYPE_UFS_DOWNLOAD_DATA
-                                               : LVD_ATTACH_IMAGE_TYPE;
+    req.image_type = (fs_type == IMAGE_FS_UFS)
+                         ? LVD_ATTACH_IMAGE_TYPE_UFS_DOWNLOAD_DATA
+                         : (fs_type == IMAGE_FS_PFS)
+                               ? LVD_ATTACH_IMAGE_TYPE_PFS_SAVE_DATA
+                               : LVD_ATTACH_IMAGE_TYPE;
     req.layer_count = LVD_ATTACH_LAYER_COUNT;
     req.device_size = (uint64_t)st.st_size;
     req.layers_ptr = layers;
@@ -1324,6 +1371,16 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
       } else {
         attach_options[option_flags_count++] = LVD_ATTACH_OPTION_NORM_DD_RO;
       }
+    } else if (fs_type == IMAGE_FS_PFS) {
+      // Match sceFsMountSaveData opt mapping:
+      // ro=0 -> option 0x8, ro=1 -> option 0x9.
+      unsigned int pfs_opt = mount_read_only ? 1u : 0u;
+      uint16_t primary_opt =
+          (uint16_t)(LVD_ATTACH_OPTION_FLAGS_DEFAULT - ((pfs_opt == 0u) - 1u));
+      uint16_t fallback_opt = (uint16_t)(LVD_ATTACH_OPTION_FLAGS_DEFAULT -
+                                         ((((pfs_opt ^ 1u) == 0u) - 1u)));
+      attach_options[option_flags_count++] = primary_opt;
+      attach_options[option_flags_count++] = fallback_opt;
     } else {
       if (prefer_rw) {
         attach_options[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_RW;
@@ -1416,11 +1473,12 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     const char *sigverify = pfs_profile->sigverify ? "1" : "0";
     const char *playgo = pfs_profile->playgo ? "1" : "0";
     const char *disc = pfs_profile->disc ? "1" : "0";
+    const char *ekpfs_key = PFS_ZERO_EKPFS_KEY_HEX;
     // PFS mount requires this key set for shell-compatible behavior:
-    // sigverify, mkeymode, budgetid, playgo, disc, errmsg.
+    // sigverify, mkeymode, budgetid, playgo, disc, ekpfs, errmsg.
     // Keep these explicit even when values are "0"/defaults.
     log_debug("  [IMG][%s] PFS profile=%s ro=%d budgetid=%s mkeymode=%s "
-              "sigverify=%s playgo=%s disc=%s",
+              "sigverify=%s playgo=%s disc=%s ekpfs=zero",
               backend_name(attach_backend), pfs_profile->name,
               pfs_profile->read_only ? 1 : 0, pfs_profile->budget_id,
               pfs_profile->mkeymode, sigverify, playgo, disc);
@@ -1435,6 +1493,7 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
                          (size_t)-1) &&
              build_iovec(&iov, &iovlen, "playgo", playgo, (size_t)-1) &&
              build_iovec(&iov, &iovlen, "disc", disc, (size_t)-1) &&
+             build_iovec(&iov, &iovlen, "ekpfs", ekpfs_key, (size_t)-1) &&
              build_iovec(&iov, &iovlen, "errmsg", mount_errmsg,
                          sizeof(mount_errmsg));
   }
@@ -1460,6 +1519,13 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     second_mount_flags = UFS_NMOUNT_FLAG_BASE - (((ufs_opt ^ 1u) == 0u) - 1u);
     first_mode = mount_read_only ? "dd_ro" : "dd_rw";
     second_mode = mount_read_only ? "dd_rw" : "dd_ro";
+  } else if (fs_type == IMAGE_FS_PFS) {
+    // Match sceFsMountSaveData behavior: flags depend on requested ro mode.
+    first_mount_flags = mount_read_only ? MNT_RDONLY : 0;
+    second_mount_flags = mount_read_only ? 0 : MNT_RDONLY;
+    first_mode = mount_read_only ? "rdonly" : "rw";
+    second_mode = mount_read_only ? "rw" : "rdonly";
+    allow_mount_mode_fallback = true;
   } else if (!mount_read_only) {
     first_mount_flags = 0;
     second_mount_flags = MNT_RDONLY;
@@ -1558,7 +1624,14 @@ static void scan_ufs_images() {
       if (stat(full_path, &st) != 0 || !S_ISREG(st.st_mode))
         continue;
 
-      mount_ufs_image(full_path, fs_type);
+      if (is_image_mount_limited(full_path))
+        continue;
+
+      if (mount_ufs_image(full_path, fs_type)) {
+        clear_image_mount_attempts(full_path);
+      } else {
+        bump_image_mount_attempts(full_path);
+      }
     }
     closedir(d);
   }
