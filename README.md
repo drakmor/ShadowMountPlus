@@ -77,7 +77,7 @@ ShadowMount scans these locations:
 Linux (Ubuntu/Debian):
 - `sudo apt-get install -y exfatprogs exfat-fuse fuse3 rsync`
 - `truncate -s <image_size> test.exfat`
-- `mkfs.exfat -c 512 test.exfat`
+- `mkfs.exfat -c 32768 test.exfat`
 - `mkdir -p /mnt/exfat`
 - `mount -t exfat-fuse -o loop test.exfat /mnt/exfat`
 - `rsync -r --info=progress2 APPXXXX/ /mnt/exfat/`
