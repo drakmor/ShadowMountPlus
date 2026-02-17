@@ -1,27 +1,53 @@
-# ShadowMount (PS5)
+# ShadowMountPlus (PS5)
 
+**Version:** `1.5beta`
 
 Thanks for ffpkg support: @Gezine, @earthonion and @VoidWhisper for ShadowMount
 
 
-**ShadowMount** is a fully automated, background "Auto-Mounter" payload for Jailbroken PlayStation 5 consoles. It streamlines the game mounting process by eliminating the need for manual configuration or external tools (such as DumpRunner or Itemzflow). ShadowMount automatically detects, mounts, and installs game dumps from both **internal and external storage**.
+**ShadowMountPlus** is a fully automated, background "Auto-Mounter" payload for Jailbroken PlayStation 5 consoles. It streamlines the game mounting process by eliminating the need for manual configuration or external tools (such as DumpRunner or Itemzflow). ShadowMount automatically detects, mounts, and installs game dumps from both **internal and external storage**.
+
 
 **Compatibility:** Supports all Jailbroken PS5 firmwares running **Kstuff v1.6.7**.
 
 
 ## Current image support
 
-`UFS/PFS support is experimental.`
+`PFS support is experimental.`
 
 | Extension | Mounted FS | Attach backend | Status |
 | --- | --- | --- | --- |
-| `.exfat` | `exfatfs` | `/dev/mdctl` by default | Recommended |
-| `.ffpkg` | `ufs` | `/dev/lvdctl` | Experimental |
-| `.ffpfs` | `pfs` | `/dev/lvdctl` | Experimental |
+| `.exfat` | `exfatfs` | `LVD` or `MD` (configurable) | Stable |
+| `.ffpkg` | `ufs` | `LVD` or `MD` (configurable) | High performance |
+| `.ffpfs` | `pfs` | `LVD` | Experimental |
 
 Notes:
-- `.exfat` can be switched to LVD backend by changing `EXFAT_ATTACH_USE_MDCTL` (not working)
-- PFS mount uses a shell-like profile (`budgetid/mkeymode/sigverify/playgo/disc`) from code defaults.
+- Backend, read-only mode, and sector size can be configured via `/data/shadowmount/config.ini`.
+
+## Recommended FS choice
+
+- Prefer **UFS (`.ffpkg`)** for games that work correctly on UFS: it is generally more performant.
+- Use **exFAT (`.exfat`)** for games that only work from external-disk style layouts, because exFAT is case-insensitive.
+
+## Runtime config (`/data/shadowmount/config.ini`)
+
+This file is optional. If it does not exist, built-in defaults are used.
+
+Supported keys (all optional):
+- `mount_read_only=1|0`
+- `exfat_backend=lvd|md`
+- `ufs_backend=lvd|md`
+- `exfat_sector_size=<value>`
+- `ufs_sector_size=<value>`
+- `pfs_sector_size=<value>`
+- `lvd_exfat_sector_size=<value>`
+- `lvd_ufs_sector_size=<value>`
+- `lvd_pfs_sector_size=<value>`
+- `md_exfat_sector_size=<value>`
+- `md_ufs_sector_size=<value>`
+
+Validation:
+- See `config.ini.example` for a ready-to-use template.
 
 ## Mount point naming
 
@@ -72,10 +98,6 @@ Windows:
 - Optional (fixed size): run PowerShell script directly:
   - `powershell.exe -ExecutionPolicy Bypass -File .\New-OsfExfatImage.ps1 -ImagePath "C:\images\game.exfat" -SourceDir "C:\payload\APPXXXX" -Size 8G -ForceOverwrite`
 
-## Why UFS can be problematic
-
-UFS is case-sensitive, while many PKG/game paths expect case-insensitive behavior. Because of that, some titles may fail or behave incorrectly when mounted from UFS images. This is one reason why UFS support is marked experimental.
-
 ## Installation and usage
 
 
@@ -84,7 +106,7 @@ Use a payload sender (such as NetCat GUI or a web-based loader) to send the file
 
 1.  Send `notify.elf` (Optional).
     * *Only send this if you want graphical pop-ups. Skip if you prefer standard notifications.*
-2.  Send `shadowmount.elf`.
+2.  Send `shadowmountplus.elf`.
 3.  Wait for the notification: *"ShadowMount"*.
 
 ### Method 2: PLK Autoloader (Recommended)
@@ -97,7 +119,7 @@ kstuff.elf
 !1000
 notify.elf  ; Optional - Remove this line if you do not want Rich Toasts
 !1000
-shadowmount.elf
+shadowmountplus.elf
 ```
 
 ---

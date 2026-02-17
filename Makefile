@@ -11,11 +11,11 @@ LDFLAGS := -L$(LIBdir)
 LIBS := -lkernel_sys -lSceSystemService -lSceUserService -lSceAppInstUtil
 
 # Targets
-all: shadowmount.elf
+all: shadowmountplus.elf
 
 # Build Daemon
-shadowmount.elf: src/main.c
+shadowmountplus.elf: src/main.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LIBS)
 
 clean:
-	rm -f shadowmount.elf kill.elf src/*.o
+	rm -f shadowmountplus.elf kill.elf src/*.o

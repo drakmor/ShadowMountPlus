@@ -1,0 +1,33 @@
+# ShadowMount runtime config example
+# Place as: /data/shadowmount/config.ini
+#
+# All keys are optional.
+# If a key is missing, built-in defaults are used.
+
+# Global mount mode:
+# 1/true/yes/on/ro  -> read-only mounts
+# 0/false/no/off/rw -> read-write mounts
+mount_read_only=1
+
+# Backend selection per filesystem:
+# lvd   -> /dev/lvdctl -> /dev/lvdN
+# md    -> /dev/mdctl  -> /dev/mdN
+exfat_backend=lvd
+ufs_backend=lvd
+
+# Common sector-size shortcuts (apply to both LVD and MD where applicable):
+# exfat_sector_size -> lvd_exfat_sector_size + md_exfat_sector_size
+# ufs_sector_size   -> lvd_ufs_sector_size   + md_ufs_sector_size
+# pfs_sector_size   -> lvd_pfs_sector_size
+#
+exfat_sector_size=512
+ufs_sector_size=4096
+pfs_sector_size=32768
+
+# Backend-specific overrides (optional):
+# lvd_exfat_sector_size=512
+# lvd_ufs_sector_size=4096
+# lvd_pfs_sector_size=32768
+# md_exfat_sector_size=512
+# md_ufs_sector_size=512
+

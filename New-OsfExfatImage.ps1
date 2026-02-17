@@ -211,8 +211,6 @@ function Invoke-FormatVolume([string]$driveLetter, [string]$fileSystem, [int]$cl
 
   $attempts = @(
     @{ Name = "$fileSystem quick with requested allocation unit"; Args = @($target, "/FS:$fileSystem", "/A:$clusterSize", "/Q", "/V:$label", "/X", "/Y") },
-    @{ Name = "$fileSystem quick with default allocation unit";   Args = @($target, "/FS:$fileSystem",                  "/Q", "/V:$label", "/X", "/Y") },
-    @{ Name = "$fileSystem full with default allocation unit";    Args = @($target, "/FS:$fileSystem",                        "/V:$label", "/X", "/Y") }
   )
 
   $lastFormatExitCode = -1

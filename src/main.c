@@ -30,25 +30,30 @@
 #define MAX_PENDING 512
 #define MAX_UFS_MOUNTS 64
 #define MAX_NULLFS_MOUNTS MAX_PENDING
-#define MAX_FAILED_MOUNT_ATTEMPTS 3
+#define MAX_FAILED_MOUNT_ATTEMPTS 1
 #define MAX_MISSING_PARAM_SCAN_ATTEMPTS 3
 #define MAX_IMAGE_MOUNT_ATTEMPTS 3
+#define IMAGE_MOUNT_READ_ONLY 1
 #define MAX_PATH 1024
 #define MAX_TITLE_ID 32
 #define MAX_TITLE_NAME 256
 #define UFS_MOUNT_BASE "/data/ufsmnt"
 #define LOG_DIR "/data/shadowmount"
 #define LOG_FILE "/data/shadowmount/debug.log"
+#define CONFIG_FILE "/data/shadowmount/config.ini"
 #define LOCK_FILE "/data/shadowmount/daemon.lock"
 #define KILL_FILE "/data/shadowmount/STOP"
 #define TOAST_FILE "/data/shadowmount/notify.txt"
-#define IOVEC_ENTRY(x) {(void *)(x), (x) ? strlen(x) + 1 : 0}
+#define IOVEC_ENTRY(x)                                                        \
+  {(void *)(x),                                                               \
+   ((const char *)(x) == NULL ? 0u : (size_t)(strlen((const char *)(x)) + 1u))}
 #define IOVEC_SIZE(x) (sizeof(x) / sizeof(struct iovec))
 // 1 = use legacy /dev/mdctl backend for .exfat images, 0 = use LVD for all.
 #define EXFAT_ATTACH_USE_MDCTL 0
+// 1 = allow mounting .ffpkg images via /dev/mdctl, 0 = keep UFS on LVD.
+#define UFS_ATTACH_USE_MDCTL 0
 
 // --- LVD Definitions ---
-// Observed parameter variants in refs/libSceFsInternalForVsh.sprx.c:
 // - ioctl: ATTACH=0xC0286D00, DETACH=0xC0286D01, ATTACH2 path=0xC0286D09.
 // - single-image path uses raw option flags 0x8/0x9 -> normalized 0x14/0x1C.
 // - DownloadData/LWFS path (imgtype=7) uses normalized options 0x16/0x1E.
@@ -67,14 +72,16 @@
 #define LVD_ATTACH_OPTION_NORM_DD_RW 0x1E
 #define LVD_SECTOR_SIZE_EXFAT 512u
 #define LVD_SECTOR_SIZE_UFS 4096u
-#define LVD_SECTOR_SIZE_PFS 4096u
+#define LVD_SECTOR_SIZE_PFS 32768u
+#define MD_SECTOR_SIZE_EXFAT 512u
+#define MD_SECTOR_SIZE_UFS 512u
 
 // Raw option bits are normalized by sceFsLvdAttachCommon before validation:
 // raw:0x1->norm:0x08, raw:0x2->norm:0x80, raw:0x4->norm:0x02, raw:0x8->norm:0x10.
 // The normalized masks are then checked against validator constraints (0x82/0x92).
 #define LVD_ATTACH_IMAGE_TYPE 0
 #define LVD_ATTACH_IMAGE_TYPE_UFS_DOWNLOAD_DATA 7
-#define LVD_ATTACH_IMAGE_TYPE_PFS_SAVE_DATA 5
+#define LVD_ATTACH_IMAGE_TYPE_PFS_SAVE_DATA 0 // also works 5
 #define LVD_ATTACH_LAYER_COUNT 1
 #define LVD_ATTACH_LAYER_ARRAY_SIZE 3
 #define LVD_ENTRY_TYPE_FILE 1
@@ -83,7 +90,7 @@
 #define LVD_NODE_WAIT_RETRIES 100
 #define UFS_NMOUNT_FLAG_BASE 0x10000000u
 
-// --- devpfs/pfs option profiles  ---
+// --- devpfs/pfs option defaults ---
 // PFS nmount key/value variants observed in refs:
 // - fstype: "pfs", "transaction_pfs", "ppr_pfs"
 // - mkeymode: "SD"
@@ -94,28 +101,19 @@
 #define DEVPFS_BUDGET_GAME "game"
 #define DEVPFS_BUDGET_SYSTEM "system"
 #define DEVPFS_MKEYMODE_SD "SD"
+#define DEVPFS_MKEYMODE_GD "GD"
+#define DEVPFS_MKEYMODE_AC "AC"
+#define PFS_MOUNT_BUDGET_ID DEVPFS_BUDGET_GAME
+#define PFS_MOUNT_MKEYMODE DEVPFS_MKEYMODE_SD
+#define PFS_MOUNT_SIGVERIFY 0
+#define PFS_MOUNT_PLAYGO 0
+#define PFS_MOUNT_DISC 0
+
 // 4x64-bit PFS key encoded as 64 hex chars (same effective zero key as makepfs.c).
 #define PFS_ZERO_EKPFS_KEY_HEX \
   "0000000000000000000000000000000000000000000000000000000000000000"
 
-// devpfs mount flag bit to nmount-key mapping (FSMP path):
-#define DEVPFS_MOUNT_FLAG_CREATE_WS 0x0001u          // create workspace
-#define DEVPFS_MOUNT_FLAG_MULTIMNT 0x0002u           // "multimnt"
-#define DEVPFS_MOUNT_FLAG_BLKONRESLV 0x0004u         // "blkonreslv"
-#define DEVPFS_MOUNT_FLAG_HOTUPDATE 0x0010u          // "hotupdate"
-#define DEVPFS_MOUNT_FLAG_NOMULTILAYEREDMNT 0x0080u  // "nomultilayeredmnt"
-#define DEVPFS_MOUNT_FLAG_FSMPSTAT 0x0100u           // "fsmpstat"
-#define DEVPFS_MOUNT_FLAG_BLKONREAD 0x0200u          // "blkonread"
-#define DEVPFS_MOUNT_FLAG_IGNORESPARSE 0x0400u       // "ignoresparse"
-#define DEVPFS_MOUNT_FLAG_FORCERW 0x1000u            // "forcerw"
-#define DEVPFS_MOUNT_FLAG_FGC_DEPLOYED 0x2000u       // "fgc-deployed"
-#define DEVPFS_MOUNT_FLAG_WS_MGMT 0x4000u            // "ws-mgmt"
-#define DEVPFS_MOUNT_FLAG_NORWMNT 0x8000u            // "norwmnt"
 
-#define DEVPFS_FLAGS_SHELL_DEFAULT 0x0032u
-#define DEVPFS_FLAGS_SHELL_FGC 0x009Fu
-#define DEVPFS_FLAGS_SHELL_FGC_DISC 0x4022u
-#define DEVPFS_FLAGS_SHELL_FGC_NORW 0x8022u
 
 typedef struct {
   // +0x00: 1 -> mount read-only, 0 -> allow write.
@@ -149,33 +147,6 @@ _Static_assert(offsetof(devpfs_mount_opt_t, max_pkg_gib) == 0x18,
                "devpfs_mount_opt_t.max_pkg_gib offset");
 _Static_assert(sizeof(devpfs_mount_opt_t) == 0x20,
                "devpfs_mount_opt_t size");
-
-typedef struct {
-  // Human-readable profile id for logs.
-  const char *name;
-  // Preferred mount mode for initial nmount/attach attempt.
-  bool read_only;
-  // PFS nmount "budgetid" ("game", "system").
-  const char *budget_id;
-  // PFS nmount "mkeymode" ("SD").
-  const char *mkeymode;
-  // PFS nmount "sigverify" (0/1).
-  bool sigverify;
-  // PFS nmount "playgo" (0/1).
-  bool playgo;
-  // PFS nmount "disc" (0/1).
-  bool disc;
-} pfs_mount_profile_t;
-
-static const pfs_mount_profile_t k_pfs_profile_shell_default = {
-    .name = "shell_default",
-    .read_only = false,
-    .budget_id = DEVPFS_BUDGET_SYSTEM,
-    .mkeymode = DEVPFS_MKEYMODE_SD,
-    .sigverify = false,
-    .playgo = false,
-    .disc = false,
-};
 
 typedef struct {
   // Source object class (observed: 1=file, 2=device-like source).
@@ -313,6 +284,32 @@ typedef enum {
   // /dev/mdctl -> /dev/mdN
   ATTACH_BACKEND_MD,
 } attach_backend_t;
+
+#if EXFAT_ATTACH_USE_MDCTL
+#define DEFAULT_EXFAT_BACKEND ATTACH_BACKEND_MD
+#else
+#define DEFAULT_EXFAT_BACKEND ATTACH_BACKEND_LVD
+#endif
+
+#if UFS_ATTACH_USE_MDCTL
+#define DEFAULT_UFS_BACKEND ATTACH_BACKEND_MD
+#else
+#define DEFAULT_UFS_BACKEND ATTACH_BACKEND_LVD
+#endif
+
+typedef struct {
+  bool mount_read_only;
+  attach_backend_t exfat_backend;
+  attach_backend_t ufs_backend;
+  uint32_t lvd_sector_exfat;
+  uint32_t lvd_sector_ufs;
+  uint32_t lvd_sector_pfs;
+  uint32_t md_sector_exfat;
+  uint32_t md_sector_ufs;
+} runtime_config_t;
+
+static runtime_config_t g_runtime_cfg;
+static bool g_runtime_cfg_ready = false;
 
 struct UfsCache {
   // Absolute source image path.
@@ -791,14 +788,28 @@ static int copy_dir(const char *src, const char *dst) {
   struct dirent *e;
   char ss[MAX_PATH], dd[MAX_PATH];
   struct stat st;
+  struct stat lst;
   while ((e = readdir(d))) {
     if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
       continue;
     snprintf(ss, sizeof(ss), "%s/%s", src, e->d_name);
     snprintf(dd, sizeof(dd), "%s/%s", dst, e->d_name);
-    if (stat(ss, &st) != 0) {
+    if (lstat(ss, &lst) != 0) {
       ret = -1;
       break;
+    }
+    if (S_ISLNK(lst.st_mode)) {
+      if (stat(ss, &st) != 0) {
+        ret = -1;
+        break;
+      }
+      if (S_ISDIR(st.st_mode)) {
+        log_debug("  [COPY] refusing symlink directory: %s", ss);
+        ret = -1;
+        break;
+      }
+    } else {
+      st = lst;
     }
     if (S_ISDIR(st.st_mode)) {
       if (copy_dir(ss, dd) != 0) {
@@ -883,7 +894,10 @@ int copy_file(const char *src, const char *dst) {
 static bool build_iovec(struct iovec **iov, int *iovlen, const char *name,
                         const void *val, size_t len) {
   int i = *iovlen;
-  struct iovec *tmp = realloc(*iov, sizeof(**iov) * (i + 2));
+  if (i < 0)
+    return false;
+  size_t need = (size_t)i + 2u;
+  struct iovec *tmp = realloc(*iov, sizeof(**iov) * need);
   if (!tmp)
     return false;
   *iov = tmp;
@@ -898,7 +912,7 @@ static bool build_iovec(struct iovec **iov, int *iovlen, const char *name,
   (*iov)[i].iov_base = (void *)val;
   if (len == (size_t)-1)
     len = val ? strlen((const char *)val) + 1 : 0;
-  (*iov)[i].iov_len = (int)len;
+  (*iov)[i].iov_len = len;
   *iovlen = i + 1;
   return true;
 }
@@ -934,16 +948,309 @@ static bool wait_for_md_node_state(int unit_id, bool should_exist) {
   return wait_for_dev_node_state(devname, should_exist);
 }
 
+static bool is_source_stable_for_mount(const char *path, const char *name,
+                                       const char *tag) {
+  struct stat st;
+  if (stat(path, &st) != 0)
+    return false;
+
+  double age = difftime(time(NULL), st.st_mtime);
+  if (age < 10.0) {
+    log_debug("  [%s] %s modified %.0fs ago, waiting...", tag, name, age);
+    return false;
+  }
+  return true;
+}
+
+static void init_runtime_config_defaults(void) {
+  g_runtime_cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
+  g_runtime_cfg.exfat_backend = DEFAULT_EXFAT_BACKEND;
+  g_runtime_cfg.ufs_backend = DEFAULT_UFS_BACKEND;
+  g_runtime_cfg.lvd_sector_exfat = LVD_SECTOR_SIZE_EXFAT;
+  g_runtime_cfg.lvd_sector_ufs = LVD_SECTOR_SIZE_UFS;
+  g_runtime_cfg.lvd_sector_pfs = LVD_SECTOR_SIZE_PFS;
+  g_runtime_cfg.md_sector_exfat = MD_SECTOR_SIZE_EXFAT;
+  g_runtime_cfg.md_sector_ufs = MD_SECTOR_SIZE_UFS;
+  g_runtime_cfg_ready = true;
+}
+
+static void ensure_runtime_config_ready(void) {
+  if (!g_runtime_cfg_ready)
+    init_runtime_config_defaults();
+}
+
+static char *trim_ascii(char *s) {
+  while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
+    s++;
+  size_t n = strlen(s);
+  while (n > 0) {
+    char c = s[n - 1];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n')
+      break;
+    s[n - 1] = '\0';
+    n--;
+  }
+  return s;
+}
+
+static bool parse_bool_ini(const char *value, bool *out) {
+  if (!value || !out)
+    return false;
+  if (strcmp(value, "1") == 0 || strcasecmp(value, "true") == 0 ||
+      strcasecmp(value, "yes") == 0 || strcasecmp(value, "on") == 0 ||
+      strcasecmp(value, "ro") == 0) {
+    *out = true;
+    return true;
+  }
+  if (strcmp(value, "0") == 0 || strcasecmp(value, "false") == 0 ||
+      strcasecmp(value, "no") == 0 || strcasecmp(value, "off") == 0 ||
+      strcasecmp(value, "rw") == 0) {
+    *out = false;
+    return true;
+  }
+  return false;
+}
+
+static bool parse_backend_ini(const char *value, attach_backend_t *out) {
+  if (!value || !out)
+    return false;
+  if (strcasecmp(value, "lvd") == 0) {
+    *out = ATTACH_BACKEND_LVD;
+    return true;
+  }
+  if (strcasecmp(value, "md") == 0 || strcasecmp(value, "mdctl") == 0) {
+    *out = ATTACH_BACKEND_MD;
+    return true;
+  }
+  return false;
+}
+
+static bool parse_u32_ini(const char *value, uint32_t *out) {
+  if (!value || !out)
+    return false;
+  errno = 0;
+  char *end = NULL;
+  unsigned long v = strtoul(value, &end, 0);
+  if (errno != 0 || end == value || *end != '\0' || v > UINT32_MAX)
+    return false;
+  *out = (uint32_t)v;
+  return true;
+}
+
+static bool is_valid_sector_size(uint32_t size) {
+  if (size < 512u || size > 1024u * 1024u)
+    return false;
+  return (size & (size - 1u)) == 0u;
+}
+
+static bool load_runtime_config(void) {
+  init_runtime_config_defaults();
+
+  FILE *f = fopen(CONFIG_FILE, "r");
+  if (!f) {
+    if (errno != ENOENT) {
+      log_debug("  [CFG] open failed: %s (%s)", CONFIG_FILE, strerror(errno));
+    } else {
+      log_debug("  [CFG] not found, using defaults");
+    }
+    return false;
+  }
+
+  char line[512];
+  int line_no = 0;
+  while (fgets(line, sizeof(line), f)) {
+    line_no++;
+    char *s = trim_ascii(line);
+    if (s[0] == '\0' || s[0] == '#' || s[0] == ';' || s[0] == '[')
+      continue;
+
+    char *eq = strchr(s, '=');
+    if (!eq) {
+      log_debug("  [CFG] invalid line %d (missing '=')", line_no);
+      continue;
+    }
+    *eq = '\0';
+    char *key = trim_ascii(s);
+    char *value = trim_ascii(eq + 1);
+
+    // Allow trailing inline comments.
+    char *comment = strchr(value, '#');
+    if (comment) {
+      *comment = '\0';
+      value = trim_ascii(value);
+    }
+    comment = strchr(value, ';');
+    if (comment) {
+      *comment = '\0';
+      value = trim_ascii(value);
+    }
+
+    if (key[0] == '\0' || value[0] == '\0')
+      continue;
+
+    bool bval = false;
+    uint32_t u32 = 0;
+    attach_backend_t backend = ATTACH_BACKEND_NONE;
+
+    if (strcasecmp(key, "mount_read_only") == 0 ||
+        strcasecmp(key, "read_only") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      g_runtime_cfg.mount_read_only = bval;
+      continue;
+    }
+
+    if (strcasecmp(key, "exfat_backend") == 0) {
+      if (!parse_backend_ini(value, &backend)) {
+        log_debug("  [CFG] invalid backend at line %d: %s=%s", line_no, key,
+                  value);
+        continue;
+      }
+      g_runtime_cfg.exfat_backend = backend;
+      continue;
+    }
+
+    if (strcasecmp(key, "ufs_backend") == 0) {
+      if (!parse_backend_ini(value, &backend)) {
+        log_debug("  [CFG] invalid backend at line %d: %s=%s", line_no, key,
+                  value);
+        continue;
+      }
+      g_runtime_cfg.ufs_backend = backend;
+      continue;
+    }
+
+    bool is_sector_key =
+        (strcasecmp(key, "exfat_sector_size") == 0) ||
+        (strcasecmp(key, "ufs_sector_size") == 0) ||
+        (strcasecmp(key, "pfs_sector_size") == 0) ||
+        (strcasecmp(key, "lvd_exfat_sector_size") == 0) ||
+        (strcasecmp(key, "lvd_ufs_sector_size") == 0) ||
+        (strcasecmp(key, "lvd_pfs_sector_size") == 0) ||
+        (strcasecmp(key, "md_exfat_sector_size") == 0) ||
+        (strcasecmp(key, "md_ufs_sector_size") == 0);
+
+    if (!is_sector_key) {
+      log_debug("  [CFG] unknown key at line %d: %s", line_no, key);
+      continue;
+    }
+
+    if (!parse_u32_ini(value, &u32) || !is_valid_sector_size(u32)) {
+      log_debug("  [CFG] invalid sector size at line %d: %s=%s", line_no, key, value);
+      continue;
+    }
+
+    if (strcasecmp(key, "exfat_sector_size") == 0) {
+      g_runtime_cfg.lvd_sector_exfat = u32;
+      g_runtime_cfg.md_sector_exfat = u32;
+    } else if (strcasecmp(key, "ufs_sector_size") == 0) {
+      g_runtime_cfg.lvd_sector_ufs = u32;
+      g_runtime_cfg.md_sector_ufs = u32;
+    } else if (strcasecmp(key, "pfs_sector_size") == 0) {
+      g_runtime_cfg.lvd_sector_pfs = u32;
+    } else if (strcasecmp(key, "lvd_exfat_sector_size") == 0) {
+      g_runtime_cfg.lvd_sector_exfat = u32;
+    } else if (strcasecmp(key, "lvd_ufs_sector_size") == 0) {
+      g_runtime_cfg.lvd_sector_ufs = u32;
+    } else if (strcasecmp(key, "lvd_pfs_sector_size") == 0) {
+      g_runtime_cfg.lvd_sector_pfs = u32;
+    } else if (strcasecmp(key, "md_exfat_sector_size") == 0) {
+      g_runtime_cfg.md_sector_exfat = u32;
+    } else if (strcasecmp(key, "md_ufs_sector_size") == 0) {
+      g_runtime_cfg.md_sector_ufs = u32;
+    }
+  }
+
+  fclose(f);
+
+  log_debug("  [CFG] loaded: ro=%d exfat_backend=%s ufs_backend=%s "
+            "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u)",
+            g_runtime_cfg.mount_read_only ? 1 : 0,
+            backend_name(g_runtime_cfg.exfat_backend),
+            backend_name(g_runtime_cfg.ufs_backend),
+            g_runtime_cfg.lvd_sector_exfat, g_runtime_cfg.lvd_sector_ufs,
+            g_runtime_cfg.lvd_sector_pfs, g_runtime_cfg.md_sector_exfat,
+            g_runtime_cfg.md_sector_ufs);
+
+  return true;
+}
+
 static uint32_t get_lvd_sector_size(image_fs_type_t fs_type) {
+  ensure_runtime_config_ready();
   switch (fs_type) {
   case IMAGE_FS_UFS:
-    return LVD_SECTOR_SIZE_UFS;
+    return g_runtime_cfg.lvd_sector_ufs;
   case IMAGE_FS_PFS:
-    return LVD_SECTOR_SIZE_PFS;
+    return g_runtime_cfg.lvd_sector_pfs;
   case IMAGE_FS_EXFAT:
   default:
-    return LVD_SECTOR_SIZE_EXFAT;
+    return g_runtime_cfg.lvd_sector_exfat;
   }
+}
+
+static uint32_t get_md_sector_size(image_fs_type_t fs_type) {
+  ensure_runtime_config_ready();
+  switch (fs_type) {
+  case IMAGE_FS_UFS:
+    return g_runtime_cfg.md_sector_ufs;
+  case IMAGE_FS_EXFAT:
+  default:
+    return g_runtime_cfg.md_sector_exfat;
+  }
+}
+
+static bool is_mount_read_only(void) {
+  ensure_runtime_config_ready();
+  return g_runtime_cfg.mount_read_only;
+}
+
+static attach_backend_t get_attach_backend_for_fs(image_fs_type_t fs_type) {
+  ensure_runtime_config_ready();
+  switch (fs_type) {
+  case IMAGE_FS_EXFAT:
+    return g_runtime_cfg.exfat_backend;
+  case IMAGE_FS_UFS:
+    return g_runtime_cfg.ufs_backend;
+  default:
+    return ATTACH_BACKEND_LVD;
+  }
+}
+
+static unsigned int get_md_attach_options(bool mount_read_only) {
+  unsigned int options = MD_AUTOUNIT | MD_ASYNC;
+  if (mount_read_only)
+    options |= MD_READONLY;
+  return options;
+}
+
+static uint16_t get_lvd_attach_option(image_fs_type_t fs_type,
+                                      bool mount_read_only) {
+  if (fs_type == IMAGE_FS_UFS) {
+    // UFS runtime mapping: RO -> 0x1E, RW -> 0x16.
+    return mount_read_only ? LVD_ATTACH_OPTION_NORM_DD_RW
+                           : LVD_ATTACH_OPTION_NORM_DD_RO;
+  }
+
+  // Generic/PFS runtime mapping: RO -> 0x9, RW -> 0x8.
+  return mount_read_only ? LVD_ATTACH_OPTION_FLAGS_RW
+                         : LVD_ATTACH_OPTION_FLAGS_DEFAULT;
+}
+
+static unsigned int get_nmount_flags(image_fs_type_t fs_type,
+                                     bool mount_read_only,
+                                     const char **mount_mode_out) {
+  if (fs_type == IMAGE_FS_UFS) {
+    unsigned int ufs_opt = mount_read_only ? 1u : 0u;
+    if (mount_mode_out)
+      *mount_mode_out = mount_read_only ? "dd_ro" : "dd_rw";
+    return UFS_NMOUNT_FLAG_BASE - ((ufs_opt == 0u) - 1u);
+  }
+
+  if (mount_mode_out)
+    *mount_mode_out = mount_read_only ? "rdonly" : "rw";
+  return mount_read_only ? MNT_RDONLY : 0;
 }
 
 static uint16_t lvd_option_len_from_flags(uint16_t options) {
@@ -952,12 +1259,13 @@ static uint16_t lvd_option_len_from_flags(uint16_t options) {
   // Practical values for this project:
   // - flags 0x8 (default/RO): option_len 0x14
   // - flags 0x9 (RW):         option_len 0x1C
-  if ((options & 0x800E) != 0) {
-    return (uint16_t)((options & 0xFFFF8000) + ((options & 2) << 6) +
-                      (8 * (options & 1)) + (2 * ((options >> 2) & 1)) +
-                      (2 * (options & 8)) + 4);
+  if ((options & 0x800Eu) != 0u) {
+    uint32_t raw = (uint32_t)options;
+    uint32_t len = (raw & 0xFFFF8000u) + ((raw & 2u) << 6) + (8u * (raw & 1u)) +
+                   (2u * ((raw >> 2) & 1u)) + (2u * (raw & 8u)) + 4u;
+    return (uint16_t)len;
   }
-  return (uint16_t)(8 * (options & 1) + 4);
+  return (uint16_t)(8u * ((uint32_t)options & 1u) + 4u);
 }
 
 static bool parse_unit_from_dev_path(const char *dev_path, const char *prefix,
@@ -1183,12 +1491,7 @@ static void unmount_ufs_image(const char *file_path, int unit_id,
 }
 
 static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
-  const pfs_mount_profile_t *pfs_profile = NULL;
-  if (fs_type == IMAGE_FS_PFS)
-    pfs_profile = &k_pfs_profile_shell_default;
-  bool mount_read_only = true;
-  if (fs_type == IMAGE_FS_PFS)
-    mount_read_only = pfs_profile->read_only;
+  const bool mount_read_only = is_mount_read_only();
 
   // Check if already in UFS cache
   for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
@@ -1196,9 +1499,7 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
       return true;
   }
 
-  // Extract filename for logs and mount point
-  const char *filename = strrchr(file_path, '/');
-  filename = filename ? filename + 1 : file_path;
+  // Build mount point from image path.
   char mount_point[MAX_PATH];
   build_ufs_mount_point(file_path, fs_type, mount_point, sizeof(mount_point));
 
@@ -1239,11 +1540,9 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     log_debug("  [IMG] stat failed for %s: %s", file_path, strerror(errno));
     return false;
   }
-
-  // Stability check - wait if file is still being written
-  double age = difftime(time(NULL), st.st_mtime);
-  if (age < 10.0) {
-    log_debug("  [IMG] %s modified %.0fs ago, waiting...", filename, age);
+  if (st.st_size < 0) {
+    log_debug("  [IMG] invalid file size for %s: %lld", file_path,
+              (long long)st.st_size);
     return false;
   }
 
@@ -1254,9 +1553,7 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
   mkdir(UFS_MOUNT_BASE, 0777);
   mkdir(mount_point, 0777);
 
-  attach_backend_t attach_backend = ATTACH_BACKEND_LVD;
-  if (fs_type == IMAGE_FS_EXFAT && EXFAT_ATTACH_USE_MDCTL)
-    attach_backend = ATTACH_BACKEND_MD;
+  attach_backend_t attach_backend = get_attach_backend_for_fs(fs_type);
   log_debug("  [IMG][%s] attach backend selected for %s",
             backend_name(attach_backend), file_path);
 
@@ -1279,24 +1576,15 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     req.md_type = MD_VNODE;
     req.md_file = (char *)file_path;
     req.md_mediasize = st.st_size;
-    req.md_sectorsize = 512;
+    req.md_sectorsize = get_md_sector_size(fs_type);
 
     int last_errno = 0;
-    const unsigned int option_flags[] = {MD_AUTOUNIT | MD_READONLY | MD_ASYNC,
-                                         MD_AUTOUNIT};
-    for (size_t i = 0; i < sizeof(option_flags) / sizeof(option_flags[0]);
-         i++) {
-      req.md_options = option_flags[i];
-      log_debug("  [IMG][%s] attach try: options=0x%x",
-                backend_name(attach_backend), req.md_options);
-      ret = ioctl(md_fd, MDIOCATTACH, &req);
-      if (ret == 0)
-        break;
+    req.md_options = get_md_attach_options(mount_read_only);
+    log_debug("  [IMG][%s] attach try: options=0x%x",
+              backend_name(attach_backend), req.md_options);
+    ret = ioctl(md_fd, MDIOCATTACH, &req);
+    if (ret != 0)
       last_errno = errno;
-      log_debug("  [IMG][%s] attach retry with options=0x%x failed: %s",
-                backend_name(attach_backend), req.md_options,
-                strerror(last_errno));
-    }
     close(md_fd);
 
     if (ret != 0) {
@@ -1343,7 +1631,7 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     layers[0].entry_flags = LVD_ENTRY_FLAG_NO_BITMAP;
     layers[0].path = file_path;
     layers[0].offset = 0;
-    layers[0].size = st.st_size;
+    layers[0].size = (uint64_t)st.st_size;
 
     lvd_ioctl_attach_t req;
     memset(&req, 0, sizeof(req));
@@ -1360,60 +1648,21 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     req.sector_size_1 = req.sector_size_0;
 
     int last_errno = 0;
-    uint16_t attach_options[2];
-    size_t option_flags_count = 0;
-    bool prefer_rw = !mount_read_only;
-
+    uint16_t attach_option = get_lvd_attach_option(fs_type, mount_read_only);
     if (fs_type == IMAGE_FS_UFS) {
-      if (prefer_rw) {
-        attach_options[option_flags_count++] = LVD_ATTACH_OPTION_NORM_DD_RW;
-        attach_options[option_flags_count++] = LVD_ATTACH_OPTION_NORM_DD_RO;
-      } else {
-        attach_options[option_flags_count++] = LVD_ATTACH_OPTION_NORM_DD_RO;
-      }
-    } else if (fs_type == IMAGE_FS_PFS) {
-      // Match sceFsMountSaveData opt mapping:
-      // ro=0 -> option 0x8, ro=1 -> option 0x9.
-      unsigned int pfs_opt = mount_read_only ? 1u : 0u;
-      uint16_t primary_opt =
-          (uint16_t)(LVD_ATTACH_OPTION_FLAGS_DEFAULT - ((pfs_opt == 0u) - 1u));
-      uint16_t fallback_opt = (uint16_t)(LVD_ATTACH_OPTION_FLAGS_DEFAULT -
-                                         ((((pfs_opt ^ 1u) == 0u) - 1u)));
-      attach_options[option_flags_count++] = primary_opt;
-      attach_options[option_flags_count++] = fallback_opt;
+      // DownloadData/LWFS path passes normalized option mask directly.
+      req.option_len = attach_option;
     } else {
-      if (prefer_rw) {
-        attach_options[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_RW;
-        attach_options[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_DEFAULT;
-      } else {
-        attach_options[option_flags_count++] = LVD_ATTACH_OPTION_FLAGS_DEFAULT;
-      }
+      req.option_len = lvd_option_len_from_flags(attach_option);
     }
+    req.device_id = -1;
+    log_debug("  [IMG][%s] attach try: ver=%u sec=%u options=0x%x len=0x%x",
+              backend_name(attach_backend), req.io_version, req.sector_size_0,
+              attach_option, req.option_len);
 
-    for (size_t i = 0; i < option_flags_count; i++) {
-      uint16_t opt = attach_options[i];
-      if (fs_type == IMAGE_FS_UFS) {
-        // DownloadData/LWFS path passes normalized option mask directly.
-        req.option_len = opt;
-      } else {
-        req.option_len = lvd_option_len_from_flags(opt);
-      }
-      req.device_id = -1;
-      log_debug("  [IMG][%s] attach try: ver=%u sec=%u options=0x%x len=0x%x",
-                backend_name(attach_backend),
-                req.io_version, req.sector_size_0, opt,
-                req.option_len);
-
-      ret = ioctl(lvd_fd, SCE_LVD_IOC_ATTACH, &req);
-      if (ret == 0)
-        break;
-
+    ret = ioctl(lvd_fd, SCE_LVD_IOC_ATTACH, &req);
+    if (ret != 0)
       last_errno = errno;
-      log_debug("  [IMG][%s] attach retry with options=0x%x option_len=0x%x "
-                "failed: %s",
-                backend_name(attach_backend), opt, req.option_len,
-                strerror(last_errno));
-    }
     close(lvd_fd);
     unit_id = req.device_id;
     free(layers);
@@ -1466,30 +1715,26 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
              build_iovec(&iov, &iovlen, "large", "yes", (size_t)-1) &&
              build_iovec(&iov, &iovlen, "timezone", "static", (size_t)-1) &&
              build_iovec(&iov, &iovlen, "async", NULL, (size_t)-1) &&
-             build_iovec(&iov, &iovlen, "ignoreacl", NULL, (size_t)-1);
+             build_iovec(&iov, &iovlen, "ignoreacl", NULL, (size_t)-1) &&
              build_iovec(&iov, &iovlen, "errmsg", mount_errmsg,
                          sizeof(mount_errmsg));
   } else if (fs_type == IMAGE_FS_PFS) {
-    const char *sigverify = pfs_profile->sigverify ? "1" : "0";
-    const char *playgo = pfs_profile->playgo ? "1" : "0";
-    const char *disc = pfs_profile->disc ? "1" : "0";
+    const char *sigverify = PFS_MOUNT_SIGVERIFY ? "1" : "0";
+    const char *playgo = PFS_MOUNT_PLAYGO ? "1" : "0";
+    const char *disc = PFS_MOUNT_DISC ? "1" : "0";
     const char *ekpfs_key = PFS_ZERO_EKPFS_KEY_HEX;
-    // PFS mount requires this key set for shell-compatible behavior:
-    // sigverify, mkeymode, budgetid, playgo, disc, ekpfs, errmsg.
-    // Keep these explicit even when values are "0"/defaults.
-    log_debug("  [IMG][%s] PFS profile=%s ro=%d budgetid=%s mkeymode=%s "
+    log_debug("  [IMG][%s] PFS ro=%d budgetid=%s mkeymode=%s "
               "sigverify=%s playgo=%s disc=%s ekpfs=zero",
-              backend_name(attach_backend), pfs_profile->name,
-              pfs_profile->read_only ? 1 : 0, pfs_profile->budget_id,
-              pfs_profile->mkeymode, sigverify, playgo, disc);
+              backend_name(attach_backend), mount_read_only ? 1 : 0,
+              PFS_MOUNT_BUDGET_ID, PFS_MOUNT_MKEYMODE, sigverify, playgo, disc);
 
     iov_ok = build_iovec(&iov, &iovlen, "from", devname, (size_t)-1) &&
              build_iovec(&iov, &iovlen, "fspath", mount_point, (size_t)-1) &&
              build_iovec(&iov, &iovlen, "fstype", "pfs", (size_t)-1) &&
              build_iovec(&iov, &iovlen, "sigverify", sigverify, (size_t)-1) &&
-             build_iovec(&iov, &iovlen, "mkeymode", pfs_profile->mkeymode,
+             build_iovec(&iov, &iovlen, "mkeymode", PFS_MOUNT_MKEYMODE,
                          (size_t)-1) &&
-             build_iovec(&iov, &iovlen, "budgetid", pfs_profile->budget_id,
+             build_iovec(&iov, &iovlen, "budgetid", PFS_MOUNT_BUDGET_ID,
                          (size_t)-1) &&
              build_iovec(&iov, &iovlen, "playgo", playgo, (size_t)-1) &&
              build_iovec(&iov, &iovlen, "disc", disc, (size_t)-1) &&
@@ -1505,63 +1750,21 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
     return false;
   }
 
-  unsigned int first_mount_flags = MNT_RDONLY;
-  unsigned int second_mount_flags = 0;
-  const char *first_mode = "rdonly";
-  const char *second_mode = "rw";
-  bool allow_mount_mode_fallback = false;
-
-  if (fs_type == IMAGE_FS_UFS) {
-    // DownloadData-style flags:
-    //   0x10000000 - ((opt == 0) - 1) => 0x10000000 (RO) or 0x10000001 (RW)
-    unsigned int ufs_opt = mount_read_only ? 0u : 1u;
-    first_mount_flags = UFS_NMOUNT_FLAG_BASE - ((ufs_opt == 0u) - 1u);
-    second_mount_flags = UFS_NMOUNT_FLAG_BASE - (((ufs_opt ^ 1u) == 0u) - 1u);
-    first_mode = mount_read_only ? "dd_ro" : "dd_rw";
-    second_mode = mount_read_only ? "dd_rw" : "dd_ro";
-  } else if (fs_type == IMAGE_FS_PFS) {
-    // Match sceFsMountSaveData behavior: flags depend on requested ro mode.
-    first_mount_flags = mount_read_only ? MNT_RDONLY : 0;
-    second_mount_flags = mount_read_only ? 0 : MNT_RDONLY;
-    first_mode = mount_read_only ? "rdonly" : "rw";
-    second_mode = mount_read_only ? "rw" : "rdonly";
-    allow_mount_mode_fallback = true;
-  } else if (!mount_read_only) {
-    first_mount_flags = 0;
-    second_mount_flags = MNT_RDONLY;
-    first_mode = "rw";
-    second_mode = "rdonly";
-    allow_mount_mode_fallback = true;
-  }
-
-  ret = nmount(iov, iovlen, first_mount_flags);
+  const char *mount_mode = NULL;
+  unsigned int mount_flags =
+      get_nmount_flags(fs_type, mount_read_only, &mount_mode);
+  ret = nmount(iov, (unsigned int)iovlen, (int)mount_flags);
   if (ret != 0) {
     int mount_errno = errno;
     if (mount_errmsg[0] != '\0') {
       log_debug("  [IMG][%s] nmount %s errmsg: %s",
-                backend_name(attach_backend), first_mode, mount_errmsg);
+                backend_name(attach_backend), mount_mode, mount_errmsg);
     }
-    if (allow_mount_mode_fallback) {
-      log_debug("  [IMG][%s] nmount %s failed: %s, trying %s...",
-                backend_name(attach_backend), first_mode, strerror(mount_errno),
-                second_mode);
-      memset(mount_errmsg, 0, sizeof(mount_errmsg));
-      ret = nmount(iov, iovlen, second_mount_flags);
-      if (ret != 0) {
-        mount_errno = errno;
-        if (mount_errmsg[0] != '\0') {
-          log_debug("  [IMG][%s] nmount %s errmsg: %s",
-                    backend_name(attach_backend), second_mode, mount_errmsg);
-        }
-      }
-    }
-    if (ret != 0) {
-      log_debug("  [IMG][%s] nmount failed: %s", backend_name(attach_backend),
-                strerror(mount_errno));
-      free_iovec(iov, iovlen);
-      detach_attached_unit(attach_backend, unit_id);
-      return false;
-    }
+    log_debug("  [IMG][%s] nmount %s failed: %s",
+              backend_name(attach_backend), mount_mode, strerror(mount_errno));
+    free_iovec(iov, iovlen);
+    detach_attached_unit(attach_backend, unit_id);
+    return false;
   }
   free_iovec(iov, iovlen);
 
@@ -1622,6 +1825,9 @@ static void scan_ufs_images() {
       // Verify it's a regular file
       struct stat st;
       if (stat(full_path, &st) != 0 || !S_ISREG(st.st_mode))
+        continue;
+
+      if (!is_source_stable_for_mount(full_path, entry->d_name, "IMG"))
         continue;
 
       if (is_image_mount_limited(full_path))
@@ -1895,7 +2101,7 @@ bool mount_and_install(const char *src_path, const char *title_id,
   if (res == 0) {
     log_debug("  [REG] Installed NEW!");
     trigger_rich_toast(title_id, title_name, "Installed");
-  } else if (res == 0x80990002) {
+  } else if ((uint32_t)res == 0x80990002u) {
     log_debug("  [REG] Restored.");
     // Silent on restore/remount to avoid spam
   } else {
@@ -1983,6 +2189,9 @@ void scan_all_paths() {
         continue;
       }
 
+      if (!wait_for_stability_fast(full_path, title_name))
+        continue;
+
       // 2. Decide Action
       bool is_remount = false;
       if (installed) {
@@ -1992,10 +2201,6 @@ void scan_all_paths() {
       } else {
         log_debug("  [ACTION] Installing: %s", title_name);
         notify_system("Installing: %s...", title_name);
-
-        // FAST CHECK
-        if (!wait_for_stability_fast(full_path, title_name))
-          continue;
         is_remount = false;
       }
 
@@ -2045,7 +2250,9 @@ int main() {
 
   remove(LOG_FILE);
 
-  log_debug("SHADOWMOUNT+ v1.4 START exFAT/UFS/LVD/MD");
+  load_runtime_config();
+
+  log_debug("SHADOWMOUNT+ v1.5beta START exFAT/UFS/LVD/MD");
 
   // --- MOUNT UFS IMAGES ---
   scan_ufs_images();
@@ -2055,10 +2262,10 @@ int main() {
 
   if (new_games == 0) {
     // SCENARIO A: Nothing to do.
-    notify_system("ShadowMount+ v1.4 exFAT/UFS: Library Ready.\n- VoidWhisper/Gezine/earthonion/Drakmor");
+    notify_system("ShadowMount+ v1.5beta exFAT/UFS: Library Ready.\n- VoidWhisper/Gezine/earthonion/Drakmor");
   } else {
     // SCENARIO B: Work needed.
-    notify_system("ShadowMount+ v1.4 exFAT/UFS: Found %d Games. Executing...", new_games);
+    notify_system("ShadowMount+ v1.5beta exFAT/UFS: Found %d Games. Executing...", new_games);
 
     // Run the scan immediately to process them
     scan_all_paths();
