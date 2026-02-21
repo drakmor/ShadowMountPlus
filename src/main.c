@@ -1286,16 +1286,9 @@ static bool is_path_stable_now(const char *path, double *root_diff_out) {
   double root_diff = difftime(now, st.st_mtime);
   if (root_diff_out)
     *root_diff_out = root_diff;
-  if (root_diff <= 10.0)
-    return false;
-
-  char sys_path[MAX_PATH];
-  snprintf(sys_path, sizeof(sys_path), "%s/sce_sys", path);
-  if (stat(sys_path, &st) == 0)
-    return difftime(now, st.st_mtime) > 10.0;
-
-  // No sce_sys? Trust root timestamp.
-  return true;
+  if (root_diff < 0.0)
+    return true;
+  return root_diff > 10.0;
 }
 
 bool wait_for_stability_fast(const char *path, const char *name) {
@@ -1518,6 +1511,8 @@ static bool is_source_stable_for_mount(const char *path, const char *name,
     return false;
 
   double age = difftime(time(NULL), st.st_mtime);
+  if (age < 0.0)
+    return true;
   if (age < 10.0) {
     log_debug("  [%s] %s modified %.0fs ago, waiting...", tag, name, age);
     return false;
