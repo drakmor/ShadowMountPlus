@@ -30,7 +30,8 @@
 #define DEFAULT_SCAN_INTERVAL_US 10000000u
 #define DEFAULT_STABILITY_WAIT_SECONDS 10u
 #define MAX_PENDING 512
-#define MAX_UFS_MOUNTS 64
+#define MAX_IMAGE_MOUNTS 64
+#define MAX_IMAGE_MODE_RULES 128
 #define PATH_STATE_CAPACITY MAX_PENDING
 #define TITLE_STATE_CAPACITY MAX_PENDING
 #define STATE_HASH_SIZE 1024u
@@ -50,8 +51,8 @@
 #define MAX_PATH 1024
 #define MAX_TITLE_ID 32
 #define MAX_TITLE_NAME 256
-#define SHADOWMOUNT_VERSION "1.5beta5"
-#define UFS_MOUNT_BASE "/data/ufsmnt"
+#define SHADOWMOUNT_VERSION "1.5beta6"
+#define IMAGE_MOUNT_BASE "/data/imgmnt"
 #define LOG_DIR "/data/shadowmount"
 #define LOG_FILE "/data/shadowmount/debug.log"
 #define LOG_FILE_PREV "/data/shadowmount/debug.log.1"
@@ -227,8 +228,9 @@ bool is_data_mounted(const char *title_id);
 void notify_system(const char *fmt, ...);
 void log_debug(const char *fmt, ...);
 static void close_app_db(void);
-static void shutdown_ufs_mounts(void);
+static void shutdown_image_mounts(void);
 static void ensure_runtime_config_ready(void);
+static void cleanup_stale_image_mounts(void);
 
 // Standard Notification
 typedef struct notify_request {
@@ -357,10 +359,21 @@ static runtime_config_t g_runtime_cfg;
 static bool g_runtime_cfg_ready = false;
 static sqlite3 *g_app_db = NULL;
 static sqlite3_stmt *g_app_db_stmt_update_snd0 = NULL;
+static char g_last_image_mount_errmsg[256];
+static struct AppDbTitleList g_app_db_title_cache = {0};
+static bool g_app_db_title_cache_ready = false;
+static time_t g_app_db_title_cache_mtime = 0;
 static scan_candidate_t g_scan_candidates[MAX_PENDING];
 static char g_scan_discovered_param_roots[MAX_PENDING][MAX_PATH];
 
-struct UfsCache {
+typedef struct {
+  char filename[MAX_PATH];
+  bool mount_read_only;
+  bool valid;
+} image_mode_rule_t;
+static image_mode_rule_t g_image_mode_rules[MAX_IMAGE_MODE_RULES];
+
+struct ImageCache {
   // Absolute source image path.
   char path[MAX_PATH];
   // Attached unit id (lvdN/mdN), -1 when unknown.
@@ -370,7 +383,7 @@ struct UfsCache {
   // Slot occupancy flag.
   bool valid;
 };
-struct UfsCache ufs_cache[MAX_UFS_MOUNTS];
+struct ImageCache image_cache[MAX_IMAGE_MOUNTS];
 
 static volatile sig_atomic_t g_stop_requested = 0;
 
@@ -432,7 +445,16 @@ static void init_runtime_scan_paths_defaults(void) {
   for (int i = 0; DEFAULT_SCAN_PATHS[i] != NULL; i++)
     (void)add_runtime_scan_path(DEFAULT_SCAN_PATHS[i]);
   // UFS mount root must always be present.
-  (void)add_runtime_scan_path(UFS_MOUNT_BASE);
+  (void)add_runtime_scan_path(IMAGE_MOUNT_BASE);
+}
+
+static const char *get_filename_component(const char *path) {
+  if (!path)
+    return "";
+  const char *base = strrchr(path, '/');
+  if (!base)
+    base = strrchr(path, '\\');
+  return base ? base + 1 : path;
 }
 
 static void cache_game_entry(const char *path, const char *title_id,
@@ -448,12 +470,12 @@ static void cache_game_entry(const char *path, const char *title_id,
   }
 }
 
-static bool is_under_ufs_mount_base(const char *path) {
+static bool is_under_image_mount_base(const char *path) {
   if (!path)
     return false;
-  size_t ufs_prefix_len = strlen(UFS_MOUNT_BASE);
-  return (strncmp(path, UFS_MOUNT_BASE, ufs_prefix_len) == 0 &&
-          path[ufs_prefix_len] == '/');
+  size_t image_prefix_len = strlen(IMAGE_MOUNT_BASE);
+  return (strncmp(path, IMAGE_MOUNT_BASE, image_prefix_len) == 0 &&
+          path[image_prefix_len] == '/');
 }
 
 // --- Fast Path/Title State Cache (hash indexed) ---
@@ -696,7 +718,7 @@ static void notify_duplicate_title_once(const char *title_id, const char *path_a
 }
 
 static bool is_missing_param_scan_limited(const char *path) {
-  if (!is_under_ufs_mount_base(path))
+  if (!is_under_image_mount_base(path))
     return false;
   struct PathStateEntry *entry = find_path_state(path);
   if (!entry)
@@ -705,7 +727,7 @@ static bool is_missing_param_scan_limited(const char *path) {
 }
 
 static void record_missing_param_failure(const char *path) {
-  if (!is_under_ufs_mount_base(path))
+  if (!is_under_image_mount_base(path))
     return;
 
   struct PathStateEntry *entry = get_or_create_path_state(path);
@@ -787,22 +809,22 @@ static void clear_image_mount_attempts(const char *path) {
 }
 
 // --- Active Mount Session Caches ---
-static void cache_ufs_mount(const char *path, int unit_id,
+static void cache_image_mount(const char *path, int unit_id,
                             attach_backend_t backend) {
-  for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
-    if (ufs_cache[k].valid && strcmp(ufs_cache[k].path, path) == 0) {
-      ufs_cache[k].unit_id = unit_id;
-      ufs_cache[k].backend = backend;
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
+    if (image_cache[k].valid && strcmp(image_cache[k].path, path) == 0) {
+      image_cache[k].unit_id = unit_id;
+      image_cache[k].backend = backend;
       return;
     }
   }
 
-  for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
-    if (!ufs_cache[k].valid) {
-      (void)strlcpy(ufs_cache[k].path, path, sizeof(ufs_cache[k].path));
-      ufs_cache[k].unit_id = unit_id;
-      ufs_cache[k].backend = backend;
-      ufs_cache[k].valid = true;
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
+    if (!image_cache[k].valid) {
+      (void)strlcpy(image_cache[k].path, path, sizeof(image_cache[k].path));
+      image_cache[k].unit_id = unit_id;
+      image_cache[k].backend = backend;
+      image_cache[k].valid = true;
       return;
     }
   }
@@ -897,6 +919,17 @@ void notify_system(const char *fmt, ...) {
   log_debug("NOTIFY: %s", req.message);
 }
 
+static void notify_image_mount_failed(const char *path, int mount_err) {
+  if (g_last_image_mount_errmsg[0] != '\0') {
+    notify_system("Image mount failed: 0x%08X (%s)\n%s\n%s",
+                  (uint32_t)mount_err, strerror(mount_err),
+                  g_last_image_mount_errmsg, path);
+    return;
+  }
+  notify_system("Image mount failed: 0x%08X (%s)\n%s", (uint32_t)mount_err,
+                strerror(mount_err), path);
+}
+
 void trigger_rich_toast(const char *title_id, const char *game_name,
                         const char *msg) {
   FILE *f = fopen(TOAST_FILE, "w");
@@ -921,13 +954,12 @@ bool is_data_mounted(const char *title_id) {
   return (access(path, F_OK) == 0);
 }
 
-static bool read_mount_link(const char *title_id, char *out, size_t out_size) {
-  if (out_size == 0)
+static bool read_mount_link_file(const char *lnk_path, char *out,
+                                 size_t out_size) {
+  if (!lnk_path || out_size == 0)
     return false;
   out[0] = '\0';
 
-  char lnk_path[MAX_PATH];
-  snprintf(lnk_path, sizeof(lnk_path), "/user/app/%s/mount.lnk", title_id);
   FILE *f = fopen(lnk_path, "r");
   if (!f)
     return false;
@@ -942,6 +974,16 @@ static bool read_mount_link(const char *title_id, char *out, size_t out_size) {
   size_t len = strcspn(out, "\r\n");
   out[len] = '\0';
   return out[0] != '\0';
+}
+
+static bool read_mount_link(const char *title_id, char *out, size_t out_size) {
+  if (out_size == 0)
+    return false;
+  out[0] = '\0';
+
+  char lnk_path[MAX_PATH];
+  snprintf(lnk_path, sizeof(lnk_path), "/user/app/%s/mount.lnk", title_id);
+  return read_mount_link_file(lnk_path, out, out_size);
 }
 
 static bool path_matches_root_or_child(const char *path, const char *root) {
@@ -962,6 +1004,7 @@ static void cleanup_mount_links(const char *removed_source_root,
     return;
   }
 
+  bool tried_image_recovery = false;
   struct dirent *entry;
   while ((entry = readdir(d)) != NULL) {
     if (should_stop_requested())
@@ -992,22 +1035,33 @@ static void cleanup_mount_links(const char *removed_source_root,
     char source_path[MAX_PATH];
     bool should_remove = false;
     bool matches_removed_source = false;
-    if (!read_mount_link(entry->d_name, source_path, sizeof(source_path))) {
+    if (!read_mount_link_file(lnk_path, source_path, sizeof(source_path))) {
       should_remove = true;
-    } else if (removed_source_root && removed_source_root[0] != '\0') {
-      matches_removed_source =
-          path_matches_root_or_child(source_path, removed_source_root);
-      should_remove = matches_removed_source;
-    } else {
-      if (access(source_path, F_OK) != 0) {
-        should_remove = true;
-      } else if (path_matches_root_or_child(source_path, "/system_ex/app")) {
-        should_remove = true;
+    }
+
+    if (!should_remove) {
+      if (removed_source_root && removed_source_root[0] != '\0') {
+        matches_removed_source =
+            path_matches_root_or_child(source_path, removed_source_root);
+        should_remove = matches_removed_source;
       } else {
-        char eboot_path[MAX_PATH];
-        snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", source_path);
-        if (access(eboot_path, F_OK) != 0)
+        if (access(source_path, F_OK) != 0) {
           should_remove = true;
+        } else if (path_matches_root_or_child(source_path, "/system_ex/app")) {
+          should_remove = true;
+        } else {
+          char eboot_path[MAX_PATH];
+          snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", source_path);
+          if (access(eboot_path, F_OK) != 0) {
+            if (!tried_image_recovery &&
+                path_matches_root_or_child(source_path, IMAGE_MOUNT_BASE)) {
+              cleanup_stale_image_mounts();
+              tried_image_recovery = true;
+            }
+            if (access(eboot_path, F_OK) != 0)
+              should_remove = true;
+          }
+        }
       }
     }
 
@@ -1257,6 +1311,39 @@ static bool load_app_db_title_list(struct AppDbTitleList *list) {
   return false;
 }
 
+static void invalidate_app_db_title_cache(void) {
+  g_app_db_title_cache_ready = false;
+  g_app_db_title_cache_mtime = 0;
+}
+
+static bool get_app_db_title_list_cached(
+    const struct AppDbTitleList **list_out) {
+  if (!list_out)
+    return false;
+  *list_out = NULL;
+
+  struct stat st;
+  int app_db_stat_rc = stat(APP_DB_PATH, &st);
+
+  if (!g_app_db_title_cache_ready ||
+      (app_db_stat_rc == 0 && g_app_db_title_cache_mtime != st.st_mtime)) {
+    struct AppDbTitleList fresh = {0};
+    if (app_db_stat_rc == 0 && load_app_db_title_list(&fresh)) {
+      free_app_db_title_list(&g_app_db_title_cache);
+      g_app_db_title_cache = fresh;
+      g_app_db_title_cache_mtime = st.st_mtime;
+      g_app_db_title_cache_ready = true;
+    } else {
+      free_app_db_title_list(&fresh);
+      if (!g_app_db_title_cache_ready)
+        return false;
+    }
+  }
+
+  *list_out = &g_app_db_title_cache;
+  return true;
+}
+
 // --- FAST STABILITY CHECK ---
 static bool is_path_stable_now(const char *path, double *root_diff_out,
                                int *stat_errno_out) {
@@ -1292,8 +1379,7 @@ bool wait_for_stability_fast(const char *path, const char *name) {
   } else {
     log_debug("  [WAIT] %s modified %.0fs ago. Waiting...", name, diff);
   }
-  sceKernelUsleep(2000000); // Wait 2s
-  return false;             // Force re-scan next cycle
+  return false;
 }
 
 // --- Mount/Copy Helpers for Install Action ---
@@ -1456,19 +1542,14 @@ static bool wait_for_dev_node_state(const char *devname, bool should_exist) {
 
 static bool is_source_stable_for_mount(const char *path, const char *name,
                                        const char *tag) {
-  struct stat st;
-  ensure_runtime_config_ready();
-  if (stat(path, &st) != 0)
-    return false;
-
-  double age = difftime(time(NULL), st.st_mtime);
-  if (age < 0.0)
+  double age = 0.0;
+  int st_err = 0;
+  if (is_path_stable_now(path, &age, &st_err))
     return true;
-  if (age < (double)g_runtime_cfg.stability_wait_seconds) {
-    log_debug("  [%s] %s modified %.0fs ago, waiting...", tag, name, age);
+  if (st_err != 0)
     return false;
-  }
-  return true;
+  log_debug("  [%s] %s modified %.0fs ago, waiting...", tag, name, age);
+  return false;
 }
 
 // --- Runtime Config Parsing ---
@@ -1485,6 +1566,7 @@ static void init_runtime_config_defaults(void) {
   g_runtime_cfg.lvd_sector_pfs = LVD_SECTOR_SIZE_PFS;
   g_runtime_cfg.md_sector_exfat = MD_SECTOR_SIZE_EXFAT;
   g_runtime_cfg.md_sector_ufs = MD_SECTOR_SIZE_UFS;
+  memset(g_image_mode_rules, 0, sizeof(g_image_mode_rules));
   init_runtime_scan_paths_defaults();
   g_runtime_cfg_ready = true;
 }
@@ -1627,6 +1709,41 @@ static bool load_runtime_config(void) {
       continue;
     }
 
+    if (strcasecmp(key, "image_ro") == 0 ||
+        strcasecmp(key, "image_rw") == 0) {
+      bool rule_read_only = (strcasecmp(key, "image_ro") == 0);
+      bool applied = false;
+      const char *filename = get_filename_component(value);
+      if (filename[0] != '\0') {
+        for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
+          if (!g_image_mode_rules[k].valid)
+            continue;
+          if (strcasecmp(g_image_mode_rules[k].filename, filename) != 0)
+            continue;
+          g_image_mode_rules[k].mount_read_only = rule_read_only;
+          applied = true;
+          break;
+        }
+        if (!applied) {
+          for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
+            if (g_image_mode_rules[k].valid)
+              continue;
+            (void)strlcpy(g_image_mode_rules[k].filename, filename,
+                          sizeof(g_image_mode_rules[k].filename));
+            g_image_mode_rules[k].mount_read_only = rule_read_only;
+            g_image_mode_rules[k].valid = true;
+            applied = true;
+            break;
+          }
+        }
+      }
+      if (!applied) {
+        log_debug("  [CFG] invalid image mode rule at line %d: %s=%s", line_no,
+                  key, value);
+      }
+      continue;
+    }
+
     if (strcasecmp(key, "recursive_scan") == 0) {
       if (!parse_bool_ini(value, &bval)) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
@@ -1729,13 +1846,19 @@ static bool load_runtime_config(void) {
     init_runtime_scan_paths_defaults();
   } else {
     // UFS mount root is always required for remount scanning.
-    (void)add_runtime_scan_path(UFS_MOUNT_BASE);
+    (void)add_runtime_scan_path(IMAGE_MOUNT_BASE);
+  }
+
+  int image_rule_count = 0;
+  for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
+    if (g_image_mode_rules[k].valid)
+      image_rule_count++;
   }
 
   log_debug("  [CFG] loaded: debug=%d ro=%d recursive_scan=%d "
             "exfat_backend=%s ufs_backend=%s "
             "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u) "
-            "scan_interval_s=%u stability_wait_s=%u scan_paths=%d",
+            "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d",
             g_runtime_cfg.debug_enabled ? 1 : 0,
             g_runtime_cfg.mount_read_only ? 1 : 0,
             g_runtime_cfg.recursive_scan ? 1 : 0,
@@ -1744,7 +1867,8 @@ static bool load_runtime_config(void) {
             g_runtime_cfg.lvd_sector_exfat, g_runtime_cfg.lvd_sector_ufs,
             g_runtime_cfg.lvd_sector_pfs, g_runtime_cfg.md_sector_exfat,
             g_runtime_cfg.md_sector_ufs, g_runtime_cfg.scan_interval_us / 1000000u,
-            g_runtime_cfg.stability_wait_seconds, g_scan_path_count);
+            g_runtime_cfg.stability_wait_seconds, g_scan_path_count,
+            image_rule_count);
 
   return true;
 }
@@ -2032,10 +2156,9 @@ static void strip_extension(const char *filename, char *out, size_t out_size) {
   out[len] = '\0';
 }
 
-static void build_ufs_mount_point(const char *file_path, image_fs_type_t fs_type,
+static void build_image_mount_point(const char *file_path, image_fs_type_t fs_type,
                                   char *mount_point, size_t mount_point_size) {
-  const char *filename = strrchr(file_path, '/');
-  filename = filename ? filename + 1 : file_path;
+  const char *filename = get_filename_component(file_path);
   char mount_name[MAX_PATH];
   strip_extension(filename, mount_name, sizeof(mount_name));
   const char *suffix = "unknown";
@@ -2045,15 +2168,15 @@ static void build_ufs_mount_point(const char *file_path, image_fs_type_t fs_type
     suffix = "exfat";
   else if (fs_type == IMAGE_FS_PFS)
     suffix = "pfs";
-  snprintf(mount_point, mount_point_size, "%s/%s-%s", UFS_MOUNT_BASE,
+  snprintf(mount_point, mount_point_size, "%s/%s-%s", IMAGE_MOUNT_BASE,
            mount_name, suffix);
 }
 
-static bool unmount_ufs_image(const char *file_path, int unit_id,
+static bool unmount_image(const char *file_path, int unit_id,
                               attach_backend_t backend) {
   char mount_point[MAX_PATH];
   image_fs_type_t fs_type = detect_image_fs_type(file_path);
-  build_ufs_mount_point(file_path, fs_type, mount_point, sizeof(mount_point));
+  build_image_mount_point(file_path, fs_type, mount_point, sizeof(mount_point));
   int resolved_unit = unit_id;
   attach_backend_t resolved_backend = backend;
 
@@ -2103,19 +2226,33 @@ static bool unmount_ufs_image(const char *file_path, int unit_id,
 }
 
 // --- Image Attach + nmount Pipeline ---
-static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
+static bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   ensure_runtime_config_ready();
-  const bool mount_read_only = g_runtime_cfg.mount_read_only;
+  g_last_image_mount_errmsg[0] = '\0';
+  bool mount_mode_overridden = false;
+  bool mount_read_only = g_runtime_cfg.mount_read_only;
+  const char *filename = get_filename_component(file_path);
+  if (filename[0] != '\0') {
+    for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
+      if (!g_image_mode_rules[k].valid)
+        continue;
+      if (strcasecmp(g_image_mode_rules[k].filename, filename) != 0)
+        continue;
+      mount_read_only = g_image_mode_rules[k].mount_read_only;
+      mount_mode_overridden = true;
+      break;
+    }
+  }
 
   // Check if already in UFS cache
-  for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
-    if (ufs_cache[k].valid && strcmp(ufs_cache[k].path, file_path) == 0)
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
+    if (image_cache[k].valid && strcmp(image_cache[k].path, file_path) == 0)
       return true;
   }
 
   // Build mount point from image path.
   char mount_point[MAX_PATH];
-  build_ufs_mount_point(file_path, fs_type, mount_point, sizeof(mount_point));
+  build_image_mount_point(file_path, fs_type, mount_point, sizeof(mount_point));
 
   // Check if directory exists and is populated
   struct stat mst;
@@ -2138,7 +2275,7 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
                                       &existing_unit)) {
           log_debug("  [IMG][%s] Already mounted: %s",
                     backend_name(existing_backend), mount_point);
-          cache_ufs_mount(file_path, existing_unit, existing_backend);
+          cache_image_mount(file_path, existing_unit, existing_backend);
           return true;
         }
         log_debug("  [IMG] Mount point exists and is non-empty but is not an "
@@ -2162,9 +2299,13 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
 
   log_debug("  [IMG] Mounting image (%s): %s -> %s", image_fs_name(fs_type),
             file_path, mount_point);
+  if (mount_mode_overridden) {
+    log_debug("  [CFG] Image mode override: %s -> %s", file_path,
+              mount_read_only ? "ro" : "rw");
+  }
 
   // Create mount point
-  mkdir(UFS_MOUNT_BASE, 0777);
+  mkdir(IMAGE_MOUNT_BASE, 0777);
   mkdir(mount_point, 0777);
 
   attach_backend_t attach_backend = ATTACH_BACKEND_LVD;
@@ -2385,6 +2526,8 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
   if (ret != 0) {
     int mount_errno = errno;
     if (mount_errmsg[0] != '\0') {
+      (void)strlcpy(g_last_image_mount_errmsg, mount_errmsg,
+                    sizeof(g_last_image_mount_errmsg));
       log_debug("  [IMG][%s] nmount %s errmsg: %s",
                 backend_name(attach_backend), mount_mode, mount_errmsg);
     }
@@ -2400,7 +2543,7 @@ static bool mount_ufs_image(const char *file_path, image_fs_type_t fs_type) {
   log_fs_stats("IMG", mount_point, image_fs_name(fs_type));
 
   // Cache it
-  cache_ufs_mount(file_path, unit_id, attach_backend);
+  cache_image_mount(file_path, unit_id, attach_backend);
 
   return true;
 }
@@ -2410,34 +2553,34 @@ static void cleanup_stale_image_mounts(void) {
   if (should_stop_requested())
     return;
 
-  for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
     if (should_stop_requested())
       return;
-    if (ufs_cache[k].valid && access(ufs_cache[k].path, F_OK) != 0) {
+    if (image_cache[k].valid && access(image_cache[k].path, F_OK) != 0) {
       log_debug("  [IMG][%s] Source removed, unmounting: %s",
-                backend_name(ufs_cache[k].backend), ufs_cache[k].path);
-      if (unmount_ufs_image(ufs_cache[k].path, ufs_cache[k].unit_id,
-                            ufs_cache[k].backend)) {
-        ufs_cache[k].valid = false;
+                backend_name(image_cache[k].backend), image_cache[k].path);
+      if (unmount_image(image_cache[k].path, image_cache[k].unit_id,
+                            image_cache[k].backend)) {
+        image_cache[k].valid = false;
       }
       continue;
     }
 
-    if (!ufs_cache[k].valid)
+    if (!image_cache[k].valid)
       continue;
 
-    image_fs_type_t fs_type = detect_image_fs_type(ufs_cache[k].path);
+    image_fs_type_t fs_type = detect_image_fs_type(image_cache[k].path);
 
     char mount_point[MAX_PATH];
-    build_ufs_mount_point(ufs_cache[k].path, fs_type, mount_point,
+    build_image_mount_point(image_cache[k].path, fs_type, mount_point,
                           sizeof(mount_point));
     if (is_active_image_mount_point(mount_point))
       continue;
 
     char source_path[MAX_PATH];
-    (void)strlcpy(source_path, ufs_cache[k].path, sizeof(source_path));
+    (void)strlcpy(source_path, image_cache[k].path, sizeof(source_path));
     log_debug("  [IMG][%s] mount lost, retrying: %s -> %s",
-              backend_name(ufs_cache[k].backend), source_path, mount_point);
+              backend_name(image_cache[k].backend), source_path, mount_point);
 
     for (int i = 0; i < MAX_PENDING; i++) {
       if (!cache[i].valid || strcmp(cache[i].path, mount_point) != 0)
@@ -2449,25 +2592,24 @@ static void cleanup_stale_image_mounts(void) {
     }
     clear_missing_param_entry(mount_point);
 
-    ufs_cache[k].valid = false;
-    if (mount_ufs_image(source_path, fs_type)) {
+    image_cache[k].valid = false;
+    if (mount_image(source_path, fs_type)) {
       clear_image_mount_attempts(source_path);
       continue;
     }
 
     int mount_err = errno;
     if (bump_image_mount_attempts(source_path) == 1) {
-      notify_system("Image mount failed: 0x%08X\n%s", (uint32_t)mount_err,
-                    source_path);
+      notify_image_mount_failed(source_path, mount_err);
     }
   }
 }
 
 static void cleanup_mount_dirs(void) {
-  DIR *d = opendir(UFS_MOUNT_BASE);
+  DIR *d = opendir(IMAGE_MOUNT_BASE);
   if (!d) {
     if (errno != ENOENT)
-      log_debug("  [IMG] open %s failed: %s", UFS_MOUNT_BASE, strerror(errno));
+      log_debug("  [IMG] open %s failed: %s", IMAGE_MOUNT_BASE, strerror(errno));
     return;
   }
 
@@ -2479,7 +2621,7 @@ static void cleanup_mount_dirs(void) {
       continue;
 
     char full_path[MAX_PATH];
-    snprintf(full_path, sizeof(full_path), "%s/%s", UFS_MOUNT_BASE, entry->d_name);
+    snprintf(full_path, sizeof(full_path), "%s/%s", IMAGE_MOUNT_BASE, entry->d_name);
 
     bool is_dir = false;
     if (entry->d_type == DT_DIR) {
@@ -2515,24 +2657,23 @@ static void maybe_mount_image_file(const char *full_path,
     return;
   if (is_image_mount_limited(full_path))
     return;
-  if (mount_ufs_image(full_path, fs_type))
+  if (mount_image(full_path, fs_type))
     clear_image_mount_attempts(full_path);
   else {
     int mount_err = errno;
     if (bump_image_mount_attempts(full_path) == 1) {
-      notify_system("Image mount failed: 0x%08X\n%s",
-                    (uint32_t)mount_err, full_path);
+      notify_image_mount_failed(full_path, mount_err);
     }
   }
 }
 
-static void shutdown_ufs_mounts(void) {
-  for (int k = 0; k < MAX_UFS_MOUNTS; k++) {
-    if (!ufs_cache[k].valid)
+static void shutdown_image_mounts(void) {
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
+    if (!image_cache[k].valid)
       continue;
-    (void)unmount_ufs_image(ufs_cache[k].path, ufs_cache[k].unit_id,
-                            ufs_cache[k].backend);
-    ufs_cache[k].valid = false;
+    (void)unmount_image(image_cache[k].path, image_cache[k].unit_id,
+                            image_cache[k].backend);
+    image_cache[k].valid = false;
   }
 }
 
@@ -2745,7 +2886,7 @@ static bool try_collect_candidate_for_directory(
 
   has_param_json = directory_has_param_json(full_path, &param_st);
 
-  if (is_under_ufs_mount_base(full_path) && !is_active_image_mount_point(full_path)) {
+  if (is_under_image_mount_base(full_path) && !is_active_image_mount_point(full_path)) {
     log_debug("  [SKIP] inactive mount path: %s", full_path);
     return has_param_json;
   }
@@ -2926,8 +3067,8 @@ static int collect_scan_candidates(scan_candidate_t *candidates,
                                    int max_candidates,
                                    int *total_found_out) {
   int candidate_count = 0;
-  struct AppDbTitleList app_db_titles = {0};
-  bool app_db_titles_ready = load_app_db_title_list(&app_db_titles);
+  const struct AppDbTitleList *app_db_titles = NULL;
+  bool app_db_titles_ready = get_app_db_title_list_cached(&app_db_titles);
   char (*discovered_param_roots)[MAX_PATH] = g_scan_discovered_param_roots;
   int discovered_param_root_count = 0;
   memset(discovered_param_roots, 0, sizeof(g_scan_discovered_param_roots));
@@ -2940,7 +3081,6 @@ static int collect_scan_candidates(scan_candidate_t *candidates,
     if (should_stop_requested())
       goto done;
 
-    bool scan_images_in_root = (strcmp(SCAN_PATHS[i], UFS_MOUNT_BASE) != 0);
     DIR *d = opendir(SCAN_PATHS[i]);
     if (!d)
       continue;
@@ -2972,7 +3112,7 @@ static int collect_scan_candidates(scan_candidate_t *candidates,
         }
       }
 
-      if (scan_images_in_root && is_regular)
+      if (strcmp(SCAN_PATHS[i], IMAGE_MOUNT_BASE) != 0 && is_regular)
         maybe_mount_image_file(full_path, entry->d_name);
       if (!is_dir)
         continue;
@@ -2980,12 +3120,12 @@ static int collect_scan_candidates(scan_candidate_t *candidates,
       if (g_runtime_cfg.recursive_scan) {
         collect_candidates_recursively(
             full_path, candidates, max_candidates, &candidate_count,
-            &app_db_titles, app_db_titles_ready, discovered_param_roots,
+            app_db_titles, app_db_titles_ready, discovered_param_roots,
             &discovered_param_root_count);
       } else {
         (void)try_collect_candidate_for_directory(
             full_path, candidates, max_candidates, &candidate_count,
-            &app_db_titles, app_db_titles_ready, discovered_param_roots,
+            app_db_titles, app_db_titles_ready, discovered_param_roots,
             &discovered_param_root_count);
       }
     }
@@ -2994,8 +3134,6 @@ static int collect_scan_candidates(scan_candidate_t *candidates,
 done:
   if (total_found_out)
     *total_found_out = discovered_param_root_count;
-  free_app_db_title_list(&app_db_titles);
-  close_app_db();
   return candidate_count;
 }
 
@@ -3068,6 +3206,7 @@ bool mount_and_install(const char *src_path, const char *title_id,
   sceKernelUsleep(200000);
 
   if (res == 0) {
+    invalidate_app_db_title_cache();
     log_debug("  [REG] Installed NEW!");
     trigger_rich_toast(title_id, title_name, "Installed");
     if (has_src_snd0) {
@@ -3076,6 +3215,7 @@ bool mount_and_install(const char *src_path, const char *title_id,
         log_debug("  [DB] snd0info updated rows=%d", snd0_updates);
     }
   } else if ((uint32_t)res == 0x80990002u) {
+    invalidate_app_db_title_cache();
     log_debug("  [REG] Restored.");
     if (has_src_snd0) {
       int snd0_updates = update_snd0info(title_id);
@@ -3170,10 +3310,10 @@ int main(void) {
   (void)unlink(LOG_FILE_PREV);
   (void)rename(LOG_FILE, LOG_FILE_PREV);
 
-  log_debug("SHADOWMOUNT+ v%s exFAT/UFS/LVD/MD. Thx to VoidWhisper/Gezine/Earthonion/EchoStretch/Drakmor", SHADOWMOUNT_VERSION);
+  log_debug("ShadowMount+ v%s exFAT/UFS/PFS/LVD/MD. Thx to VoidWhisper/Gezine/Earthonion/EchoStretch/Drakmor", SHADOWMOUNT_VERSION);
   load_runtime_config();
 
-  notify_system("ShadowMount+ v%s exFAT/UFS",
+  notify_system("ShadowMount+ v%s exFAT/UFS/PFS",
                   SHADOWMOUNT_VERSION);
 
 
@@ -3242,7 +3382,9 @@ int main(void) {
     scan_all_paths();
   }
 
-  shutdown_ufs_mounts();
+  shutdown_image_mounts();
+  free_app_db_title_list(&g_app_db_title_cache);
+  invalidate_app_db_title_cache();
   close_app_db();
   if (lock >= 0) {
     close(lock);

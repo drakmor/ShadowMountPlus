@@ -1,6 +1,6 @@
 # ShadowMountPlus (PS5)
 
-**Version:** `1.5beta5`
+**Version:** `1.5beta6`
 
 **Repository:** https://github.com/drakmor/shadowMountPlus
 
@@ -40,6 +40,8 @@ This file is optional. If it does not exist, built-in defaults are used.
 Supported keys (all optional):
 - `debug=1|0` (`1` enables `log_debug` output to console + `/data/shadowmount/debug.log`; default is `1`)
 - `mount_read_only=1|0` (default: `1`)
+- `image_ro=<image_filename>` (repeatable; force read-only mode for this image filename)
+- `image_rw=<image_filename>` (repeatable; force read-write mode for this image filename)
 - `recursive_scan=1|0` (`0` = scan only first-level subfolders, `1` = recursive scan without depth limit; default: `0`)
 - `scan_interval_seconds=<1..3600>` (full scan loop interval; default: `10`)
 - `stability_wait_seconds=<0..3600>` (minimum source age before processing; default: `10`)
@@ -52,9 +54,22 @@ Supported keys (all optional):
 - `md_exfat_sector_size=<value>` (default: `512`)
 - `md_ufs_sector_size=<value>` (default: `512`)
 
+Per-image mode override behavior:
+- Match is done by image file name (without path).
+- File names with spaces are supported.
+- If multiple rules target the same file name, the last one in config wins.
+- If no rule matches, global `mount_read_only` is used.
+- Example:
+```ini
+mount_read_only=1
+image_rw=PPSA08766-Cocoon-01.004.000.ffpfs
+image_rw=DIRT 5.exfat
+image_ro=legacy_dump.ffpkg
+```
+
 Scan path behavior:
 - If at least one `scanpath=...` is present, only those custom paths are used.
-- `/data/ufsmnt` is always added automatically, even with custom paths.
+- `/data/imgmnt` is always added automatically, even with custom paths.
 - With `recursive_scan=0` (default), only first-level subfolders are checked.
 - With `recursive_scan=1`, subfolders are scanned recursively.
 - Full scan loop runs every `scan_interval_seconds` (default: `10`).
@@ -67,7 +82,7 @@ Validation:
 
 Image mountpoints are created under:
 
-`/data/ufsmnt/<image_name>-<fs_suffix>`
+`/data/imgmnt/<image_name>-<fs_suffix>`
 
 Image layout requirement (`.ffpkg`, `.exfat`, `.ffpfs`):
 - Game files must be placed at the image root.
@@ -89,7 +104,7 @@ Default scan locations:
 - `/mnt/usb0` .. `/mnt/usb7`
 - `/mnt/ext0`
 - `/mnt/ext1`
-- `/data/ufsmnt` (mounted image content scan)
+- `/data/imgmnt` (mounted image content scan)
 
 You can override scan roots with `scanpath=...` entries in `/data/shadowmount/config.ini`.
 
@@ -190,7 +205,7 @@ If a game is not mounted:
 - Check `/data/shadowmount/debug.log` and system notifications from ShadowMount+.
 - Verify scan roots:
   - if `scanpath=...` is set, only these paths are scanned;
-  - `/data/ufsmnt` is always scanned.
+  - `/data/imgmnt` is always scanned.
 - Verify scan depth:
   - `recursive_scan=0` scans only first-level subfolders;
   - `recursive_scan=1` scans recursively.
@@ -198,7 +213,7 @@ If a game is not mounted:
 - Verify game structure:
   - folder game: `<GAME_DIR>/sce_sys/param.json`;
   - image game (`.ffpkg` / `.exfat` / `.ffpfs`): `sce_sys/param.json` must be at image root (no extra top-level folder).
-- If you see `missing/invalid param.json` for an image, check via FTP that `/data/ufsmnt/<TITLE_ID>/` contains full game files and `sce_sys/param.json`.
+- If you see `missing/invalid param.json` for an image, check via FTP that `/data/imgmnt/<TITLE_ID>/` contains full game files and `sce_sys/param.json`.
 - If you see image mount failure, check image integrity and filesystem type (`.ffpkg`=UFS, `.exfat`=exFAT, `.ffpfs`=PFS).
 - If you see duplicate titleId notification, keep only one source per `<TITLE_ID>`.
 
