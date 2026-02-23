@@ -30,6 +30,10 @@ force_mount=0
 # 0/false/no/off -> scan only first-level subdirectories (default)
 recursive_scan=0
 
+# Optional backport overlay root:
+# If "<backports_path>/<TITLE_ID>" exists, it is mounted over image root via unionfs.
+backports_path=/data/backports
+
 # Full scan loop interval (seconds), range: 1..3600
 scan_interval_seconds=10
 
@@ -52,6 +56,6 @@ ufs_backend=lvd
 
 # Optional custom scan roots (can be repeated):
 # If at least one scanpath=... is present, only these paths are used.
-# "/data/imgmnt" is always added automatically.
+# "/data/imgmnt/{ufsmnt,exfatmnt,pfsmnt}" are always added automatically.
 # scanpath=/data/homebrew
 # scanpath=/data/etaHEN/games

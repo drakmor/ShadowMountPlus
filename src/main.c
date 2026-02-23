@@ -39,6 +39,7 @@
 #define MAX_FAILED_MOUNT_ATTEMPTS 1
 #define MAX_MISSING_PARAM_SCAN_ATTEMPTS 3
 #define MAX_IMAGE_MOUNT_ATTEMPTS 3
+#define MAX_LAYERED_UNMOUNT_ATTEMPTS 4
 #define IMAGE_MOUNT_READ_ONLY 1
 #define MIN_SCAN_INTERVAL_SECONDS 1u
 #define MAX_SCAN_INTERVAL_SECONDS 3600u
@@ -51,8 +52,13 @@
 #define MAX_PATH 1024
 #define MAX_TITLE_ID 32
 #define MAX_TITLE_NAME 256
-#define SHADOWMOUNT_VERSION "1.5beta6-fix1"
+#define SHADOWMOUNT_VERSION "1.6test1"
+#define PAYLOAD_NAME "shadowmountplus.elf"
 #define IMAGE_MOUNT_BASE "/data/imgmnt"
+#define IMAGE_MOUNT_SUBDIR_UFS "ufsmnt"
+#define IMAGE_MOUNT_SUBDIR_EXFAT "exfatmnt"
+#define IMAGE_MOUNT_SUBDIR_PFS "pfsmnt"
+#define DEFAULT_BACKPORTS_PATH "/data/backports"
 #define LOG_DIR "/data/shadowmount"
 #define LOG_FILE "/data/shadowmount/debug.log"
 #define LOG_FILE_PREV "/data/shadowmount/debug.log.1"
@@ -231,6 +237,8 @@ static void close_app_db(void);
 static void shutdown_image_mounts(void);
 static void ensure_runtime_config_ready(void);
 static void cleanup_stale_image_mounts(void);
+static bool directory_has_param_json(const char *dir_path,
+                                     struct stat *param_st_out);
 
 // Standard Notification
 typedef struct notify_request {
@@ -345,6 +353,7 @@ typedef struct {
   bool mount_read_only;
   bool force_mount;
   bool recursive_scan;
+  char backports_path[MAX_PATH];
   uint32_t scan_interval_us;
   uint32_t stability_wait_seconds;
   attach_backend_t exfat_backend;
@@ -377,6 +386,8 @@ static image_mode_rule_t g_image_mode_rules[MAX_IMAGE_MODE_RULES];
 struct ImageCache {
   // Absolute source image path.
   char path[MAX_PATH];
+  // Mountpoint path for this image.
+  char mount_point[MAX_PATH];
   // Attached unit id (lvdN/mdN), -1 when unknown.
   int unit_id;
   // Backend used for this entry.
@@ -445,8 +456,10 @@ static void init_runtime_scan_paths_defaults(void) {
   clear_runtime_scan_paths();
   for (int i = 0; DEFAULT_SCAN_PATHS[i] != NULL; i++)
     (void)add_runtime_scan_path(DEFAULT_SCAN_PATHS[i]);
-  // UFS mount root must always be present.
-  (void)add_runtime_scan_path(IMAGE_MOUNT_BASE);
+  // Image mount roots must always be present.
+  (void)add_runtime_scan_path(IMAGE_MOUNT_BASE "/" IMAGE_MOUNT_SUBDIR_UFS);
+  (void)add_runtime_scan_path(IMAGE_MOUNT_BASE "/" IMAGE_MOUNT_SUBDIR_EXFAT);
+  (void)add_runtime_scan_path(IMAGE_MOUNT_BASE "/" IMAGE_MOUNT_SUBDIR_PFS);
 }
 
 static const char *get_filename_component(const char *path) {
@@ -810,10 +823,12 @@ static void clear_image_mount_attempts(const char *path) {
 }
 
 // --- Active Mount Session Caches ---
-static void cache_image_mount(const char *path, int unit_id,
-                            attach_backend_t backend) {
+static void cache_image_mount(const char *path, const char *mount_point,
+                              int unit_id, attach_backend_t backend) {
   for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
     if (image_cache[k].valid && strcmp(image_cache[k].path, path) == 0) {
+      (void)strlcpy(image_cache[k].mount_point, mount_point,
+                    sizeof(image_cache[k].mount_point));
       image_cache[k].unit_id = unit_id;
       image_cache[k].backend = backend;
       return;
@@ -823,12 +838,33 @@ static void cache_image_mount(const char *path, int unit_id,
   for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
     if (!image_cache[k].valid) {
       (void)strlcpy(image_cache[k].path, path, sizeof(image_cache[k].path));
+      (void)strlcpy(image_cache[k].mount_point, mount_point,
+                    sizeof(image_cache[k].mount_point));
       image_cache[k].unit_id = unit_id;
       image_cache[k].backend = backend;
       image_cache[k].valid = true;
       return;
     }
   }
+}
+
+static bool resolve_device_from_mount_cache(const char *mount_point,
+                                            attach_backend_t *backend_out,
+                                            int *unit_out) {
+  if (!mount_point || mount_point[0] == '\0')
+    return false;
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
+    if (!image_cache[k].valid)
+      continue;
+    if (strcmp(image_cache[k].mount_point, mount_point) != 0)
+      continue;
+    if (image_cache[k].backend == ATTACH_BACKEND_NONE || image_cache[k].unit_id < 0)
+      return false;
+    *backend_out = image_cache[k].backend;
+    *unit_out = image_cache[k].unit_id;
+    return true;
+  }
+  return false;
 }
 
 // --- Shutdown and Stop Signal Handling ---
@@ -1559,6 +1595,8 @@ static void init_runtime_config_defaults(void) {
   g_runtime_cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
   g_runtime_cfg.force_mount = false;
   g_runtime_cfg.recursive_scan = false;
+  (void)strlcpy(g_runtime_cfg.backports_path, DEFAULT_BACKPORTS_PATH,
+                sizeof(g_runtime_cfg.backports_path));
   g_runtime_cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
   g_runtime_cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
   g_runtime_cfg.exfat_backend = DEFAULT_EXFAT_BACKEND;
@@ -1764,6 +1802,22 @@ static bool load_runtime_config(void) {
       continue;
     }
 
+    if (strcasecmp(key, "backports_path") == 0) {
+      size_t len = strlcpy(g_runtime_cfg.backports_path, value,
+                           sizeof(g_runtime_cfg.backports_path));
+      if (len >= sizeof(g_runtime_cfg.backports_path)) {
+        log_debug("  [CFG] invalid backports path at line %d: too long", line_no);
+        (void)strlcpy(g_runtime_cfg.backports_path, DEFAULT_BACKPORTS_PATH,
+                      sizeof(g_runtime_cfg.backports_path));
+      } else {
+        while (len > 1 && g_runtime_cfg.backports_path[len - 1] == '/') {
+          g_runtime_cfg.backports_path[len - 1] = '\0';
+          len--;
+        }
+      }
+      continue;
+    }
+
     if (strcasecmp(key, "scan_interval_seconds") == 0 ||
         strcasecmp(key, "scan_interval_sec") == 0) {
       if (!parse_u32_ini(value, &u32) || u32 < MIN_SCAN_INTERVAL_SECONDS ||
@@ -1856,8 +1910,10 @@ static bool load_runtime_config(void) {
     log_debug("  [CFG] no valid scanpath entries, using defaults");
     init_runtime_scan_paths_defaults();
   } else {
-    // UFS mount root is always required for remount scanning.
-    (void)add_runtime_scan_path(IMAGE_MOUNT_BASE);
+    // Image mount roots are always required for remount scanning.
+    (void)add_runtime_scan_path(IMAGE_MOUNT_BASE "/" IMAGE_MOUNT_SUBDIR_UFS);
+    (void)add_runtime_scan_path(IMAGE_MOUNT_BASE "/" IMAGE_MOUNT_SUBDIR_EXFAT);
+    (void)add_runtime_scan_path(IMAGE_MOUNT_BASE "/" IMAGE_MOUNT_SUBDIR_PFS);
   }
 
   int image_rule_count = 0;
@@ -1867,6 +1923,7 @@ static bool load_runtime_config(void) {
   }
 
   log_debug("  [CFG] loaded: debug=%d ro=%d force=%d recursive_scan=%d "
+            "backports_path=%s "
             "exfat_backend=%s ufs_backend=%s "
             "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u) "
             "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d",
@@ -1874,6 +1931,7 @@ static bool load_runtime_config(void) {
             g_runtime_cfg.mount_read_only ? 1 : 0,
             g_runtime_cfg.force_mount ? 1 : 0,
             g_runtime_cfg.recursive_scan ? 1 : 0,
+            g_runtime_cfg.backports_path,
             backend_name(g_runtime_cfg.exfat_backend),
             backend_name(g_runtime_cfg.ufs_backend),
             g_runtime_cfg.lvd_sector_exfat, g_runtime_cfg.lvd_sector_ufs,
@@ -1979,26 +2037,62 @@ static bool parse_unit_from_dev_path(const char *dev_path, const char *prefix,
 static bool resolve_device_from_mount(const char *mount_point,
                                       attach_backend_t *backend_out,
                                       int *unit_out) {
+  if (!mount_point || !backend_out || !unit_out)
+    return false;
+
+  *backend_out = ATTACH_BACKEND_NONE;
+  *unit_out = -1;
+
+  if (resolve_device_from_mount_cache(mount_point, backend_out, unit_out))
+    return true;
+
   struct statfs sfs;
   if (statfs(mount_point, &sfs) != 0)
     return false;
 
-  const char *from = sfs.f_mntfromname;
-  if (parse_unit_from_dev_path(from, "/dev/lvd", unit_out)) {
+  if (strcmp(sfs.f_mntonname, mount_point) != 0)
+    return false;
+
+  if (parse_unit_from_dev_path(sfs.f_mntfromname, "/dev/lvd", unit_out)) {
     *backend_out = ATTACH_BACKEND_LVD;
     return true;
   }
-  if (parse_unit_from_dev_path(from, "/dev/md", unit_out)) {
+
+  if (parse_unit_from_dev_path(sfs.f_mntfromname, "/dev/md", unit_out)) {
     *backend_out = ATTACH_BACKEND_MD;
     return true;
   }
+
+  struct statfs *mntbuf = NULL;
+  int mntcount = getmntinfo(&mntbuf, MNT_NOWAIT);
+  if (mntcount <= 0 || !mntbuf)
+    return false;
+
+  for (int i = 0; i < mntcount; i++) {
+    if (strcmp(mntbuf[i].f_mntonname, mount_point) != 0)
+      continue;
+    if (parse_unit_from_dev_path(mntbuf[i].f_mntfromname, "/dev/lvd", unit_out)) {
+      *backend_out = ATTACH_BACKEND_LVD;
+      return true;
+    }
+    if (parse_unit_from_dev_path(mntbuf[i].f_mntfromname, "/dev/md", unit_out)) {
+      *backend_out = ATTACH_BACKEND_MD;
+      return true;
+    }
+  }
+
   return false;
 }
 
+static bool is_path_mountpoint(const char *path) {
+  if (!path || path[0] == '\0')
+    return false;
+  struct statfs sfs;
+  return (statfs(path, &sfs) == 0 && strcmp(sfs.f_mntonname, path) == 0);
+}
+
 static bool is_active_image_mount_point(const char *path) {
-  attach_backend_t backend = ATTACH_BACKEND_NONE;
-  int unit = -1;
-  return resolve_device_from_mount(path, &backend, &unit);
+  return is_path_mountpoint(path);
 }
 
 // --- Device Detach Helpers ---
@@ -2168,20 +2262,23 @@ static void strip_extension(const char *filename, char *out, size_t out_size) {
   out[len] = '\0';
 }
 
+static const char *image_fs_subdir(image_fs_type_t fs_type) {
+  if (fs_type == IMAGE_FS_UFS)
+    return IMAGE_MOUNT_SUBDIR_UFS;
+  if (fs_type == IMAGE_FS_EXFAT)
+    return IMAGE_MOUNT_SUBDIR_EXFAT;
+  if (fs_type == IMAGE_FS_PFS)
+    return IMAGE_MOUNT_SUBDIR_PFS;
+  return "unknown";
+}
+
 static void build_image_mount_point(const char *file_path, image_fs_type_t fs_type,
                                   char *mount_point, size_t mount_point_size) {
   const char *filename = get_filename_component(file_path);
   char mount_name[MAX_PATH];
   strip_extension(filename, mount_name, sizeof(mount_name));
-  const char *suffix = "unknown";
-  if (fs_type == IMAGE_FS_UFS)
-    suffix = "ufs";
-  else if (fs_type == IMAGE_FS_EXFAT)
-    suffix = "exfat";
-  else if (fs_type == IMAGE_FS_PFS)
-    suffix = "pfs";
-  snprintf(mount_point, mount_point_size, "%s/%s-%s", IMAGE_MOUNT_BASE,
-           mount_name, suffix);
+  snprintf(mount_point, mount_point_size, "%s/%s/%s", IMAGE_MOUNT_BASE,
+           image_fs_subdir(fs_type), mount_name);
 }
 
 static bool unmount_image(const char *file_path, int unit_id,
@@ -2204,15 +2301,26 @@ static bool unmount_image(const char *file_path, int unit_id,
   // source before unmounting the virtual disk itself.
   cleanup_mount_links(mount_point, true);
 
-  // Try standard unmount
-  if (unmount(mount_point, 0) != 0) {
-    if (errno != ENOENT && errno != EINVAL &&
-        unmount(mount_point, MNT_FORCE) != 0 && errno != ENOENT &&
+  // Unmount stacked layers (unionfs over image fs).
+  for (int i = 0; i < MAX_LAYERED_UNMOUNT_ATTEMPTS; i++) {
+    if (!is_path_mountpoint(mount_point))
+      break;
+    if (unmount(mount_point, 0) == 0)
+      continue;
+    if (errno == ENOENT || errno == EINVAL)
+      break;
+    if (unmount(mount_point, MNT_FORCE) != 0 && errno != ENOENT &&
         errno != EINVAL) {
       log_debug("  [IMG][%s] unmount failed for %s: %s",
                 backend_name(resolved_backend), mount_point, strerror(errno));
       return false;
     }
+  }
+
+  if (is_path_mountpoint(mount_point)) {
+    log_debug("  [IMG][%s] unmount incomplete for %s",
+              backend_name(resolved_backend), mount_point);
+    return false;
   }
 
   bool detach_ok = true;
@@ -2288,7 +2396,7 @@ static bool mount_image(const char *file_path, image_fs_type_t fs_type) {
                                       &existing_unit)) {
           log_debug("  [IMG][%s] Already mounted: %s",
                     backend_name(existing_backend), mount_point);
-          cache_image_mount(file_path, existing_unit, existing_backend);
+          cache_image_mount(file_path, mount_point, existing_unit, existing_backend);
           return true;
         }
         log_debug("  [IMG] Mount point exists and is non-empty but is not an "
@@ -2318,7 +2426,11 @@ static bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   }
 
   // Create mount point
+  char fs_mount_root[MAX_PATH];
+  snprintf(fs_mount_root, sizeof(fs_mount_root), "%s/%s", IMAGE_MOUNT_BASE,
+           image_fs_subdir(fs_type));
   mkdir(IMAGE_MOUNT_BASE, 0777);
+  mkdir(fs_mount_root, 0777);
   mkdir(mount_point, 0777);
 
   attach_backend_t attach_backend = ATTACH_BACKEND_LVD;
@@ -2558,8 +2670,39 @@ static bool mount_image(const char *file_path, image_fs_type_t fs_type) {
             image_fs_name(fs_type), devname, mount_point);
   log_fs_stats("IMG", mount_point, image_fs_name(fs_type));
 
+  struct stat param_st;
+  char title_id[MAX_TITLE_ID];
+  char title_name[MAX_TITLE_NAME];
+  title_id[0] = '\0';
+  title_name[0] = '\0';
+  if (directory_has_param_json(mount_point, &param_st) &&
+      get_game_info(mount_point, &param_st, title_id, title_name) &&
+      title_id[0] != '\0') {
+    char backport_path[MAX_PATH];
+    struct stat backport_st;
+    snprintf(backport_path, sizeof(backport_path), "%s/%s",
+             g_runtime_cfg.backports_path, title_id);
+    if (stat(backport_path, &backport_st) == 0 && S_ISDIR(backport_st.st_mode)) {
+      struct iovec overlay_iov[] = {
+          IOVEC_ENTRY("fstype"), IOVEC_ENTRY("unionfs"), IOVEC_ENTRY("from"),
+          IOVEC_ENTRY(backport_path), IOVEC_ENTRY("fspath"),
+          IOVEC_ENTRY(mount_point)};
+      int overlay_flags = mount_read_only ? MNT_RDONLY : 0;
+      if (nmount(overlay_iov, IOVEC_SIZE(overlay_iov), overlay_flags) == 0) {
+        log_debug("  [IMG] backport overlay mounted (%s): %s -> %s",
+                  mount_read_only ? "ro" : "rw", backport_path, mount_point);
+      } else {
+        int overlay_err = errno;
+        log_debug("  [IMG] backport overlay failed: %s -> %s (%s)", backport_path,
+                  mount_point, strerror(overlay_err));
+        notify_system("Backport overlay failed: %s\n%s\n0x%08X", title_id,
+                      backport_path, (uint32_t)overlay_err);
+      }
+    }
+  }
+
   // Cache it
-  cache_image_mount(file_path, unit_id, attach_backend);
+  cache_image_mount(file_path, mount_point, unit_id, attach_backend);
 
   return true;
 }
@@ -2650,15 +2793,58 @@ static void cleanup_mount_dirs(void) {
     if (!is_dir)
       continue;
 
-    if (rmdir(full_path) == 0) {
-      log_debug("  [IMG] removed empty mount dir: %s", full_path);
+    bool is_fs_root = (strcmp(entry->d_name, IMAGE_MOUNT_SUBDIR_UFS) == 0) ||
+                      (strcmp(entry->d_name, IMAGE_MOUNT_SUBDIR_EXFAT) == 0) ||
+                      (strcmp(entry->d_name, IMAGE_MOUNT_SUBDIR_PFS) == 0);
+    if (!is_fs_root) {
+      if (rmdir(full_path) == 0) {
+        log_debug("  [IMG] removed empty mount dir: %s", full_path);
+        continue;
+      }
+      if (errno == ENOTEMPTY || errno == EBUSY || errno == ENOENT)
+        continue;
+      log_debug("  [IMG] failed to remove mount dir %s: %s", full_path,
+                strerror(errno));
       continue;
     }
 
-    if (errno == ENOTEMPTY || errno == EBUSY || errno == ENOENT)
+    DIR *sub = opendir(full_path);
+    if (!sub) {
+      if (errno != ENOENT)
+        log_debug("  [IMG] open %s failed: %s", full_path, strerror(errno));
       continue;
-    log_debug("  [IMG] failed to remove mount dir %s: %s", full_path,
-              strerror(errno));
+    }
+    struct dirent *sub_entry;
+    while ((sub_entry = readdir(sub)) != NULL) {
+      if (should_stop_requested())
+        break;
+      if (sub_entry->d_name[0] == '.')
+        continue;
+
+      char sub_path[MAX_PATH];
+      snprintf(sub_path, sizeof(sub_path), "%s/%s", full_path, sub_entry->d_name);
+
+      bool is_sub_dir = false;
+      if (sub_entry->d_type == DT_DIR) {
+        is_sub_dir = true;
+      } else if (sub_entry->d_type == DT_UNKNOWN) {
+        struct stat sub_st;
+        if (stat(sub_path, &sub_st) == 0)
+          is_sub_dir = S_ISDIR(sub_st.st_mode);
+      }
+      if (!is_sub_dir)
+        continue;
+
+      if (rmdir(sub_path) == 0) {
+        log_debug("  [IMG] removed empty mount dir: %s", sub_path);
+        continue;
+      }
+      if (errno == ENOTEMPTY || errno == EBUSY || errno == ENOENT)
+        continue;
+      log_debug("  [IMG] failed to remove mount dir %s: %s", sub_path,
+                strerror(errno));
+    }
+    closedir(sub);
   }
 
   closedir(d);
@@ -3128,7 +3314,8 @@ static int collect_scan_candidates(scan_candidate_t *candidates,
         }
       }
 
-      if (strcmp(SCAN_PATHS[i], IMAGE_MOUNT_BASE) != 0 && is_regular)
+      if (!path_matches_root_or_child(SCAN_PATHS[i], IMAGE_MOUNT_BASE) &&
+          is_regular)
         maybe_mount_image_file(full_path, entry->d_name);
       if (!is_dir)
         continue;
@@ -3294,6 +3481,8 @@ void scan_all_paths(void) { (void)scan_all_paths_once(true); }
 // --- Program Entry ---
 int main(void) {
   int lock = -1;
+
+  syscall(SYS_thr_set_name, -1, PAYLOAD_NAME);
 
   // Initialize services
   sceUserServiceInitialize(0);
