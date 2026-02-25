@@ -52,7 +52,7 @@
 #define MAX_PATH 1024
 #define MAX_TITLE_ID 32
 #define MAX_TITLE_NAME 256
-#define SHADOWMOUNT_VERSION "1.6test2"
+#define SHADOWMOUNT_VERSION "1.6beta1"
 #define PAYLOAD_NAME "shadowmountplus.elf"
 #define IMAGE_MOUNT_BASE "/data/imgmnt"
 #define IMAGE_MOUNT_SUBDIR_UFS "ufsmnt"
@@ -237,6 +237,8 @@ static void close_app_db(void);
 static void shutdown_image_mounts(void);
 static void ensure_runtime_config_ready(void);
 static void cleanup_stale_image_mounts(void);
+static void log_fs_stats(const char *tag, const char *path,
+                         const char *type_hint);
 static bool directory_has_param_json(const char *dir_path,
                                      struct stat *param_st_out);
 
@@ -1023,39 +1025,127 @@ static bool read_mount_link(const char *title_id, char *out, size_t out_size) {
   return read_mount_link_file(lnk_path, out, out_size);
 }
 
+static int remount_system_ex(void) {
+  struct iovec iov[] = {
+      IOVEC_ENTRY("from"),      IOVEC_ENTRY("/dev/ssd0.system_ex"),
+      IOVEC_ENTRY("fspath"),    IOVEC_ENTRY("/system_ex"),
+      IOVEC_ENTRY("fstype"),    IOVEC_ENTRY("exfatfs"),
+      IOVEC_ENTRY("large"),     IOVEC_ENTRY("yes"),
+      IOVEC_ENTRY("timezone"),  IOVEC_ENTRY("static"),
+      IOVEC_ENTRY("async"),     IOVEC_ENTRY(NULL),
+      IOVEC_ENTRY("ignoreacl"), IOVEC_ENTRY(NULL)};
+  return nmount(iov, IOVEC_SIZE(iov), MNT_UPDATE);
+}
+
 static bool mount_title_nullfs(const char *title_id, const char *src_path) {
   char dst[MAX_PATH];
+  char src_eboot[MAX_PATH];
+  char dst_eboot[MAX_PATH];
   snprintf(dst, sizeof(dst), "/system_ex/app/%s", title_id);
+  snprintf(src_eboot, sizeof(src_eboot), "%s/eboot.bin", src_path);
+  snprintf(dst_eboot, sizeof(dst_eboot), "%s/eboot.bin", dst);
 
-  struct statfs mntst;
-  if (statfs(dst, &mntst) == 0 && strcmp(mntst.f_mntonname, dst) == 0) {
-    if (strcmp(mntst.f_fstypename, "nullfs") == 0 &&
-        strcmp(mntst.f_mntfromname, src_path) == 0)
-      return true;
-    log_debug("  [LINK] Mount point busy: %s (%s from %s)", dst,
-              mntst.f_fstypename, mntst.f_mntfromname);
+  struct stat src_st;
+  if (stat(src_path, &src_st) != 0) {
+    log_debug("  [LINK] source path check failed for %s -> %s: %s", title_id,
+              src_path, strerror(errno));
     return false;
   }
-
-  if (mkdir(dst, 0755) != 0 && errno != EEXIST) {
-    log_debug("  [LINK] Failed to create mount directory for title %s: %s",
-              title_id, strerror(errno));
+  if (!S_ISDIR(src_st.st_mode)) {
+    log_debug("  [LINK] source path is not a directory for %s: %s mode=0%o",
+              title_id, src_path, (unsigned)(src_st.st_mode & 077777));
     return false;
+  }
+  if (access(src_eboot, F_OK) != 0) {
+    size_t base_len = sizeof(IMAGE_MOUNT_BASE) - 1u;
+    bool under_image_root =
+        (strncmp(src_path, IMAGE_MOUNT_BASE, base_len) == 0) &&
+        (src_path[base_len] == '\0' || src_path[base_len] == '/');
+    if (under_image_root)
+      cleanup_stale_image_mounts();
+    if (access(src_eboot, F_OK) != 0) {
+      log_debug("  [LINK] source eboot.bin missing for %s: %s", title_id,
+                src_eboot);
+      return false;
+    }
+  }
+
+  struct statfs mntst;
+  if (statfs(dst, &mntst) == 0) {
+    if (strcmp(mntst.f_mntonname, dst) == 0) {
+      if (strcmp(mntst.f_fstypename, "nullfs") == 0 &&
+          strcmp(mntst.f_mntfromname, src_path) == 0) {
+        if (access(dst_eboot, F_OK) == 0) {
+          log_debug("  [LINK] nullfs already mounted: %s -> %s", src_path, dst);
+          return true;
+        }
+      }
+      if (strcmp(mntst.f_fstypename, "nullfs") == 0) {
+        if (unmount(dst, 0) != 0 && errno != ENOENT && errno != EINVAL) {
+          if (unmount(dst, MNT_FORCE) != 0 && errno != ENOENT &&
+              errno != EINVAL) {
+            log_debug("  [LINK] failed to unmount stale nullfs for %s: %s", dst,
+                      strerror(errno));
+            return false;
+          }
+        }
+      } else {
+        log_debug("  [LINK] mount point busy for %s: dst=%s type=%s from=%s "
+                  "flags=0x%lX",
+                  title_id, dst, mntst.f_fstypename, mntst.f_mntfromname,
+                  (unsigned long)mntst.f_flags);
+        return false;
+      }
+    }
+  } else if (errno != ENOENT) {
+    log_debug("  [LINK] statfs failed for %s (%s): %s", title_id, dst,
+              strerror(errno));
+  }
+
+  int mkdir_res = mkdir(dst, 0755);
+  if (mkdir_res != 0) {
+    if (errno != EEXIST) {
+      log_debug("  [LINK] Failed to create mount directory for title %s: %s",
+                title_id, strerror(errno));
+      return false;
+    }
+    struct stat dst_st;
+    if (stat(dst, &dst_st) != 0) {
+      log_debug("  [LINK] mount directory exists but stat failed for %s: %s",
+                dst, strerror(errno));
+      return false;
+    }
+    if (!S_ISDIR(dst_st.st_mode)) {
+      log_debug("  [LINK] mount target is not a directory: %s mode=0%o", dst,
+                (unsigned)(dst_st.st_mode & 077777));
+      return false;
+    }
   }
 
   struct iovec iov[] = {
-      IOVEC_ENTRY("fstype"), IOVEC_ENTRY("nullfs"), 
-      IOVEC_ENTRY("from"), IOVEC_ENTRY(src_path), 
+      IOVEC_ENTRY("fstype"), IOVEC_ENTRY("nullfs"),
+      IOVEC_ENTRY("from"), IOVEC_ENTRY(src_path),
       IOVEC_ENTRY("fspath"), IOVEC_ENTRY(dst),
   };
 
   if (nmount(iov, IOVEC_SIZE(iov), 0) != 0) {
-    log_debug("  [LINK] Failed to auto-mount title %s -> %s: %s", title_id,
-              src_path, strerror(errno));
+    log_debug("  [LINK] Failed to auto-mount nullfs title=%s src=%s dst=%s: %s",
+              title_id, src_path, dst, strerror(errno));
     return false;
   }
 
-  log_debug("  [LINK] Auto-mounted title %s -> %s", title_id, src_path);
+  if (access(dst_eboot, F_OK) != 0) {
+    log_debug("  [LINK] mounted nullfs but eboot.bin is missing at target: %s",
+              dst_eboot);
+    if (unmount(dst, 0) != 0 && errno != ENOENT && errno != EINVAL) {
+      if (unmount(dst, MNT_FORCE) != 0 && errno != ENOENT && errno != EINVAL) {
+        log_debug("  [LINK] failed to rollback empty nullfs mount %s: %s", dst,
+                  strerror(errno));
+      }
+    }
+    return false;
+  }
+  log_debug("  [LINK] nullfs mounted: %s -> %s", src_path, dst);
   return true;
 }
 
@@ -3418,6 +3508,7 @@ bool mount_and_install(const char *src_path, const char *title_id,
 
   // WRITE TRACKER
   char lnk_path[MAX_PATH];
+  snprintf(user_app_dir, sizeof(user_app_dir), "/user/app/%s", title_id);
   snprintf(lnk_path, sizeof(lnk_path), "/user/app/%s/mount.lnk", title_id);
   bool link_ok = false;
   FILE *flnk = fopen(lnk_path, "w");
@@ -3436,8 +3527,14 @@ bool mount_and_install(const char *src_path, const char *title_id,
   if (!link_ok) {
     return false;
   }
+  log_debug("  [LINK] mount.lnk created: %s -> %s", lnk_path, src_path);
 
-  (void)mount_title_nullfs(title_id, src_path);
+  if (!mount_title_nullfs(title_id, src_path)) {
+    log_debug("  [LINK] mount.lnk created but nullfs mount failed: title=%s "
+              "src=%s",
+              title_id, src_path);
+    return false;
+  }
 
   if (!should_register) {
     log_debug("  [REG] Skip (already present in app.db)");
@@ -3562,6 +3659,13 @@ int main(void) {
 
   log_debug("ShadowMount+ v%s exFAT/UFS/PFS/LVD/MD. Thx to VoidWhisper/Gezine/Earthonion/EchoStretch/Drakmor", SHADOWMOUNT_VERSION);
   load_runtime_config();
+
+  if (mkdir("/system_ex/app", 0777) != 0 && errno != EEXIST) {
+    log_debug("  [MOUNT] failed to create /system_ex/app: %s", strerror(errno));
+  }
+  if (remount_system_ex() != 0) {
+    log_debug("  [MOUNT] remount_system_ex failed: %s", strerror(errno));
+  }
 
   notify_system("ShadowMount+ v%s exFAT/UFS/PFS",
                   SHADOWMOUNT_VERSION);

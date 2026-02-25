@@ -1,6 +1,6 @@
 # ShadowMountPlus (PS5)
 
-**Version:** `1.6test2`
+**Version:** `1.6beta1`
 
 **Repository:** https://github.com/drakmor/shadowMountPlus
 
@@ -197,11 +197,13 @@ Add ShadowMountPlus to your `autoload.txt` for **plk-autoloader** to ensure it s
 **Sample Configuration:**
 ```ini
 !1000
-kstuff.elf
-!1000
 notify.elf  ; Optional - Remove this line if you do not want Rich Toasts
 !1000
 shadowmountplus.elf
+!3000
+ps5-backpork.elf
+!1000
+kstuff.elf
 ```
 
 ---
