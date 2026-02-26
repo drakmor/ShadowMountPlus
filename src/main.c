@@ -36,7 +36,8 @@
 #define TITLE_STATE_CAPACITY MAX_PENDING
 #define STATE_HASH_SIZE 1024u
 #define MAX_SCAN_PATHS 128
-#define MAX_FAILED_MOUNT_ATTEMPTS 1
+#define MAX_FAILED_MOUNT_ATTEMPTS 2
+#define MAX_REGISTER_ATTEMPTS 2
 #define MAX_MISSING_PARAM_SCAN_ATTEMPTS 3
 #define MAX_IMAGE_MOUNT_ATTEMPTS 3
 #define MAX_LAYERED_UNMOUNT_ATTEMPTS 4
@@ -309,7 +310,7 @@ static uint16_t g_path_state_hash[STATE_HASH_SIZE];
 struct TitleStateEntry {
   char title_id[MAX_TITLE_ID];
   uint8_t mount_reg_attempts;
-  bool register_attempted_once;
+  uint8_t register_attempts;
   bool duplicate_notified_once;
   bool valid;
 };
@@ -644,7 +645,7 @@ static struct TitleStateEntry *create_title_state(const char *title_id) {
       if (!g_title_state[k].valid)
         continue;
       if (g_title_state[k].mount_reg_attempts == 0 &&
-          !g_title_state[k].register_attempted_once) {
+          g_title_state[k].register_attempts == 0) {
         evict_k = k;
         break;
       }
@@ -712,13 +713,13 @@ static void prune_path_state(void) {
 
 static bool was_register_attempted(const char *title_id) {
   struct TitleStateEntry *entry = find_title_state(title_id);
-  return entry ? entry->register_attempted_once : false;
+  return entry ? (entry->register_attempts >= MAX_REGISTER_ATTEMPTS) : false;
 }
 
 static void mark_register_attempted(const char *title_id) {
   struct TitleStateEntry *entry = get_or_create_title_state(title_id);
-  if (entry)
-    entry->register_attempted_once = true;
+  if (entry && entry->register_attempts < UINT8_MAX)
+    entry->register_attempts++;
 }
 
 static void notify_duplicate_title_once(const char *title_id, const char *path_a,
@@ -2221,6 +2222,34 @@ static bool is_active_image_mount_point(const char *path) {
   return is_path_mountpoint(path);
 }
 
+static bool wait_for_lvd1_release(void) {
+  bool was_waiting = false;
+  while (true) {
+    struct statfs *mntbuf = NULL;
+    int mntcount = getmntinfo(&mntbuf, MNT_NOWAIT);
+    bool mounted = false;
+    for (int i = 0; i < mntcount && mntbuf; i++) {
+      if (strcmp(mntbuf[i].f_mntfromname, "/dev/lvd1") == 0) {
+        mounted = true;
+        break;
+      }
+    }
+    if (!mounted)
+      break;
+
+    if (!was_waiting) {
+      log_debug("  [IMG][LVD] waiting for /dev/lvd1 to be released...");
+      was_waiting = true;
+    }
+    if (should_stop_requested())
+      return false;
+    sceKernelUsleep(500000);
+  }
+  if (was_waiting)
+    log_debug("  [IMG][LVD] /dev/lvd1 released");
+  return true;
+}
+
 // --- Device Detach Helpers ---
 static bool detach_lvd_unit(int unit_id) {
   if (unit_id < 0)
@@ -2405,6 +2434,34 @@ static void build_image_mount_point(const char *file_path, image_fs_type_t fs_ty
   strip_extension(filename, mount_name, sizeof(mount_name));
   snprintf(mount_point, mount_point_size, "%s/%s/%s", IMAGE_MOUNT_BASE,
            image_fs_subdir(fs_type), mount_name);
+}
+
+static void mount_backport_overlay_if_present(const char *mount_point,
+                                              const char *title_id,
+                                              bool mount_read_only) {
+  char backport_path[MAX_PATH];
+  struct stat backport_st;
+  snprintf(backport_path, sizeof(backport_path), "%s/%s",
+           g_runtime_cfg.backports_path, title_id);
+  if (stat(backport_path, &backport_st) != 0 || !S_ISDIR(backport_st.st_mode))
+    return;
+
+  struct iovec overlay_iov[] = {
+      IOVEC_ENTRY("fstype"), IOVEC_ENTRY("unionfs"),
+      IOVEC_ENTRY("from"),   IOVEC_ENTRY(backport_path),
+      IOVEC_ENTRY("fspath"), IOVEC_ENTRY(mount_point)};
+  int overlay_flags = mount_read_only ? MNT_RDONLY : 0;
+  if (nmount(overlay_iov, IOVEC_SIZE(overlay_iov), overlay_flags) == 0) {
+    log_debug("  [IMG] backport overlay mounted (%s): %s -> %s",
+              mount_read_only ? "ro" : "rw", backport_path, mount_point);
+    return;
+  }
+
+  int overlay_err = errno;
+  log_debug("  [IMG] backport overlay failed: %s -> %s (%s)", backport_path,
+            mount_point, strerror(overlay_err));
+  notify_system("Backport overlay failed: %s\n%s\n0x%08X", title_id,
+                backport_path, (uint32_t)overlay_err);
 }
 
 static bool unmount_image(const char *file_path, int unit_id,
@@ -2804,26 +2861,14 @@ static bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   if (directory_has_param_json(mount_point, &param_st) &&
       get_game_info(mount_point, &param_st, title_id, title_name) &&
       title_id[0] != '\0') {
-    char backport_path[MAX_PATH];
-    struct stat backport_st;
-    snprintf(backport_path, sizeof(backport_path), "%s/%s",
-             g_runtime_cfg.backports_path, title_id);
-    if (stat(backport_path, &backport_st) == 0 && S_ISDIR(backport_st.st_mode)) {
-      struct iovec overlay_iov[] = {
-          IOVEC_ENTRY("fstype"), IOVEC_ENTRY("unionfs"), 
-          IOVEC_ENTRY("from"),   IOVEC_ENTRY(backport_path),
-          IOVEC_ENTRY("fspath"), IOVEC_ENTRY(mount_point)};
-      int overlay_flags = mount_read_only ? MNT_RDONLY : 0;
-      if (nmount(overlay_iov, IOVEC_SIZE(overlay_iov), overlay_flags) == 0) {
-        log_debug("  [IMG] backport overlay mounted (%s): %s -> %s",
-                  mount_read_only ? "ro" : "rw", backport_path, mount_point);
-      } else {
-        int overlay_err = errno;
-        log_debug("  [IMG] backport overlay failed: %s -> %s (%s)", backport_path,
-                  mount_point, strerror(overlay_err));
-        notify_system("Backport overlay failed: %s\n%s\n0x%08X", title_id,
-                      backport_path, (uint32_t)overlay_err);
-      }
+    const struct AppDbTitleList *app_db_titles = NULL;
+    bool app_db_titles_ready = get_app_db_title_list_cached(&app_db_titles);
+    if (!app_db_titles_ready ||
+        app_db_title_list_contains(app_db_titles, title_id)) {
+      mount_backport_overlay_if_present(mount_point, title_id, mount_read_only);
+    } else {
+      log_debug("  [IMG] backport overlay deferred until registration: %s",
+                title_id);
     }
   }
 
@@ -3288,7 +3333,12 @@ static bool try_collect_candidate_for_directory(
   }
 
   if (!in_app_db && was_register_attempted(title_id)) {
-    log_debug("  [SKIP] register/install already attempted once: %s (%s)",
+    uint8_t register_attempts = 0;
+    struct TitleStateEntry *entry = find_title_state(title_id);
+    if (entry)
+      register_attempts = entry->register_attempts;
+    log_debug("  [SKIP] register/install retry limit reached (%u/%u): %s (%s)",
+              (unsigned)register_attempts, (unsigned)MAX_REGISTER_ATTEMPTS,
               title_name, title_id);
     return true;
   }
@@ -3574,6 +3624,15 @@ bool mount_and_install(const char *src_path, const char *title_id,
                   (uint32_t)res);
     return false;
   }
+
+  bool src_mount_read_only = g_runtime_cfg.mount_read_only;
+  struct statfs src_sfs;
+  if (statfs(src_path, &src_sfs) == 0 &&
+      strcmp(src_sfs.f_mntonname, src_path) == 0) {
+    src_mount_read_only = ((src_sfs.f_flags & MNT_RDONLY) != 0);
+  }
+  mount_backport_overlay_if_present(src_path, title_id, src_mount_read_only);
+
   return true;
 }
 
@@ -3697,6 +3756,10 @@ int main(void) {
     notify_system("ShadowMount+: Recursive scan enabled.");
 
   cleanup_mount_dirs();
+  if (!wait_for_lvd1_release()) {
+    log_debug("[SHUTDOWN] stop requested while waiting /dev/lvd1 release");
+    goto shutdown;
+  }
 
   // --- STARTUP LOGIC ---
   cleanup_lost_sources_before_scan();
@@ -3736,6 +3799,7 @@ int main(void) {
     scan_all_paths();
   }
 
+shutdown:
   shutdown_image_mounts();
   free_app_db_title_list(&g_app_db_title_cache);
   invalidate_app_db_title_cache();
