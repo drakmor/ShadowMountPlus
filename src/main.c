@@ -373,6 +373,7 @@ static bool g_runtime_cfg_ready = false;
 static sqlite3 *g_app_db = NULL;
 static sqlite3_stmt *g_app_db_stmt_update_snd0 = NULL;
 static char g_last_image_mount_errmsg[256];
+static bool g_last_image_mount_notified = false;
 static struct AppDbTitleList g_app_db_title_cache = {0};
 static bool g_app_db_title_cache_ready = false;
 static time_t g_app_db_title_cache_mtime = 0;
@@ -2532,6 +2533,7 @@ static bool unmount_image(const char *file_path, int unit_id,
 static bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   ensure_runtime_config_ready();
   g_last_image_mount_errmsg[0] = '\0';
+  g_last_image_mount_notified = false;
   bool mount_mode_overridden = false;
   bool mount_read_only = g_runtime_cfg.mount_read_only;
   bool force_mount = g_runtime_cfg.force_mount;
@@ -2853,6 +2855,34 @@ static bool mount_image(const char *file_path, image_fs_type_t fs_type) {
             image_fs_name(fs_type), devname, mount_point);
   log_fs_stats("IMG", mount_point, image_fs_name(fs_type));
 
+  struct statfs mounted_sfs;
+  if (statfs(mount_point, &mounted_sfs) == 0) {
+    uint32_t min_device_sector =
+        (attach_backend == ATTACH_BACKEND_MD) ? get_md_sector_size(fs_type)
+                                              : get_lvd_sector_size(fs_type);
+    uint64_t fs_block_size = (uint64_t)mounted_sfs.f_bsize;
+    if (fs_block_size < (uint64_t)min_device_sector) {
+      snprintf(g_last_image_mount_errmsg, sizeof(g_last_image_mount_errmsg),
+               "Filesystem cluster size (%llu) is smaller than device sector "
+               "size (%u) for %s",
+               (unsigned long long)fs_block_size, min_device_sector, devname);
+      log_debug("  [IMG][%s] %s", backend_name(attach_backend),
+                g_last_image_mount_errmsg);
+      notify_system("Image mount rejected:\n%s\nCluster size is too small "
+                    "(%llu < %u).\nUse a larger cluster size in the image or "
+                    "lower sector size in config.",
+                    file_path, (unsigned long long)fs_block_size,
+                    min_device_sector);
+      g_last_image_mount_notified = true;
+      (void)unmount_image(file_path, unit_id, attach_backend);
+      errno = EINVAL;
+      return false;
+    }
+  } else {
+    log_debug("  [IMG][%s] statfs after mount failed for %s: %s",
+              backend_name(attach_backend), mount_point, strerror(errno));
+  }
+
   struct stat param_st;
   char title_id[MAX_TITLE_ID];
   char title_name[MAX_TITLE_NAME];
@@ -2930,7 +2960,8 @@ static void cleanup_stale_image_mounts(void) {
 
     int mount_err = errno;
     if (bump_image_mount_attempts(source_path) == 1) {
-      notify_image_mount_failed(source_path, mount_err);
+      if (!g_last_image_mount_notified)
+        notify_image_mount_failed(source_path, mount_err);
     }
   }
 }
@@ -3035,7 +3066,8 @@ static void maybe_mount_image_file(const char *full_path,
   else {
     int mount_err = errno;
     if (bump_image_mount_attempts(full_path) == 1) {
-      notify_image_mount_failed(full_path, mount_err);
+      if (!g_last_image_mount_notified)
+        notify_image_mount_failed(full_path, mount_err);
     }
   }
 }
