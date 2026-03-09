@@ -10,7 +10,7 @@
 **ShadowMountPlus** is a fully automated, background "Auto-Mounter" payload for Jailbroken PlayStation 5 consoles. It streamlines the game mounting process by eliminating the need for manual configuration or external tools (such as DumpRunner or Itemzflow). ShadowMountPlus automatically detects, mounts, and installs game dumps from both **internal and external storage**.
 
 
-**Compatibility:** Supports all Jailbroken PS5 firmwares running **Kstuff v1.6.7**.
+**Compatibility:** Supports all Jailbroken PS5 firmwares running **Kstuff v1.6.6+** or **Kstuff-lite v1.0+**.
 
 
 ## Current image support
@@ -39,16 +39,22 @@ This file is optional. If it does not exist, built-in defaults are used.
 
 Supported keys (all optional):
 - `debug=1|0` (`1` enables `log_debug` output to console + `/data/shadowmount/debug.log`; default is `1`)
+- `quiet_mode=1|0` (`1` suppresses plain informational popups but keeps rich toasts; default is `0`)
 - `mount_read_only=1|0` (default: `1`)
 - `force_mount=1|0` (mounting even damaged file systems; default: `0`)
 - `image_ro=<image_filename>` (repeatable; force read-only mode for this image filename)
 - `image_rw=<image_filename>` (repeatable; force read-write mode for this image filename)
 - `recursive_scan=1|0` (`0` = scan only first-level subfolders, `1` = recursive scan without depth limit; default: `0`)
-- `backports_path=<absolute_path>` (default: `/data/backports`; if `<backports_path>/<TITLE_ID>` exists, it is overlaid on mounted image via `unionfs`)
 - `scan_interval_seconds=<1..3600>` (full scan loop interval; default: `10`)
 - `stability_wait_seconds=<0..3600>` (minimum source age before processing; default: `10`)
 - `exfat_backend=lvd|md` (default: `lvd`)
 - `ufs_backend=lvd|md` (default: `lvd`)
+- `backport_fakelib=1|0` (`1` mounts sandbox `fakelib` overlays for running games; default: `1`)
+- `kstuff_game_auto_toggle=1|0` (`1` pauses kstuff after tracked game launches and resumes it on stop; default: `1`)
+- `kstuff_pause_delay_image_seconds=<0..3600>` (delay before pausing kstuff for image-backed launches; default: `20`)
+- `kstuff_pause_delay_direct_seconds=<0..3600>` (delay before pausing kstuff for direct/non-image launches; default: `10`)
+- `kstuff_no_pause=<TITLE_ID>` (repeatable; keeps kstuff enabled for matching titles)
+- `kstuff_delay=<TITLE_ID>:<0..3600>` (repeatable; per-title pause delay override, last matching rule wins)
 - `scanpath=<absolute_path>` (can be repeated on multiple lines; default: built-in scan path list below)
 - `lvd_exfat_sector_size=<value>` (default: `512`)
 - `lvd_ufs_sector_size=<value>` (default: `4096`)
@@ -78,8 +84,22 @@ Scan path behavior:
 - Sources newer than `stability_wait_seconds` are deferred until stable (default: `10`).
 
 Backport overlay behavior:
-- If `${backports_path}/${TITLE_ID}` exists, ShadowMount+ mounts it over the game root with `unionfs`.
-- Files from backport folder override files from the mounted image.
+- For each `scanpath`, use:
+  - `<scanpath>/backports/<TITLE_ID>/`
+- The `backports` folder is ignored during normal game scanning.
+- A backport is applied automatically to the matching mounted game from the same scan path.
+- If `/mnt/sandbox/<TITLE_ID>_XXX/app0/fakelib` exists while the game is running, ShadowMount+ also mounts it into that game's sandbox `common/lib`.
+- `backport_fakelib=0` disables the sandbox `fakelib` watcher.
+- For `backport_fakelib` to work correctly, the standalone `BackPork` payload must be disabled. Running both at the same time will conflict.
+
+Kstuff game lifecycle behavior:
+- When `kstuff_game_auto_toggle=1`, ShadowMount watches game `exec/exit` events in the background.
+- Image-backed launches use `kstuff_pause_delay_image_seconds`; direct/non-image launches use `kstuff_pause_delay_direct_seconds`.
+- `kstuff_no_pause` skips auto-pause entirely for matching title IDs.
+- `kstuff_delay` overrides the pause delay for matching title IDs, regardless of image/direct launch type.
+- If both kinds of rule target the same title, `kstuff_no_pause` takes priority.
+- When the last tracked game stops, ShadowMount immediately enables kstuff again if it was the component that disabled it.
+
 
 Validation:
 - See `config.ini.example` for a ready-to-use template.
@@ -120,10 +140,13 @@ Recommended folder structure:
 - Default mode (`recursive_scan=0`):
   - `/data/homebrew/<TITLE_ID>/`
   - `/data/etaHEN/games/<TITLE_ID>/`
+  - `/data/homebrew/backports/<TITLE_ID>/`
+  - `/data/etaHEN/games/backports/<TITLE_ID>/`
    
 - Recursive mode (`recursive_scan=1`):
   - `/data/homebrew/PS5/<AnyFolder>/<TITLE_ID>/`
   - `/mnt/ext0/etaHEN/games/<Collection>/<TITLE_ID>/`
+  - `/mnt/ext0/etaHEN/games/backports/<TITLE_ID>/`
 
 
 ## Creating an exFAT image
@@ -186,23 +209,16 @@ Windows:
 ### Method 1: Manual Payload Injection (Port 9021)
 Use a payload sender (such as NetCat GUI or a web-based loader) to send the files to **Port 9021**.
 
-1.  Send `notify.elf` (Optional).
-    * *Only send this if you want graphical pop-ups. Skip if you prefer standard notifications.*
-2.  Send `shadowmountplus.elf`.
-3.  Wait for the notification: *"ShadowMount+"*.
+1.  Send `shadowmountplus.elf`.
+2.  Wait for the notification: *"ShadowMount+"*.
 
 ### Method 2: PLK Autoloader (Recommended)
 Add ShadowMountPlus to your `autoload.txt` for **plk-autoloader** to ensure it starts automatically on every boot.
 
 **Sample Configuration:**
 ```ini
-!1000
-notify.elf  ; Optional - Remove this line if you do not want Rich Toasts
-!1000
 shadowmountplus.elf
 !3000
-ps5-backpork.elf
-!1000
 kstuff.elf
 ```
 
@@ -240,10 +256,11 @@ If a game is mounted but does not start:
 * **Drakmor** - Evolution of ShadowMount to ShadowMountPlus
 
 * **Special Thanks:**
-    * VoidWhisper for ShadowMount [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/voidwhisper)
-    * EchoStretch
+    * VoidWhisper for ShadowMount
+    * BestPig for BackPort
+    * EchoStretch for kstuff-toggle and etc
     * Gezine
     * earthonion
     * LightningMods
-    * john-tornblom
+    * john-tornblom for SDK
     * PS5 R&D Community

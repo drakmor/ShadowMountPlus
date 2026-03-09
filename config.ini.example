@@ -9,6 +9,11 @@
 # 0/false/no/off -> disable log_debug output
 debug=1
 
+# Quiet mode:
+# 1/true/yes/on  -> only show the startup version popup and runtime errors
+# 0/false/no/off -> also show normal informational popups (default)
+quiet_mode=0
+
 # Global mount mode:
 # 1/true/yes/on/ro  -> read-only mounts
 # 0/false/no/off/rw -> read-write mounts
@@ -30,10 +35,6 @@ force_mount=0
 # 0/false/no/off -> scan only first-level subdirectories (default)
 recursive_scan=0
 
-# Optional backport overlay root:
-# If "<backports_path>/<TITLE_ID>" exists, it is mounted over image root via unionfs.
-backports_path=/data/backports
-
 # Full scan loop interval (seconds), range: 1..3600
 scan_interval_seconds=10
 
@@ -47,12 +48,35 @@ stability_wait_seconds=10
 exfat_backend=lvd
 ufs_backend=lvd
 
-# Backend-specific overrides (optional):
-# lvd_exfat_sector_size=512
-# lvd_ufs_sector_size=4096
-# lvd_pfs_sector_size=32768
-# md_exfat_sector_size=512
-# md_ufs_sector_size=512
+# Sandbox fakelib backport watcher:
+# 1/true/yes/on  -> mount /mnt/sandbox/<TITLE_ID>_XXX/app0/fakelib into common/lib
+# 0/false/no/off -> disable fakelib watcher
+backport_fakelib=1
+
+# Auto-manage kstuff around game launches:
+# 1/true/yes/on  -> pause kstuff after game launch, resume immediately on stop
+# 0/false/no/off -> leave kstuff state untouched
+kstuff_game_auto_toggle=1
+
+# Delay before pausing kstuff for image-backed titles.
+kstuff_pause_delay_image_seconds=20
+
+# Delay before pausing kstuff for direct/non-image launches.
+kstuff_pause_delay_direct_seconds=10
+
+# Keep kstuff enabled for specific title IDs (can be repeated).
+# kstuff_no_pause=PPSA12345
+
+# Override pause delay for specific title IDs (can be repeated).
+# Format: TITLEID:SECONDS
+# kstuff_delay=PPSA12345:30
+
+# Backend-specific sector size overrides:
+lvd_exfat_sector_size=512
+lvd_ufs_sector_size=4096
+lvd_pfs_sector_size=32768
+md_exfat_sector_size=512
+md_ufs_sector_size=512
 
 # Optional custom scan roots (can be repeated):
 # If at least one scanpath=... is present, only these paths are used.
