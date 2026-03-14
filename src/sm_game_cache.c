@@ -2,6 +2,7 @@
 #include "sm_game_cache.h"
 #include "sm_limits.h"
 #include "sm_log.h"
+#include "sm_title_state.h"
 
 struct GameCache {
   char path[MAX_PATH];
@@ -11,6 +12,24 @@ struct GameCache {
 };
 
 static struct GameCache g_game_cache[MAX_PENDING];
+
+static void clear_game_cache_slot(int index, const char *reason) {
+  if (index < 0 || index >= MAX_PENDING || !g_game_cache[index].valid)
+    return;
+
+  if (reason && reason[0] != '\0') {
+    if (g_game_cache[index].title_id[0] != '\0')
+      log_debug("  [CACHE] %s: %s (%s)", reason, g_game_cache[index].title_id,
+                g_game_cache[index].path);
+    else
+      log_debug("  [CACHE] %s: %s", reason, g_game_cache[index].path);
+  }
+
+  if (g_game_cache[index].title_id[0] != '\0')
+    clear_duplicate_title_notification(g_game_cache[index].title_id);
+
+  memset(&g_game_cache[index], 0, sizeof(g_game_cache[index]));
+}
 
 void cache_game_entry(const char *path, const char *title_id,
                       const char *title_name) {
@@ -33,14 +52,7 @@ void prune_game_cache(void) {
       continue;
     if (access(g_game_cache[k].path, F_OK) == 0)
       continue;
-
-    if (g_game_cache[k].title_id[0] != '\0')
-      log_debug("  [CACHE] source removed: %s (%s)", g_game_cache[k].title_id,
-                g_game_cache[k].path);
-    else
-      log_debug("  [CACHE] source removed: %s", g_game_cache[k].path);
-
-    memset(&g_game_cache[k], 0, sizeof(g_game_cache[k]));
+    clear_game_cache_slot(k, "source removed");
   }
 }
 
@@ -77,6 +89,6 @@ void clear_cached_game(const char *path) {
       continue;
     if (strcmp(g_game_cache[k].path, path) != 0)
       continue;
-    memset(&g_game_cache[k], 0, sizeof(g_game_cache[k]));
+    clear_game_cache_slot(k, "removed from duplicate tracking");
   }
 }

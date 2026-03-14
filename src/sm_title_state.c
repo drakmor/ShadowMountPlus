@@ -137,6 +137,12 @@ void notify_duplicate_title_once(const char *title_id, const char *path_a,
   notify_system("Duplicate %s detected:\n%s\n%s", title_id, path_a, path_b);
 }
 
+void clear_duplicate_title_notification(const char *title_id) {
+  struct TitleStateEntry *entry = find_title_state(title_id);
+  if (entry)
+    entry->duplicate_notified_once = false;
+}
+
 uint8_t get_failed_mount_attempts(const char *title_id) {
   struct TitleStateEntry *entry = find_title_state(title_id);
   return entry ? entry->mount_reg_attempts : 0;

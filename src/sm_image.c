@@ -698,6 +698,7 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
   // Remove mount.lnk and unmount /system_ex/app/<titleid> that point to this
   // source before unmounting the virtual disk itself.
   cleanup_mount_links(mount_point, true);
+  clear_cached_game(mount_point);
 
   // Unmount stacked layers (unionfs over image fs).
   for (int i = 0; i < MAX_LAYERED_UNMOUNT_ATTEMPTS; i++) {

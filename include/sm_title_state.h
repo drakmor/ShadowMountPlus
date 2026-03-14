@@ -13,6 +13,8 @@ void mark_register_attempted(const char *title_id);
 // Notify once about duplicate title IDs from different paths.
 void notify_duplicate_title_once(const char *title_id, const char *path_a,
                                  const char *path_b);
+// Clear the one-shot duplicate notification state for a title.
+void clear_duplicate_title_notification(const char *title_id);
 // Return the number of failed install/remount attempts for a title.
 uint8_t get_failed_mount_attempts(const char *title_id);
 // Clear failed install/remount attempts for a title.
