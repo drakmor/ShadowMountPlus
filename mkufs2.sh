@@ -23,14 +23,17 @@ if [ ! -f "$INPUT_DIR/eboot.bin" ]; then
 fi
 
 # More accurate sizing for UFS2:
-# - file payload rounded to fragment size (-f)
+# - file payload rounded to the actual allocation unit (-f)
 # - minimal per-directory allocation
 # - inode table estimate
 # - fixed filesystem metadata headroom
-BLOCK_SIZE=32768
-FRAG_SIZE=4096
+
+BLOCK_SIZE=65536
+FRAG_SIZE=65536
+SECTOR_SIZE=4096
 MINFREE_PERCENT=0
-BYTES_PER_INODE=262144
+DEFAULT_BYTES_PER_INODE=$((4 * FRAG_SIZE))
+MIN_BYTES_PER_INODE=$FRAG_SIZE
 INODE_SIZE=256
 INODE_SPARE=2048
 META_FIXED=$((64 * 1024 * 1024))   # superblocks, cg metadata, allocator slack
@@ -42,18 +45,6 @@ FILE_COUNT=$(find "$INPUT_DIR" -type f | wc -l | tr -d ' ')
 DIR_COUNT=$(find "$INPUT_DIR" -type d | wc -l | tr -d ' ')
 RAW_FILE_BYTES=$(find "$INPUT_DIR" -type f -exec stat -f '%z' {} + | \
   awk '{s += $1} END {print s + 0}')
-
-AVG_FILE_BYTES=0
-if [ "$FILE_COUNT" -gt 0 ]; then
-    AVG_FILE_BYTES=$((RAW_FILE_BYTES / FILE_COUNT))
-fi
-
-# UFS profile selection:
-# - large-file sets: 64K block
-# - small/mixed-file sets: 32K block (safer/denser default)
-if [ "$AVG_FILE_BYTES" -ge $((1024 * 1024)) ]; then
-    BLOCK_SIZE=65536
-fi
 
 DATA_BYTES=$(find "$INPUT_DIR" -type f -exec stat -f '%z' {} + | \
   awk -v frag="$FRAG_SIZE" '{s += int(($1 + frag - 1) / frag) * frag} END {print s + 0}')
@@ -77,17 +68,33 @@ fi
 
 # Round up to nearest MB
 MB=$(( (TOTAL + 1024*1024 - 1) / (1024*1024) ))
+IMAGE_BYTES=$((MB * 1024 * 1024))
+
+# Tune inode density for the actual tree size. Keep the documented default
+# unless the source contains enough files/directories to require denser inodes.
+BYTES_PER_INODE=$DEFAULT_BYTES_PER_INODE
+if [ "$INODE_COUNT" -gt 0 ]; then
+    AUTO_BYTES_PER_INODE=$((IMAGE_BYTES / INODE_COUNT))
+    AUTO_BYTES_PER_INODE=$(( (AUTO_BYTES_PER_INODE / SECTOR_SIZE) * SECTOR_SIZE ))
+    if [ "$AUTO_BYTES_PER_INODE" -lt "$MIN_BYTES_PER_INODE" ]; then
+        AUTO_BYTES_PER_INODE=$MIN_BYTES_PER_INODE
+    fi
+    if [ "$AUTO_BYTES_PER_INODE" -lt "$BYTES_PER_INODE" ]; then
+        BYTES_PER_INODE=$AUTO_BYTES_PER_INODE
+    fi
+fi
 
 echo "Input size (raw files): $RAW_FILE_BYTES bytes"
 echo "Input size (UFS alloc): $DATA_BYTES bytes"
 echo "Files: $FILE_COUNT, Dirs: $DIR_COUNT"
-echo "UFS profile: -b $BLOCK_SIZE -f $FRAG_SIZE -m $MINFREE_PERCENT -i $BYTES_PER_INODE (avg file=$AVG_FILE_BYTES bytes)"
+echo "Inode target: $INODE_COUNT"
+echo "UFS profile: -b $BLOCK_SIZE -f $FRAG_SIZE -m $MINFREE_PERCENT -S $SECTOR_SIZE -i $BYTES_PER_INODE"
 echo "Image size: ${MB}MB"
 
 truncate -s "${MB}M" "$OUTPUT"
 
 MD=$(mdconfig -a -t vnode -f "$(realpath "$OUTPUT")")
-newfs -O 2 -b "$BLOCK_SIZE" -f "$FRAG_SIZE" -m "$MINFREE_PERCENT" -i "$BYTES_PER_INODE" /dev/${MD}
+newfs -O 2 -b "$BLOCK_SIZE" -f "$FRAG_SIZE" -m "$MINFREE_PERCENT" -S "$SECTOR_SIZE" -i "$BYTES_PER_INODE" /dev/${MD}
 
 mkdir -p /mnt
 mount /dev/${MD} /mnt

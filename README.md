@@ -191,14 +191,20 @@ FreeBSD:
   - Source folder must be the game root and contain `eboot.bin`.
   - The script auto-calculates image size using rounded file allocation + metadata + safety margin.
   - Recommended `newfs` parameters for UFS2:
-  - Large-file profile: `newfs -O 2 -b 65536 -f 4096 -m 0 -i 262144`
-  - Small/mixed-file profile: `newfs -O 2 -b 32768 -f 4096 -m 0 -i 262144`
-  - `mkufs2.sh` selects between these two profiles automatically (based on average file size).
+  - `newfs -O 2 -b 65536 -f 65536 -m 0 -S 4096`
+  - `mkufs2.sh` keeps this fixed block/fragment/sector profile and auto-tunes `-i` based on source file/directory count.
+  - Rough manual `-i` estimate for manual builds:
+  - `target_inodes ~= file_count + dir_count + 2048`
+  - `bytes_per_inode ~= image_size_bytes / target_inodes`
+  - Round `bytes_per_inode` down to a multiple of `4096`, then keep it in the practical range `65536..262144`.
+  - Practical rule of thumb: use `262144` for normal game dumps, `131072` for tens of thousands of files, and `65536` only for very file-dense images.
+  - Example: for an `8 GiB` image with `60000` files and `4000` directories, `-i ~= 8*1024^3 / (60000 + 4000 + 2048) ~= 130312`, so use `-i 131072`.
 
 Windows:
 - You can create UFS2 images with **UFS2Tool** https://github.com/SvenGDK/UFS2Tool.
 - Example:
-  - `UFS2Tool.exe newfs  -O 2 -b 32768 -f 4096 -m 0 -i 262144 -D ./APPXXXX ./PPSA12345.ffpkg`
+  - `UFS2Tool.exe newfs -O 2 -b 65536 -f 65536 -m 0 -S 4096 -i 262144 -D ./APPXXXX ./PPSA12345.ffpkg`
+  - For manual builds, use `-i 262144` as the baseline and lower it for images with many small files.
 
 
 ## Installation and usage
