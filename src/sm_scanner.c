@@ -20,6 +20,7 @@
 
 #define SCANNER_EVENT_BATCH 32
 #define SCANNER_EVENT_DRAIN_BATCHES 8
+#define SCANNER_WATCH_INDEX_NONE ((size_t)-1)
 
 typedef enum {
   SCANNER_WATCH_SCAN_ROOT = 0,
@@ -33,6 +34,8 @@ typedef struct {
   int scan_root_index;
   uint8_t depth;
   scanner_watch_kind_t kind;
+  size_t prev_root_watch_index;
+  size_t next_root_watch_index;
   char path[MAX_PATH];
 } scanner_watch_entry_t;
 
@@ -52,6 +55,9 @@ static volatile sig_atomic_t g_scanner_wake_write_fd = -1;
 static scanner_watch_entry_t *g_scanner_watch_entries = NULL;
 static size_t g_scanner_watch_count = 0;
 static size_t g_scanner_watch_capacity = 0;
+static size_t g_scanner_root_watch_heads[MAX_SCAN_PATHS];
+static size_t *g_scanner_watch_fd_index = NULL;
+static size_t g_scanner_watch_fd_index_capacity = 0;
 static scanner_root_state_t g_scanner_root_states[MAX_SCAN_PATHS];
 
 static uint64_t scanner_stability_wait_us(void) {
@@ -72,6 +78,11 @@ static bool set_fd_nonblocking(int fd) {
 
 static void reset_scanner_root_states(void) {
   memset(g_scanner_root_states, 0, sizeof(g_scanner_root_states));
+}
+
+static void reset_scanner_root_watch_heads(void) {
+  for (int i = 0; i < MAX_SCAN_PATHS; i++)
+    g_scanner_root_watch_heads[i] = SCANNER_WATCH_INDEX_NONE;
 }
 
 static void clear_scan_root_watch_tree_state(int scan_root_index) {
@@ -110,9 +121,13 @@ static void clear_scanner_watch_entries(void) {
       close(g_scanner_watch_entries[i].fd);
   }
   free(g_scanner_watch_entries);
+  free(g_scanner_watch_fd_index);
   g_scanner_watch_entries = NULL;
+  g_scanner_watch_fd_index = NULL;
   g_scanner_watch_count = 0;
   g_scanner_watch_capacity = 0;
+  g_scanner_watch_fd_index_capacity = 0;
+  reset_scanner_root_watch_heads();
 }
 
 static void drain_scanner_wake_pipe(void) {
@@ -148,6 +163,69 @@ static bool ensure_scanner_watch_capacity(size_t needed_count) {
   g_scanner_watch_entries = new_entries;
   g_scanner_watch_capacity = new_capacity;
   return true;
+}
+
+static size_t scanner_watch_fd_hash(uintptr_t ident) {
+  return (size_t)((ident * 11400714819323198485ull) >>
+                  (sizeof(uintptr_t) >= sizeof(uint64_t) ? 0 : 1));
+}
+
+static bool insert_scanner_watch_fd_index_entry(uintptr_t ident,
+                                                size_t watch_index) {
+  if (!g_scanner_watch_fd_index || g_scanner_watch_fd_index_capacity == 0)
+    return false;
+
+  size_t mask = g_scanner_watch_fd_index_capacity - 1u;
+  size_t slot = scanner_watch_fd_hash(ident) & mask;
+  while (g_scanner_watch_fd_index[slot] != SCANNER_WATCH_INDEX_NONE)
+    slot = (slot + 1u) & mask;
+
+  g_scanner_watch_fd_index[slot] = watch_index;
+  return true;
+}
+
+static bool rebuild_scanner_watch_fd_index_with_count(size_t watch_count) {
+  size_t needed_capacity = 16u;
+  while (needed_capacity < (watch_count * 2u))
+    needed_capacity *= 2u;
+
+  if (g_scanner_watch_fd_index_capacity != needed_capacity) {
+    size_t *new_index =
+        realloc(g_scanner_watch_fd_index, needed_capacity * sizeof(*new_index));
+    if (!new_index) {
+      log_debug("  [SCAN] watcher fd index allocation failed");
+      return false;
+    }
+    g_scanner_watch_fd_index = new_index;
+    g_scanner_watch_fd_index_capacity = needed_capacity;
+  }
+
+  for (size_t i = 0; i < g_scanner_watch_fd_index_capacity; i++)
+    g_scanner_watch_fd_index[i] = SCANNER_WATCH_INDEX_NONE;
+
+  for (size_t i = 0; i < g_scanner_watch_count; i++) {
+    if (!insert_scanner_watch_fd_index_entry(
+            (uintptr_t)g_scanner_watch_entries[i].fd, i)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static bool ensure_scanner_watch_fd_index_capacity(size_t watch_count) {
+  size_t needed_capacity = 16u;
+  while (needed_capacity < (watch_count * 2u))
+    needed_capacity *= 2u;
+
+  if (g_scanner_watch_fd_index && g_scanner_watch_fd_index_capacity >= needed_capacity)
+    return true;
+
+  return rebuild_scanner_watch_fd_index_with_count(watch_count);
+}
+
+static bool rebuild_scanner_watch_fd_index(void) {
+  return rebuild_scanner_watch_fd_index_with_count(g_scanner_watch_count);
 }
 
 static bool is_distinct_configured_scan_root(const char *current_scan_root,
@@ -187,6 +265,48 @@ static void classify_watch_entry(const char *full_path, unsigned char d_type,
     *is_regular_out = is_regular;
 }
 
+static void link_scanner_watch_entry_to_root(size_t index) {
+  scanner_watch_entry_t *entry = &g_scanner_watch_entries[index];
+  size_t head = g_scanner_root_watch_heads[entry->scan_root_index];
+  entry->prev_root_watch_index = SCANNER_WATCH_INDEX_NONE;
+  entry->next_root_watch_index = head;
+  if (head != SCANNER_WATCH_INDEX_NONE)
+    g_scanner_watch_entries[head].prev_root_watch_index = index;
+  g_scanner_root_watch_heads[entry->scan_root_index] = index;
+}
+
+static void unlink_scanner_watch_entry_from_root(size_t index) {
+  scanner_watch_entry_t *entry = &g_scanner_watch_entries[index];
+  if (entry->prev_root_watch_index != SCANNER_WATCH_INDEX_NONE) {
+    g_scanner_watch_entries[entry->prev_root_watch_index].next_root_watch_index =
+        entry->next_root_watch_index;
+  } else {
+    g_scanner_root_watch_heads[entry->scan_root_index] =
+        entry->next_root_watch_index;
+  }
+  if (entry->next_root_watch_index != SCANNER_WATCH_INDEX_NONE) {
+    g_scanner_watch_entries[entry->next_root_watch_index].prev_root_watch_index =
+        entry->prev_root_watch_index;
+  }
+  entry->prev_root_watch_index = SCANNER_WATCH_INDEX_NONE;
+  entry->next_root_watch_index = SCANNER_WATCH_INDEX_NONE;
+}
+
+static void rebind_scanner_watch_entry_root_index(size_t old_index,
+                                                  size_t new_index) {
+  scanner_watch_entry_t *entry = &g_scanner_watch_entries[new_index];
+  if (g_scanner_root_watch_heads[entry->scan_root_index] == old_index)
+    g_scanner_root_watch_heads[entry->scan_root_index] = new_index;
+  if (entry->prev_root_watch_index != SCANNER_WATCH_INDEX_NONE) {
+    g_scanner_watch_entries[entry->prev_root_watch_index].next_root_watch_index =
+        new_index;
+  }
+  if (entry->next_root_watch_index != SCANNER_WATCH_INDEX_NONE) {
+    g_scanner_watch_entries[entry->next_root_watch_index].prev_root_watch_index =
+        new_index;
+  }
+}
+
 static bool register_scanner_watch_entry(int kq, int scan_root_index,
                                          const char *path,
                                          scanner_watch_kind_t kind,
@@ -205,6 +325,10 @@ static bool register_scanner_watch_entry(int kq, int scan_root_index,
   }
 
   if (!ensure_scanner_watch_capacity(g_scanner_watch_count + 1u)) {
+    close(fd);
+    return false;
+  }
+  if (!ensure_scanner_watch_fd_index_capacity(g_scanner_watch_count + 1u)) {
     close(fd);
     return false;
   }
@@ -227,7 +351,19 @@ static bool register_scanner_watch_entry(int kq, int scan_root_index,
   entry->scan_root_index = scan_root_index;
   entry->depth = depth;
   entry->kind = kind;
+  entry->prev_root_watch_index = SCANNER_WATCH_INDEX_NONE;
+  entry->next_root_watch_index = SCANNER_WATCH_INDEX_NONE;
   (void)strlcpy(entry->path, path, sizeof(entry->path));
+  link_scanner_watch_entry_to_root(g_scanner_watch_count - 1u);
+  if (!insert_scanner_watch_fd_index_entry((uintptr_t)fd,
+                                           g_scanner_watch_count - 1u)) {
+    unlink_scanner_watch_entry_from_root(g_scanner_watch_count - 1u);
+    memset(entry, 0, sizeof(*entry));
+    close(fd);
+    g_scanner_watch_count--;
+    (void)rebuild_scanner_watch_fd_index();
+    return false;
+  }
   return true;
 }
 
@@ -235,47 +371,58 @@ static void remove_scanner_watch_entry_at(size_t index) {
   if (index >= g_scanner_watch_count)
     return;
 
+  unlink_scanner_watch_entry_from_root(index);
   if (g_scanner_watch_entries[index].fd >= 0)
     close(g_scanner_watch_entries[index].fd);
 
   size_t last_index = g_scanner_watch_count - 1u;
-  if (index != last_index)
+  if (index != last_index) {
     g_scanner_watch_entries[index] = g_scanner_watch_entries[last_index];
+    rebind_scanner_watch_entry_root_index(last_index, index);
+  }
   memset(&g_scanner_watch_entries[last_index], 0,
          sizeof(g_scanner_watch_entries[last_index]));
   g_scanner_watch_count--;
 }
 
-static void remove_scan_root_watch_entries(int scan_root_index) {
-  for (size_t i = 0; i < g_scanner_watch_count;) {
-    if (g_scanner_watch_entries[i].scan_root_index != scan_root_index) {
-      i++;
-      continue;
-    }
-    remove_scanner_watch_entry_at(i);
+static bool remove_scan_root_watch_entries(int scan_root_index) {
+  bool removed_any = false;
+  while (g_scanner_root_watch_heads[scan_root_index] != SCANNER_WATCH_INDEX_NONE) {
+    remove_scanner_watch_entry_at(g_scanner_root_watch_heads[scan_root_index]);
+    removed_any = true;
   }
+
+  return !removed_any || rebuild_scanner_watch_fd_index();
 }
 
-static void remove_scan_root_watch_entries_for_path(int scan_root_index,
+static bool remove_scan_root_watch_entries_for_path(int scan_root_index,
                                                     const char *path) {
-  for (size_t i = 0; i < g_scanner_watch_count;) {
-    scanner_watch_entry_t *entry = &g_scanner_watch_entries[i];
-    if (entry->scan_root_index != scan_root_index) {
-      i++;
+  size_t index = g_scanner_root_watch_heads[scan_root_index];
+  bool removed_any = false;
+  while (index != SCANNER_WATCH_INDEX_NONE) {
+    if (path_matches_root_or_child(g_scanner_watch_entries[index].path, path)) {
+      remove_scanner_watch_entry_at(index);
+      removed_any = true;
+      index = g_scanner_root_watch_heads[scan_root_index];
       continue;
     }
-    if (!path_matches_root_or_child(entry->path, path)) {
-      i++;
-      continue;
-    }
-    remove_scanner_watch_entry_at(i);
+    index = g_scanner_watch_entries[index].next_root_watch_index;
   }
+
+  return !removed_any || rebuild_scanner_watch_fd_index();
 }
 
 static scanner_watch_entry_t *find_scanner_watch_entry_by_fd(uintptr_t ident) {
-  for (size_t i = 0; i < g_scanner_watch_count; i++) {
-    if ((uintptr_t)g_scanner_watch_entries[i].fd == ident)
-      return &g_scanner_watch_entries[i];
+  if (!g_scanner_watch_fd_index || g_scanner_watch_fd_index_capacity == 0)
+    return NULL;
+
+  size_t mask = g_scanner_watch_fd_index_capacity - 1u;
+  size_t slot = scanner_watch_fd_hash(ident) & mask;
+  while (g_scanner_watch_fd_index[slot] != SCANNER_WATCH_INDEX_NONE) {
+    size_t watch_index = g_scanner_watch_fd_index[slot];
+    if ((uintptr_t)g_scanner_watch_entries[watch_index].fd == ident)
+      return &g_scanner_watch_entries[watch_index];
+    slot = (slot + 1u) & mask;
   }
   return NULL;
 }
@@ -401,7 +548,8 @@ static bool register_scan_dir_tree(int kq, int scan_root_index,
 
 static bool rebuild_scan_root_watch_tree(int kq, int scan_root_index) {
   const char *scan_root = get_scan_path(scan_root_index);
-  remove_scan_root_watch_entries(scan_root_index);
+  if (!remove_scan_root_watch_entries(scan_root_index))
+    return false;
 
   unsigned int scan_depth = runtime_config()->scan_depth;
   if (scan_depth < MIN_SCAN_DEPTH)
@@ -436,7 +584,8 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
   }
 
   if (rebuild_kind == SCANNER_WATCH_SCAN_BACKPORT_ROOT) {
-    remove_scan_root_watch_entries_for_path(scan_root_index, rebuild_path);
+    if (!remove_scan_root_watch_entries_for_path(scan_root_index, rebuild_path))
+      return false;
     if (!register_scanner_watch_entry(kq, scan_root_index, rebuild_path,
                                       SCANNER_WATCH_SCAN_BACKPORT_ROOT,
                                       rebuild_depth)) {
@@ -450,7 +599,8 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
   if (scan_depth < MIN_SCAN_DEPTH)
     scan_depth = MIN_SCAN_DEPTH;
 
-  remove_scan_root_watch_entries_for_path(scan_root_index, rebuild_path);
+  if (!remove_scan_root_watch_entries_for_path(scan_root_index, rebuild_path))
+    return false;
   if (rebuild_depth > scan_depth) {
     clear_scan_root_watch_tree_state(scan_root_index);
     return true;
