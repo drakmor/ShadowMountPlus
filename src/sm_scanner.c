@@ -40,7 +40,10 @@ typedef struct {
   bool dirty;
   bool cleanup_pending;
   bool watch_tree_stale;
+  uint8_t watch_tree_rebuild_depth;
+  scanner_watch_kind_t watch_tree_rebuild_kind;
   uint64_t ready_after_us;
+  char watch_tree_rebuild_path[MAX_PATH];
 } scanner_root_state_t;
 
 static int g_scanner_wake_pipe[2] = {-1, -1};
@@ -69,6 +72,17 @@ static bool set_fd_nonblocking(int fd) {
 
 static void reset_scanner_root_states(void) {
   memset(g_scanner_root_states, 0, sizeof(g_scanner_root_states));
+}
+
+static void clear_scan_root_watch_tree_state(int scan_root_index) {
+  if (scan_root_index < 0 || scan_root_index >= get_scan_path_count())
+    return;
+
+  g_scanner_root_states[scan_root_index].watch_tree_stale = false;
+  g_scanner_root_states[scan_root_index].watch_tree_rebuild_depth = 0;
+  g_scanner_root_states[scan_root_index].watch_tree_rebuild_kind =
+      SCANNER_WATCH_SCAN_ROOT;
+  g_scanner_root_states[scan_root_index].watch_tree_rebuild_path[0] = '\0';
 }
 
 static void close_scanner_wake_pipe(void) {
@@ -242,12 +256,75 @@ static void remove_scan_root_watch_entries(int scan_root_index) {
   }
 }
 
+static void remove_scan_root_watch_entries_for_path(int scan_root_index,
+                                                    const char *path) {
+  for (size_t i = 0; i < g_scanner_watch_count;) {
+    scanner_watch_entry_t *entry = &g_scanner_watch_entries[i];
+    if (entry->scan_root_index != scan_root_index) {
+      i++;
+      continue;
+    }
+    if (!path_matches_root_or_child(entry->path, path)) {
+      i++;
+      continue;
+    }
+    remove_scanner_watch_entry_at(i);
+  }
+}
+
 static scanner_watch_entry_t *find_scanner_watch_entry_by_fd(uintptr_t ident) {
   for (size_t i = 0; i < g_scanner_watch_count; i++) {
     if ((uintptr_t)g_scanner_watch_entries[i].fd == ident)
       return &g_scanner_watch_entries[i];
   }
   return NULL;
+}
+
+static bool build_parent_directory_path(const char *path,
+                                        char parent_path[MAX_PATH]) {
+  const char *slash = strrchr(path, '/');
+  if (!slash)
+    return false;
+  if (slash == path) {
+    (void)strlcpy(parent_path, "/", MAX_PATH);
+    return true;
+  }
+
+  size_t parent_len = (size_t)(slash - path);
+  if (parent_len >= MAX_PATH)
+    parent_len = MAX_PATH - 1u;
+  memcpy(parent_path, path, parent_len);
+  parent_path[parent_len] = '\0';
+  return true;
+}
+
+static bool resolve_watch_tree_rebuild_target(const scanner_watch_entry_t *entry,
+                                              char rebuild_path[MAX_PATH],
+                                              uint8_t *rebuild_depth_out,
+                                              scanner_watch_kind_t *kind_out) {
+  switch (entry->kind) {
+  case SCANNER_WATCH_SCAN_ROOT:
+  case SCANNER_WATCH_SCAN_BACKPORT_ROOT:
+  case SCANNER_WATCH_SCAN_SUBDIR:
+    (void)strlcpy(rebuild_path, entry->path, MAX_PATH);
+    if (rebuild_depth_out)
+      *rebuild_depth_out = entry->depth;
+    if (kind_out)
+      *kind_out = entry->kind;
+    return true;
+  case SCANNER_WATCH_SCAN_IMAGE_FILE:
+    if (!build_parent_directory_path(entry->path, rebuild_path))
+      return false;
+    if (rebuild_depth_out)
+      *rebuild_depth_out = (entry->depth > 0u) ? (uint8_t)(entry->depth - 1u) : 0u;
+    if (kind_out) {
+      *kind_out =
+          (entry->depth <= 1u) ? SCANNER_WATCH_SCAN_ROOT : SCANNER_WATCH_SCAN_SUBDIR;
+    }
+    return true;
+  default:
+    return false;
+  }
 }
 
 static bool register_scan_dir_tree(int kq, int scan_root_index,
@@ -343,7 +420,48 @@ static bool rebuild_scan_root_watch_tree(int kq, int scan_root_index) {
     }
   }
 
-  g_scanner_root_states[scan_root_index].watch_tree_stale = false;
+  clear_scan_root_watch_tree_state(scan_root_index);
+  return true;
+}
+
+static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
+                                            const char *rebuild_path,
+                                            uint8_t rebuild_depth,
+                                            scanner_watch_kind_t rebuild_kind) {
+  const char *scan_root = get_scan_path(scan_root_index);
+  if (!rebuild_path || rebuild_path[0] == '\0' ||
+      rebuild_kind == SCANNER_WATCH_SCAN_ROOT ||
+      strcmp(rebuild_path, scan_root) == 0) {
+    return rebuild_scan_root_watch_tree(kq, scan_root_index);
+  }
+
+  if (rebuild_kind == SCANNER_WATCH_SCAN_BACKPORT_ROOT) {
+    remove_scan_root_watch_entries_for_path(scan_root_index, rebuild_path);
+    if (!register_scanner_watch_entry(kq, scan_root_index, rebuild_path,
+                                      SCANNER_WATCH_SCAN_BACKPORT_ROOT,
+                                      rebuild_depth)) {
+      return false;
+    }
+    clear_scan_root_watch_tree_state(scan_root_index);
+    return true;
+  }
+
+  unsigned int scan_depth = runtime_config()->scan_depth;
+  if (scan_depth < MIN_SCAN_DEPTH)
+    scan_depth = MIN_SCAN_DEPTH;
+
+  remove_scan_root_watch_entries_for_path(scan_root_index, rebuild_path);
+  if (rebuild_depth > scan_depth) {
+    clear_scan_root_watch_tree_state(scan_root_index);
+    return true;
+  }
+
+  if (!register_scan_dir_tree(kq, scan_root_index, scan_root, rebuild_path,
+                              rebuild_depth, scan_depth - rebuild_depth)) {
+    return false;
+  }
+
+  clear_scan_root_watch_tree_state(scan_root_index);
   return true;
 }
 
@@ -360,6 +478,7 @@ static void clear_all_dirty_scan_roots(void) {
     g_scanner_root_states[i].dirty = false;
     g_scanner_root_states[i].cleanup_pending = false;
     g_scanner_root_states[i].ready_after_us = 0;
+    clear_scan_root_watch_tree_state(i);
   }
 }
 
@@ -421,6 +540,56 @@ static bool scanner_event_requires_watch_tree_refresh(
   default:
     return false;
   }
+}
+
+static void schedule_scan_root_watch_tree_rebuild(
+    const scanner_watch_entry_t *entry) {
+  char rebuild_path[MAX_PATH];
+  uint8_t rebuild_depth = 0;
+  scanner_watch_kind_t rebuild_kind = SCANNER_WATCH_SCAN_ROOT;
+  if (!resolve_watch_tree_rebuild_target(entry, rebuild_path, &rebuild_depth,
+                                         &rebuild_kind)) {
+    return;
+  }
+
+  scanner_root_state_t *state = &g_scanner_root_states[entry->scan_root_index];
+  if (!state->watch_tree_stale || state->watch_tree_rebuild_path[0] == '\0') {
+    state->watch_tree_stale = true;
+    state->watch_tree_rebuild_depth = rebuild_depth;
+    state->watch_tree_rebuild_kind = rebuild_kind;
+    (void)strlcpy(state->watch_tree_rebuild_path, rebuild_path,
+                  sizeof(state->watch_tree_rebuild_path));
+    return;
+  }
+
+  if (strcmp(state->watch_tree_rebuild_path, rebuild_path) == 0) {
+    if (rebuild_depth < state->watch_tree_rebuild_depth)
+      state->watch_tree_rebuild_depth = rebuild_depth;
+    if (rebuild_kind == SCANNER_WATCH_SCAN_ROOT ||
+        (rebuild_kind == SCANNER_WATCH_SCAN_BACKPORT_ROOT &&
+         state->watch_tree_rebuild_kind != SCANNER_WATCH_SCAN_ROOT)) {
+      state->watch_tree_rebuild_kind = rebuild_kind;
+    }
+    return;
+  }
+
+  if (path_matches_root_or_child(rebuild_path, state->watch_tree_rebuild_path))
+    return;
+
+  if (path_matches_root_or_child(state->watch_tree_rebuild_path, rebuild_path)) {
+    state->watch_tree_rebuild_depth = rebuild_depth;
+    state->watch_tree_rebuild_kind = rebuild_kind;
+    (void)strlcpy(state->watch_tree_rebuild_path, rebuild_path,
+                  sizeof(state->watch_tree_rebuild_path));
+    return;
+  }
+
+  state->watch_tree_stale = true;
+  state->watch_tree_rebuild_depth = 0;
+  state->watch_tree_rebuild_kind = SCANNER_WATCH_SCAN_ROOT;
+  (void)strlcpy(state->watch_tree_rebuild_path,
+                get_scan_path(entry->scan_root_index),
+                sizeof(state->watch_tree_rebuild_path));
 }
 
 static bool register_control_dir_watch(int kq) {
@@ -628,10 +797,8 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
       schedule_scan_root_cleanup(watch_entry->scan_root_index);
     schedule_scan_root_dirty(watch_entry->scan_root_index, now_us, immediate);
 
-    if (scanner_event_requires_watch_tree_refresh(watch_entry, event->fflags)) {
-      g_scanner_root_states[watch_entry->scan_root_index].watch_tree_stale =
-          true;
-    }
+    if (scanner_event_requires_watch_tree_refresh(watch_entry, event->fflags))
+      schedule_scan_root_watch_tree_rebuild(watch_entry);
   }
 
   return true;
@@ -810,17 +977,29 @@ void sm_scanner_run_loop(void) {
     if (dirty_root_index >= 0) {
       bool rebuild_watch_tree =
           g_scanner_root_states[dirty_root_index].watch_tree_stale;
+      uint8_t rebuild_watch_tree_depth =
+          g_scanner_root_states[dirty_root_index].watch_tree_rebuild_depth;
+      scanner_watch_kind_t rebuild_watch_tree_kind =
+          g_scanner_root_states[dirty_root_index].watch_tree_rebuild_kind;
+      char rebuild_watch_tree_path[MAX_PATH];
+      (void)strlcpy(rebuild_watch_tree_path,
+                    g_scanner_root_states[dirty_root_index]
+                        .watch_tree_rebuild_path,
+                    sizeof(rebuild_watch_tree_path));
       g_scanner_root_states[dirty_root_index].cleanup_pending = false;
       g_scanner_root_states[dirty_root_index].dirty = false;
       g_scanner_root_states[dirty_root_index].ready_after_us = 0;
-      g_scanner_root_states[dirty_root_index].watch_tree_stale = false;
+      clear_scan_root_watch_tree_state(dirty_root_index);
 
       bool unstable_found = false;
       if (!run_targeted_scan_cycle(dirty_root_index, &unstable_found))
         break;
 
       if (rebuild_watch_tree &&
-          !rebuild_scan_root_watch_tree(kq, dirty_root_index)) {
+          !rebuild_scan_root_watch_subtree(kq, dirty_root_index,
+                                           rebuild_watch_tree_path,
+                                           rebuild_watch_tree_depth,
+                                           rebuild_watch_tree_kind)) {
         close(kq);
         clear_scanner_watch_entries();
         request_scanner_shutdown("scanner root watcher rebuild failed");

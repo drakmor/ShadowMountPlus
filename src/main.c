@@ -81,15 +81,18 @@ void request_shutdown_stop(const char *reason) {
   sm_scanner_wake();
 }
 
+static char g_scan_now_reason[128];
+
 void request_scan_now(const char *reason) {
   const char *resolved_reason =
       (reason && reason[0] != '\0') ? reason : "unknown scan source";
   bool already_requested =
       atomic_exchange_explicit(&g_scan_now_requested, true, memory_order_acq_rel);
   if (!already_requested) {
-    atomic_store_explicit(&g_scan_now_reason_bits, (uintptr_t)resolved_reason,
+    (void)strlcpy(g_scan_now_reason, resolved_reason, sizeof(g_scan_now_reason));
+    atomic_store_explicit(&g_scan_now_reason_bits, (uintptr_t)g_scan_now_reason,
                           memory_order_release);
-    log_debug("[SCAN] immediate scan requested by %s", resolved_reason);
+    log_debug("[SCAN] immediate scan requested by %s", g_scan_now_reason);
   }
   sm_scanner_wake();
 }
