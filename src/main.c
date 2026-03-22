@@ -347,8 +347,12 @@ int main(void) {
   notify_system("ShadowMount+ v%s exFAT/UFS/PFS", SHADOWMOUNT_VERSION);
   log_non_empty_scan_paths();
 
-  if (runtime_config()->recursive_scan)
-    notify_system_info("ShadowMount+: Recursive scan enabled.");
+  if (runtime_config()->legacy_recursive_scan_forced) {
+    notify_system_info("ShadowMount+: recursive_scan=1 deprecated, using scan_depth=2.");
+  } else if (runtime_config()->scan_depth > 1u) {
+    notify_system_info("ShadowMount+: scan depth %u enabled.",
+                       runtime_config()->scan_depth);
+  }
 
   cleanup_mount_dirs();
   if (!wait_for_lvd_release()) {

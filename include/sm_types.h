@@ -106,9 +106,10 @@ typedef struct runtime_config {
   bool quiet_mode;
   bool mount_read_only;
   bool force_mount;
-  bool recursive_scan;
   bool backport_fakelib_enabled;
   bool kstuff_game_auto_toggle;
+  bool legacy_recursive_scan_forced;
+  uint32_t scan_depth;
   uint32_t scan_interval_us;
   uint32_t stability_wait_seconds;
   uint32_t kstuff_pause_delay_image_seconds;

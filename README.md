@@ -47,7 +47,8 @@ Supported keys (all optional):
 - `force_mount=1|0` (mounting even damaged file systems; default: `0`)
 - `image_ro=<image_filename>` (repeatable; force read-only mode for this image filename)
 - `image_rw=<image_filename>` (repeatable; force read-write mode for this image filename)
-- `recursive_scan=1|0` (`0` = scan only first-level subfolders, `1` = recursive scan without depth limit; default: `0`)
+- `scan_depth=<1..2>` (`1` = scan only first-level subfolders, `2` = also scan one additional nested level; default: `1`)
+- `recursive_scan=1|0` (deprecated compatibility key; `1` forces `scan_depth=2`)
 - `scan_interval_seconds=<1..3600>` (full scan loop interval; default: `10`)
 - `stability_wait_seconds=<0..3600>` (minimum source age before processing; default: `10`)
 - `exfat_backend=lvd|md` (default: `lvd`)
@@ -81,8 +82,9 @@ image_ro=legacy_dump.ffpkg
 Scan path behavior:
 - If at least one `scanpath=...` is present, only those custom paths are used.
 - `/mnt/shadowmnt` is always added automatically, even with custom paths.
-- With `recursive_scan=0` (default), only first-level subfolders are checked.
-- With `recursive_scan=1`, subfolders are scanned recursively.
+- With `scan_depth=1` (default), only first-level subfolders are checked.
+- With `scan_depth=2`, one additional nested level is checked.
+- If `recursive_scan=1` is set, ShadowMount+ forces `scan_depth=2`.
 - Full scan loop runs every `scan_interval_seconds` (default: `10`).
 - Sources newer than `stability_wait_seconds` are deferred until stable (default: `10`).
 
@@ -138,13 +140,13 @@ Default scan locations:
 You can override scan roots with `scanpath=...` entries in `/data/shadowmount/config.ini`.
 
 Recommended folder structure:
-- Default mode (`recursive_scan=0`):
+- Default mode (`scan_depth=1`):
   - `/data/homebrew/<TITLE_ID>/`
   - `/data/etaHEN/games/<TITLE_ID>/`
   - `/data/homebrew/backports/<TITLE_ID>/`
   - `/data/etaHEN/games/backports/<TITLE_ID>/`
    
-- Recursive mode (`recursive_scan=1`):
+- Nested mode (`scan_depth=2`):
   - `/data/homebrew/PS5/<AnyFolder>/<TITLE_ID>/`
   - `/mnt/ext0/etaHEN/games/<Collection>/<TITLE_ID>/`
   - `/mnt/ext0/etaHEN/games/backports/<TITLE_ID>/`
@@ -244,8 +246,9 @@ If a game is not mounted:
   - if `scanpath=...` is set, only these paths are scanned;
   - `/mnt/shadowmnt` is always scanned.
 - Verify scan depth:
-  - `recursive_scan=0` scans only first-level subfolders;
-  - `recursive_scan=1` scans recursively.
+  - `scan_depth=1` scans only first-level subfolders;
+  - `scan_depth=2` scans one additional nested level;
+  - `recursive_scan=1` is treated as deprecated compatibility mode and forces `scan_depth=2`.
 - If logs show `source not stable yet`, adjust `stability_wait_seconds` (or wait for source copy/write to finish).
 - Verify game structure:
   - folder game: `<GAME_DIR>/sce_sys/param.json`;

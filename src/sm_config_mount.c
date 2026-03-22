@@ -113,9 +113,10 @@ static void init_runtime_config_defaults(void) {
   g_runtime_cfg.quiet_mode = false;
   g_runtime_cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
   g_runtime_cfg.force_mount = false;
-  g_runtime_cfg.recursive_scan = false;
   g_runtime_cfg.backport_fakelib_enabled = true;
   g_runtime_cfg.kstuff_game_auto_toggle = true;
+  g_runtime_cfg.legacy_recursive_scan_forced = false;
+  g_runtime_cfg.scan_depth = DEFAULT_SCAN_DEPTH;
   g_runtime_cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
   g_runtime_cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
   g_runtime_cfg.kstuff_pause_delay_image_seconds =
@@ -407,6 +408,7 @@ bool load_runtime_config(void) {
   char line[512];
   int line_no = 0;
   bool has_custom_scanpaths = false;
+  bool legacy_recursive_scan_requested = false;
   while (fgets(line, sizeof(line), f)) {
     line_no++;
     char *s = trim_ascii(line);
@@ -492,7 +494,20 @@ bool load_runtime_config(void) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
-      g_runtime_cfg.recursive_scan = bval;
+      if (bval)
+        legacy_recursive_scan_requested = true;
+      continue;
+    }
+
+    if (strcasecmp(key, "scan_depth") == 0) {
+      if (!parse_u32_ini(value, &u32) || u32 < MIN_SCAN_DEPTH ||
+          u32 > MAX_SCAN_DEPTH) {
+        log_debug("  [CFG] invalid scan depth at line %d: %s=%s (range: %u..%u)",
+                  line_no, key, value, (unsigned)MIN_SCAN_DEPTH,
+                  (unsigned)MAX_SCAN_DEPTH);
+        continue;
+      }
+      g_runtime_cfg.scan_depth = u32;
       continue;
     }
 
@@ -652,6 +667,12 @@ bool load_runtime_config(void) {
     (void)add_runtime_scan_path(IMAGE_MOUNT_BASE);
   }
 
+  if (legacy_recursive_scan_requested) {
+    g_runtime_cfg.scan_depth = 2u;
+    g_runtime_cfg.legacy_recursive_scan_forced = true;
+    log_debug("  [CFG] recursive_scan=1 is deprecated; forcing scan_depth=2");
+  }
+
   int image_rule_count = 0;
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
     if (g_image_mode_rules[k].valid)
@@ -664,8 +685,9 @@ bool load_runtime_config(void) {
       kstuff_delay_rule_count++;
   }
 
-  log_debug("  [CFG] loaded: debug=%d quiet=%d ro=%d force=%d recursive_scan=%d "
-            "backport_fakelib=%d kstuff_game_auto_toggle=%d "
+  log_debug("  [CFG] loaded: debug=%d quiet=%d ro=%d force=%d scan_depth=%u "
+            "legacy_recursive_scan_forced=%d backport_fakelib=%d "
+            "kstuff_game_auto_toggle=%d "
             "kstuff_pause_delay_image_s=%u kstuff_pause_delay_direct_s=%u "
             "exfat_backend=%s ufs_backend=%s "
             "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u) "
@@ -675,7 +697,8 @@ bool load_runtime_config(void) {
             g_runtime_cfg.quiet_mode ? 1 : 0,
             g_runtime_cfg.mount_read_only ? 1 : 0,
             g_runtime_cfg.force_mount ? 1 : 0,
-            g_runtime_cfg.recursive_scan ? 1 : 0,
+            g_runtime_cfg.scan_depth,
+            g_runtime_cfg.legacy_recursive_scan_forced ? 1 : 0,
             g_runtime_cfg.backport_fakelib_enabled ? 1 : 0,
             g_runtime_cfg.kstuff_game_auto_toggle ? 1 : 0,
             g_runtime_cfg.kstuff_pause_delay_image_seconds,

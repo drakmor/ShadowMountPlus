@@ -30,16 +30,20 @@ force_mount=0
 # image_ro=PPSA12345.ffpfs
 # image_rw=My Game Dump.exfat
 
-# Recursive scan mode:
-# 1/true/yes/on  -> scan subdirectories recursively (no depth limit)
-# 0/false/no/off -> scan only first-level subdirectories (default)
-recursive_scan=0
+# Scan depth relative to each scan root:
+# 1 -> scan only first-level subdirectories (default)
+# 2 -> also scan one additional nested level
+scan_depth=1
+#
+# Legacy compatibility:
+# recursive_scan=1 forces scan_depth=2
+
 
 # Full scan loop interval (seconds), range: 1..3600
 scan_interval_seconds=10
 
 # Source stabilization wait window (seconds), range: 0..3600
-# If source mtime is newer than this window, it will be deferred to next scan.
+# If source mtime/ctime is newer than this window, it will be deferred to next scan.
 stability_wait_seconds=10
 
 # Backend selection per filesystem:
@@ -80,6 +84,6 @@ md_ufs_sector_size=512
 
 # Optional custom scan roots (can be repeated):
 # If at least one scanpath=... is present, only these paths are used.
-# "/data/imgmnt/{ufsmnt,exfatmnt,pfsmnt}" are always added automatically.
+# "/mnt/shadowmnt" is always added automatically.
 # scanpath=/data/homebrew
 # scanpath=/data/etaHEN/games

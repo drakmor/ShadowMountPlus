@@ -60,6 +60,23 @@ static void classify_scan_entry(const char *full_path, unsigned char d_type,
     *is_regular_out = is_regular;
 }
 
+static bool is_distinct_configured_scan_root(const char *current_scan_root,
+                                             const char *path) {
+  if (!path || path[0] == '\0')
+    return false;
+
+  for (int i = 0; i < get_scan_path_count(); i++) {
+    const char *scan_path = get_scan_path(i);
+    if (!scan_path || strcmp(scan_path, path) != 0)
+      continue;
+    if (current_scan_root && strcmp(current_scan_root, path) == 0)
+      return false;
+    return true;
+  }
+
+  return false;
+}
+
 // --- Candidate Discovery ---
 static bool try_collect_candidate_for_directory(
     const char *full_path, scan_candidate_t *candidates, int max_candidates,
@@ -186,12 +203,17 @@ static bool try_collect_candidate_for_directory(
   return true;
 }
 
-static void collect_candidates_recursively(
-    const char *dir_path, scan_candidate_t *candidates, int max_candidates,
-    int *candidate_count, const struct AppDbTitleList *app_db_titles,
-    bool app_db_titles_ready, char discovered_param_roots[][MAX_PATH],
+static void collect_candidates_with_depth(
+    const char *current_scan_root, const char *dir_path,
+    unsigned int remaining_depth, scan_candidate_t *candidates,
+    int max_candidates, int *candidate_count,
+    const struct AppDbTitleList *app_db_titles, bool app_db_titles_ready,
+    char discovered_param_roots[][MAX_PATH],
     int *discovered_param_root_count) {
   if (should_stop_requested() || !dir_path || dir_path[0] == '\0')
+    return;
+
+  if (is_distinct_configured_scan_root(current_scan_root, dir_path))
     return;
 
   // Once a directory has sce_sys/param.json (valid or not),
@@ -202,6 +224,9 @@ static void collect_candidates_recursively(
           discovered_param_root_count)) {
     return;
   }
+
+  if (remaining_depth == 0)
+    return;
 
   DIR *d = opendir(dir_path);
   if (!d)
@@ -223,9 +248,10 @@ static void collect_candidates_recursively(
     if (!is_dir)
       continue;
 
-    collect_candidates_recursively(
-        full_path, candidates, max_candidates, candidate_count, app_db_titles,
-        app_db_titles_ready, discovered_param_roots, discovered_param_root_count);
+    collect_candidates_with_depth(
+        current_scan_root, full_path, remaining_depth - 1u, candidates,
+        max_candidates, candidate_count, app_db_titles, app_db_titles_ready,
+        discovered_param_roots, discovered_param_root_count);
   }
 
   closedir(d);
@@ -342,11 +368,15 @@ int collect_scan_candidates(scan_candidate_t *candidates,
                             int max_candidates,
                             int *total_found_out) {
   int candidate_count = 0;
+  unsigned int scan_depth = runtime_config()->scan_depth;
   const struct AppDbTitleList *app_db_titles = NULL;
   bool app_db_titles_ready = get_app_db_title_list_cached(&app_db_titles);
   char discovered_param_roots[MAX_PENDING][MAX_PATH];
   int discovered_param_root_count = 0;
   memset(discovered_param_roots, 0, sizeof(discovered_param_roots));
+
+  if (scan_depth < MIN_SCAN_DEPTH)
+    scan_depth = MIN_SCAN_DEPTH;
 
   if (!app_db_titles_ready) {
     log_debug("  [DB] app.db title list unavailable for this scan cycle");
@@ -388,17 +418,10 @@ int collect_scan_candidates(scan_candidate_t *candidates,
       if (!is_dir)
         continue;
 
-      if (runtime_config()->recursive_scan) {
-        collect_candidates_recursively(
-            full_path, candidates, max_candidates, &candidate_count,
-            app_db_titles, app_db_titles_ready, discovered_param_roots,
-            &discovered_param_root_count);
-      } else {
-        (void)try_collect_candidate_for_directory(
-            full_path, candidates, max_candidates, &candidate_count,
-            app_db_titles, app_db_titles_ready, discovered_param_roots,
-            &discovered_param_root_count);
-      }
+      collect_candidates_with_depth(
+          scan_path, full_path, scan_depth - 1u, candidates, max_candidates,
+          &candidate_count, app_db_titles, app_db_titles_ready,
+          discovered_param_roots, &discovered_param_root_count);
     }
     closedir(d);
   }
