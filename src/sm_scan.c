@@ -44,6 +44,13 @@ typedef enum {
   DIRECTORY_CANDIDATE_READY,
 } directory_candidate_probe_t;
 
+typedef enum {
+  EXISTING_DIRECTORY_CONTINUE = 0,
+  EXISTING_DIRECTORY_HANDLED,
+  EXISTING_DIRECTORY_PREFER_CURRENT,
+  EXISTING_DIRECTORY_PREFER_CACHED,
+} existing_directory_result_t;
+
 static directory_candidate_probe_t probe_directory_candidate(
     const char *full_path, char discovered_param_roots[][MAX_PATH],
     int *discovered_param_root_count, directory_candidate_info_t *info_out) {
@@ -84,46 +91,72 @@ static directory_candidate_probe_t probe_directory_candidate(
   return DIRECTORY_CANDIDATE_READY;
 }
 
-static bool is_duplicate_scan_candidate(const char *full_path, const char *title_id,
-                                        scan_candidate_t *candidates,
-                                        int candidate_count) {
+static int find_scan_candidate_index_by_title_id(scan_candidate_t *candidates,
+                                                 int candidate_count,
+                                                 const char *title_id) {
   for (int i = 0; i < candidate_count; i++) {
-    if (strcmp(candidates[i].title_id, title_id) == 0) {
-      notify_duplicate_title_once(title_id, full_path, candidates[i].path);
-      return true;
-    }
+    if (strcmp(candidates[i].title_id, title_id) == 0)
+      return i;
   }
-  return false;
+  return -1;
 }
 
-static bool handle_existing_directory_candidate(
+static void remove_scan_candidate_at(scan_candidate_t *candidates,
+                                     int *candidate_count, int index) {
+  int trailing_count = *candidate_count - index - 1;
+  if (trailing_count > 0) {
+    memmove(&candidates[index], &candidates[index + 1],
+            (size_t)trailing_count * sizeof(candidates[0]));
+  }
+  (*candidate_count)--;
+}
+
+static void notify_duplicate_scan_candidate(const char *title_id,
+                                            const char *ignored_path,
+                                            const char *existing_path) {
+  notify_duplicate_title_once(title_id, ignored_path, existing_path);
+}
+
+static existing_directory_result_t handle_existing_directory_candidate(
     const char *full_path, const struct AppDbTitleList *app_db_titles,
     bool app_db_titles_ready, const directory_candidate_info_t *info,
-    bool *installed_out, bool *in_app_db_out) {
+    bool *installed_out, bool *in_app_db_out,
+    char preferred_existing_path_out[MAX_PATH]) {
   char tracked_path[MAX_PATH];
+  preferred_existing_path_out[0] = '\0';
+  bool has_tracked_path =
+      read_mount_link(info->title_id, tracked_path, sizeof(tracked_path));
   bool link_matches_source =
-      read_mount_link(info->title_id, tracked_path, sizeof(tracked_path)) &&
-      strcmp(tracked_path, full_path) == 0;
+      has_tracked_path && strcmp(tracked_path, full_path) == 0;
 
   if (!app_db_titles_ready) {
-    if (link_matches_source && is_data_mounted(info->title_id))
+    if (link_matches_source && is_data_mounted(info->title_id)) {
       cache_game_entry(full_path, info->title_id, info->title_name);
-    return true;
+      return EXISTING_DIRECTORY_PREFER_CURRENT;
+    }
+    return EXISTING_DIRECTORY_HANDLED;
   }
 
   bool in_app_db = app_db_title_list_contains(app_db_titles, info->title_id);
   bool installed = in_app_db && is_installed(info->title_id);
   link_matches_source = installed && link_matches_source;
-  if (link_matches_source && !is_data_mounted(info->title_id))
-    (void)mount_title_nullfs(info->title_id, full_path);
+  bool source_valid = false;
+  if (link_matches_source) {
+    source_valid = is_data_mounted(info->title_id);
+    if (!source_valid && mount_title_nullfs(info->title_id, full_path))
+      source_valid = is_data_mounted(info->title_id);
+  }
 
-  if (in_app_db) {
-    const char *cached_path = NULL;
-    if (find_cached_game(full_path, info->title_id, &cached_path)) {
-      if (cached_path && strcmp(cached_path, full_path) != 0)
-        notify_duplicate_title_once(info->title_id, full_path, cached_path);
-      return true;
-    }
+  if (source_valid) {
+    cache_game_entry(full_path, info->title_id, info->title_name);
+    return EXISTING_DIRECTORY_PREFER_CURRENT;
+  }
+
+  if (installed && has_tracked_path && strcmp(tracked_path, full_path) != 0 &&
+      is_data_mounted(info->title_id)) {
+    (void)strlcpy(preferred_existing_path_out, tracked_path, MAX_PATH);
+    cache_game_entry(tracked_path, info->title_id, info->title_name);
+    return EXISTING_DIRECTORY_PREFER_CACHED;
   }
 
   if (!in_app_db && was_register_attempted(info->title_id)) {
@@ -131,18 +164,12 @@ static bool handle_existing_directory_candidate(
     log_debug("  [SKIP] register/install retry limit reached (%u/%u): %s (%s)",
               (unsigned)register_attempts, (unsigned)MAX_REGISTER_ATTEMPTS,
               info->title_name, info->title_id);
-    return true;
-  }
-
-  // Installed status requires both app files and app.db presence.
-  if (link_matches_source) {
-    cache_game_entry(full_path, info->title_id, info->title_name);
-    return true;
+    return EXISTING_DIRECTORY_HANDLED;
   }
 
   *installed_out = installed;
   *in_app_db_out = in_app_db;
-  return false;
+  return EXISTING_DIRECTORY_CONTINUE;
 }
 
 static bool enqueue_directory_candidate(
@@ -198,16 +225,50 @@ static bool try_collect_candidate_for_directory(
   if (probe_result == DIRECTORY_CANDIDATE_DESCEND)
     return false;
 
-  if (is_duplicate_scan_candidate(full_path, info.title_id, candidates,
-                                  *candidate_count)) {
+  int duplicate_candidate_index = find_scan_candidate_index_by_title_id(
+      candidates, *candidate_count, info.title_id);
+  const char *duplicate_candidate_path =
+      duplicate_candidate_index >= 0 ? candidates[duplicate_candidate_index].path
+                                     : NULL;
+  bool duplicate_candidate_same_path =
+      duplicate_candidate_path && strcmp(duplicate_candidate_path, full_path) == 0;
+  bool installed = false;
+  bool in_app_db = false;
+  char preferred_existing_path[MAX_PATH];
+  existing_directory_result_t existing_result =
+      handle_existing_directory_candidate(full_path, app_db_titles,
+                                          app_db_titles_ready, &info,
+                                          &installed, &in_app_db,
+                                          preferred_existing_path);
+  if (existing_result == EXISTING_DIRECTORY_PREFER_CURRENT) {
+    if (duplicate_candidate_index >= 0) {
+      if (!duplicate_candidate_same_path)
+        notify_duplicate_scan_candidate(info.title_id, duplicate_candidate_path,
+                                        full_path);
+      remove_scan_candidate_at(candidates, candidate_count,
+                               duplicate_candidate_index);
+    }
+    return true;
+  }
+  if (existing_result == EXISTING_DIRECTORY_PREFER_CACHED) {
+    notify_duplicate_scan_candidate(info.title_id, full_path,
+                                    preferred_existing_path);
+    if (duplicate_candidate_index >= 0)
+      remove_scan_candidate_at(candidates, candidate_count,
+                               duplicate_candidate_index);
+    return true;
+  }
+  if (existing_result == EXISTING_DIRECTORY_HANDLED) {
+    if (duplicate_candidate_index >= 0 && !duplicate_candidate_same_path)
+      notify_duplicate_scan_candidate(info.title_id, full_path,
+                                      duplicate_candidate_path);
     return true;
   }
 
-  bool installed = false;
-  bool in_app_db = false;
-  if (handle_existing_directory_candidate(
-          full_path, app_db_titles, app_db_titles_ready, &info, &installed,
-          &in_app_db)) {
+  if (duplicate_candidate_index >= 0) {
+    if (!duplicate_candidate_same_path)
+      notify_duplicate_scan_candidate(info.title_id, full_path,
+                                      duplicate_candidate_path);
     return true;
   }
 
