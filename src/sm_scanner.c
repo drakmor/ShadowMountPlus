@@ -14,6 +14,7 @@
 #include "sm_paths.h"
 #include "sm_runtime.h"
 #include "sm_scan.h"
+#include "sm_scan_tree.h"
 #include "sm_scanner.h"
 #include "sm_time.h"
 #include "sm_types.h"
@@ -225,41 +226,6 @@ static bool rebuild_scanner_watch_fd_index(void) {
   return rebuild_scanner_watch_fd_index_with_count(g_scanner_watch_count);
 }
 
-static bool is_distinct_configured_scan_root(const char *current_scan_root,
-                                             const char *path) {
-  for (int i = 0; i < get_scan_path_count(); i++) {
-    const char *scan_path = get_scan_path(i);
-    if (strcmp(scan_path, path) != 0)
-      continue;
-    if (current_scan_root && strcmp(current_scan_root, path) == 0)
-      return false;
-    return true;
-  }
-
-  return false;
-}
-
-static void classify_watch_entry(const char *full_path, unsigned char d_type,
-                                 bool *is_dir_out, bool *is_regular_out) {
-  bool is_dir = false;
-  bool is_regular = false;
-
-  if (d_type == DT_DIR) {
-    is_dir = true;
-  } else if (d_type == DT_REG) {
-    is_regular = true;
-  } else if (d_type == DT_UNKNOWN) {
-    struct stat st;
-    if (lstat(full_path, &st) == 0) {
-      is_dir = S_ISDIR(st.st_mode);
-      is_regular = S_ISREG(st.st_mode);
-    }
-  }
-
-  *is_dir_out = is_dir;
-  *is_regular_out = is_regular;
-}
-
 static void link_scanner_watch_entry_to_root(size_t index) {
   scanner_watch_entry_t *entry = &g_scanner_watch_entries[index];
   size_t head = g_scanner_root_watch_heads[entry->scan_root_index];
@@ -464,76 +430,35 @@ static bool resolve_watch_tree_rebuild_target(const scanner_watch_entry_t *entry
   }
 }
 
-static bool register_scan_dir_tree(int kq, int scan_root_index,
-                                   const char *current_scan_root,
-                                   const char *dir_path,
-                                   unsigned int depth_from_root,
-                                   unsigned int remaining_depth) {
-  if (depth_from_root > 0 &&
-      is_distinct_configured_scan_root(current_scan_root, dir_path)) {
-    return true;
-  }
+typedef struct {
+  int kq;
+  int scan_root_index;
+} register_watch_tree_ctx_t;
 
+static sm_scan_tree_dir_visit_t register_watch_directory_visit(
+    const char *dir_path, unsigned int depth_from_root, void *ctx_ptr) {
+  register_watch_tree_ctx_t *ctx = (register_watch_tree_ctx_t *)ctx_ptr;
   scanner_watch_kind_t kind =
       (depth_from_root == 0u) ? SCANNER_WATCH_SCAN_ROOT
                               : SCANNER_WATCH_SCAN_SUBDIR;
-  if (!register_scanner_watch_entry(kq, scan_root_index, dir_path, kind,
+  if (!register_scanner_watch_entry(ctx->kq, ctx->scan_root_index, dir_path, kind,
                                     (uint8_t)depth_from_root)) {
-    return false;
+    return SM_SCAN_TREE_DIR_ABORT;
   }
 
-  if (remaining_depth == 0u)
-    return true;
+  return SM_SCAN_TREE_DIR_DESCEND;
+}
 
-  DIR *d = opendir(dir_path);
-  if (!d)
-    return true;
+static bool register_watch_image_visit(const char *image_path,
+                                       const char *image_name,
+                                       unsigned int depth_from_root,
+                                       void *ctx_ptr) {
+  (void)image_name;
 
-  bool skip_backports_root =
-      (depth_from_root == 0u && !is_under_image_mount_base(current_scan_root));
-
-  struct dirent *entry;
-  while ((entry = readdir(d)) != NULL) {
-    if (should_stop_requested()) {
-      closedir(d);
-      return true;
-    }
-    if (entry->d_name[0] == '.')
-      continue;
-    if (skip_backports_root &&
-        strcmp(entry->d_name, DEFAULT_BACKPORTS_DIR_NAME) == 0) {
-      continue;
-    }
-
-    char full_path[MAX_PATH];
-    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
-
-    bool is_dir = false;
-    bool is_regular = false;
-    classify_watch_entry(full_path, entry->d_type, &is_dir, &is_regular);
-
-    if (!path_matches_root_or_child(current_scan_root, IMAGE_MOUNT_BASE) &&
-        is_regular && is_supported_image_file_name(entry->d_name)) {
-      if (!register_scanner_watch_entry(kq, scan_root_index, full_path,
-                                        SCANNER_WATCH_SCAN_IMAGE_FILE,
-                                        (uint8_t)(depth_from_root + 1u))) {
-        closedir(d);
-        return false;
-      }
-    }
-    if (!is_dir)
-      continue;
-
-    if (!register_scan_dir_tree(kq, scan_root_index, current_scan_root,
-                                full_path, depth_from_root + 1u,
-                                remaining_depth - 1u)) {
-      closedir(d);
-      return false;
-    }
-  }
-
-  closedir(d);
-  return true;
+  register_watch_tree_ctx_t *ctx = (register_watch_tree_ctx_t *)ctx_ptr;
+  return register_scanner_watch_entry(ctx->kq, ctx->scan_root_index, image_path,
+                                      SCANNER_WATCH_SCAN_IMAGE_FILE,
+                                      (uint8_t)depth_from_root);
 }
 
 static bool rebuild_scan_root_watch_tree(int kq, int scan_root_index) {
@@ -545,8 +470,16 @@ static bool rebuild_scan_root_watch_tree(int kq, int scan_root_index) {
   if (scan_depth < MIN_SCAN_DEPTH)
     scan_depth = MIN_SCAN_DEPTH;
 
-  if (!register_scan_dir_tree(kq, scan_root_index, scan_root, scan_root, 0u,
-                              scan_depth)) {
+  register_watch_tree_ctx_t walk_ctx = {
+      .kq = kq,
+      .scan_root_index = scan_root_index,
+  };
+  sm_scan_tree_callbacks_t callbacks = {
+      .on_directory = register_watch_directory_visit,
+      .on_image_file = register_watch_image_visit,
+  };
+  if (!sm_scan_tree_walk(scan_root, scan_root, 0u, scan_depth, &callbacks,
+                         &walk_ctx)) {
     return false;
   }
 
@@ -596,8 +529,16 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
     return true;
   }
 
-  if (!register_scan_dir_tree(kq, scan_root_index, scan_root, rebuild_path,
-                              rebuild_depth, scan_depth - rebuild_depth)) {
+  register_watch_tree_ctx_t walk_ctx = {
+      .kq = kq,
+      .scan_root_index = scan_root_index,
+  };
+  sm_scan_tree_callbacks_t callbacks = {
+      .on_directory = register_watch_directory_visit,
+      .on_image_file = register_watch_image_visit,
+  };
+  if (!sm_scan_tree_walk(scan_root, rebuild_path, rebuild_depth,
+                         scan_depth - rebuild_depth, &callbacks, &walk_ctx)) {
     return false;
   }
 

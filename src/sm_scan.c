@@ -1,6 +1,7 @@
 #include "sm_platform.h"
 #include "sm_runtime.h"
 #include "sm_scan.h"
+#include "sm_scan_tree.h"
 #include "sm_types.h"
 #include "sm_game_cache.h"
 #include "sm_gameinfo.h"
@@ -28,43 +29,6 @@ static bool is_under_discovered_param_root(
     if (path[root_len] == '\0' || path[root_len] == '/')
       return true;
   }
-  return false;
-}
-
-static void classify_scan_entry(const char *full_path, unsigned char d_type,
-                                bool *is_dir_out, bool *is_regular_out) {
-  bool is_dir = false;
-  bool is_regular = false;
-
-  if (d_type == DT_DIR) {
-    is_dir = true;
-  } else if (d_type == DT_REG) {
-    is_regular = true;
-  } else if (d_type == DT_UNKNOWN) {
-    struct stat st;
-    if (lstat(full_path, &st) == 0) {
-      is_dir = S_ISDIR(st.st_mode);
-      is_regular = S_ISREG(st.st_mode);
-    }
-  }
-
-  if (is_dir_out)
-    *is_dir_out = is_dir;
-  if (is_regular_out)
-    *is_regular_out = is_regular;
-}
-
-static bool is_distinct_configured_scan_root(const char *current_scan_root,
-                                             const char *path) {
-  for (int i = 0; i < get_scan_path_count(); i++) {
-    const char *scan_path = get_scan_path(i);
-    if (strcmp(scan_path, path) != 0)
-      continue;
-    if (current_scan_root && strcmp(current_scan_root, path) == 0)
-      return false;
-    return true;
-  }
-
   return false;
 }
 
@@ -200,65 +164,43 @@ static bool try_collect_candidate_for_directory(
   return true;
 }
 
-static void collect_candidates_with_depth(
-    const char *current_scan_root, const char *dir_path,
-    unsigned int remaining_depth, scan_candidate_t *candidates,
-    int max_candidates, int *candidate_count,
-    const struct AppDbTitleList *app_db_titles, bool app_db_titles_ready,
-    char discovered_param_roots[][MAX_PATH],
-    int *discovered_param_root_count, bool *unstable_found_out) {
-  if (should_stop_requested())
-    return;
+typedef struct {
+  scan_candidate_t *candidates;
+  int max_candidates;
+  int *candidate_count;
+  const struct AppDbTitleList *app_db_titles;
+  bool app_db_titles_ready;
+  char (*discovered_param_roots)[MAX_PATH];
+  int *discovered_param_root_count;
+  bool *unstable_found_out;
+} collect_candidates_walk_ctx_t;
 
-  if (is_distinct_configured_scan_root(current_scan_root, dir_path))
-    return;
+static sm_scan_tree_dir_visit_t collect_candidate_directory_visit(
+    const char *dir_path, unsigned int depth_from_root, void *ctx_ptr) {
+  if (depth_from_root == 0u)
+    return SM_SCAN_TREE_DIR_DESCEND;
 
-  // Once a directory has sce_sys/param.json (valid or not),
-  // it is treated as a terminal game root and descendants are skipped.
+  collect_candidates_walk_ctx_t *ctx = (collect_candidates_walk_ctx_t *)ctx_ptr;
   if (try_collect_candidate_for_directory(
-          dir_path, candidates, max_candidates, candidate_count, app_db_titles,
-          app_db_titles_ready, discovered_param_roots,
-          discovered_param_root_count, unstable_found_out)) {
-    return;
+          dir_path, ctx->candidates, ctx->max_candidates, ctx->candidate_count,
+          ctx->app_db_titles, ctx->app_db_titles_ready,
+          ctx->discovered_param_roots, ctx->discovered_param_root_count,
+          ctx->unstable_found_out)) {
+    return SM_SCAN_TREE_DIR_SKIP_DESCEND;
   }
 
-  if (remaining_depth == 0)
-    return;
+  return SM_SCAN_TREE_DIR_DESCEND;
+}
 
-  DIR *d = opendir(dir_path);
-  if (!d)
-    return;
+static bool collect_candidate_image_visit(const char *image_path,
+                                          const char *image_name,
+                                          unsigned int depth_from_root,
+                                          void *ctx_ptr) {
+  (void)depth_from_root;
 
-  struct dirent *entry;
-  while ((entry = readdir(d)) != NULL) {
-    if (should_stop_requested())
-      break;
-    if (entry->d_name[0] == '.')
-      continue;
-
-    char full_path[MAX_PATH];
-    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
-
-    bool is_dir = false;
-    bool is_regular = false;
-    classify_scan_entry(full_path, entry->d_type, &is_dir, &is_regular);
-
-    if (!path_matches_root_or_child(current_scan_root, IMAGE_MOUNT_BASE) &&
-        is_regular && is_supported_image_file_name(entry->d_name)) {
-      maybe_mount_image_file(full_path, entry->d_name, unstable_found_out);
-    }
-
-    if (!is_dir)
-      continue;
-
-    collect_candidates_with_depth(
-        current_scan_root, full_path, remaining_depth - 1u, candidates,
-        max_candidates, candidate_count, app_db_titles, app_db_titles_ready,
-        discovered_param_roots, discovered_param_root_count,
-        unstable_found_out);
-  }
-
-  closedir(d);
+  collect_candidates_walk_ctx_t *ctx = (collect_candidates_walk_ctx_t *)ctx_ptr;
+  maybe_mount_image_file(image_path, image_name, ctx->unstable_found_out);
+  return true;
 }
 
 static bool build_backport_mount_context(const char *title_id,
@@ -366,47 +308,24 @@ static void collect_scan_candidates_from_root(
     return;
 
   unsigned int scan_depth = runtime_config()->scan_depth;
-  bool has_backports_root = !is_under_image_mount_base(scan_path);
-
   if (scan_depth < MIN_SCAN_DEPTH)
     scan_depth = MIN_SCAN_DEPTH;
 
-  DIR *d = opendir(scan_path);
-  if (!d)
-    return;
-
-  struct dirent *entry;
-  while ((entry = readdir(d)) != NULL) {
-    if (should_stop_requested())
-      break;
-    if (entry->d_name[0] == '.')
-      continue;
-    if (has_backports_root &&
-        strcmp(entry->d_name, DEFAULT_BACKPORTS_DIR_NAME) == 0) {
-      continue;
-    }
-
-    char full_path[MAX_PATH];
-    snprintf(full_path, sizeof(full_path), "%s/%s", scan_path, entry->d_name);
-
-    bool is_dir = false;
-    bool is_regular = false;
-    classify_scan_entry(full_path, entry->d_type, &is_dir, &is_regular);
-
-    if (!path_matches_root_or_child(scan_path, IMAGE_MOUNT_BASE) && is_regular &&
-        is_supported_image_file_name(entry->d_name))
-      maybe_mount_image_file(full_path, entry->d_name, unstable_found_out);
-    if (!is_dir)
-      continue;
-
-    collect_candidates_with_depth(
-        scan_path, full_path, scan_depth - 1u, candidates, max_candidates,
-        candidate_count, app_db_titles, app_db_titles_ready,
-        discovered_param_roots, discovered_param_root_count,
-        unstable_found_out);
-  }
-
-  closedir(d);
+  collect_candidates_walk_ctx_t ctx = {
+      .candidates = candidates,
+      .max_candidates = max_candidates,
+      .candidate_count = candidate_count,
+      .app_db_titles = app_db_titles,
+      .app_db_titles_ready = app_db_titles_ready,
+      .discovered_param_roots = discovered_param_roots,
+      .discovered_param_root_count = discovered_param_root_count,
+      .unstable_found_out = unstable_found_out,
+  };
+  sm_scan_tree_callbacks_t callbacks = {
+      .on_directory = collect_candidate_directory_visit,
+      .on_image_file = collect_candidate_image_visit,
+  };
+  (void)sm_scan_tree_walk(scan_path, scan_path, 0u, scan_depth, &callbacks, &ctx);
 }
 
 int collect_scan_candidates_for_scan_root(const char *scan_root,
