@@ -33,135 +33,187 @@ static bool is_under_discovered_param_root(
 }
 
 // --- Candidate Discovery ---
-static bool try_collect_candidate_for_directory(
-    const char *full_path, scan_candidate_t *candidates, int max_candidates,
-    int *candidate_count, const struct AppDbTitleList *app_db_titles,
-    bool app_db_titles_ready, char discovered_param_roots[][MAX_PATH],
-    int *discovered_param_root_count, bool *unstable_found_out) {
-  struct stat param_st;
-  memset(&param_st, 0, sizeof(param_st));
-  bool has_param_json = false;
+typedef struct {
   char title_id[MAX_TITLE_ID];
   char title_name[MAX_TITLE_NAME];
-  title_id[0] = '\0';
-  title_name[0] = '\0';
+} directory_candidate_info_t;
+
+typedef enum {
+  DIRECTORY_CANDIDATE_DESCEND = 0,
+  DIRECTORY_CANDIDATE_SKIP_DESCEND,
+  DIRECTORY_CANDIDATE_READY,
+} directory_candidate_probe_t;
+
+static directory_candidate_probe_t probe_directory_candidate(
+    const char *full_path, char discovered_param_roots[][MAX_PATH],
+    int *discovered_param_root_count, directory_candidate_info_t *info_out) {
+  struct stat param_st;
 
   if (is_under_discovered_param_root(full_path, discovered_param_roots,
                                      *discovered_param_root_count)) {
-    return true;
+    return DIRECTORY_CANDIDATE_SKIP_DESCEND;
   }
 
   if (is_under_image_mount_base(full_path) && !is_active_image_mount_point(full_path)) {
     log_debug("  [SKIP] inactive mount path: %s", full_path);
-    return true;
+    return DIRECTORY_CANDIDATE_SKIP_DESCEND;
   }
 
-  has_param_json = directory_has_param_json(full_path, &param_st);
-
-  if (!has_param_json) {
+  if (!directory_has_param_json(full_path, &param_st)) {
     if (is_missing_param_scan_limited(full_path)) {
       log_debug("  [SKIP] param.json retry limit reached: %s", full_path);
     } else {
       record_missing_param_failure(full_path);
     }
-    return false;
+    return DIRECTORY_CANDIDATE_DESCEND;
   }
 
-  if (!get_game_info(full_path, &param_st, title_id, title_name)) {
+  if (!get_game_info(full_path, &param_st, info_out->title_id,
+                     info_out->title_name)) {
     record_missing_param_failure(full_path);
     log_debug("  [SKIP] game info unavailable: %s", full_path);
-    return true;
+    return DIRECTORY_CANDIDATE_SKIP_DESCEND;
   }
 
-  if (!is_under_discovered_param_root(full_path, discovered_param_roots,
-                                      *discovered_param_root_count) &&
-      *discovered_param_root_count < MAX_PENDING) {
+  if (*discovered_param_root_count < MAX_PENDING) {
     (void)strlcpy(discovered_param_roots[*discovered_param_root_count], full_path,
                   MAX_PATH);
     (*discovered_param_root_count)++;
   }
   clear_missing_param_entry(full_path);
+  return DIRECTORY_CANDIDATE_READY;
+}
 
-  for (int i = 0; i < *candidate_count; i++) {
+static bool is_duplicate_scan_candidate(const char *full_path, const char *title_id,
+                                        scan_candidate_t *candidates,
+                                        int candidate_count) {
+  for (int i = 0; i < candidate_count; i++) {
     if (strcmp(candidates[i].title_id, title_id) == 0) {
       notify_duplicate_title_once(title_id, full_path, candidates[i].path);
       return true;
     }
   }
+  return false;
+}
 
+static bool handle_existing_directory_candidate(
+    const char *full_path, const struct AppDbTitleList *app_db_titles,
+    bool app_db_titles_ready, const directory_candidate_info_t *info,
+    bool *installed_out, bool *in_app_db_out) {
   char tracked_path[MAX_PATH];
   bool link_matches_source =
-      read_mount_link(title_id, tracked_path, sizeof(tracked_path)) &&
+      read_mount_link(info->title_id, tracked_path, sizeof(tracked_path)) &&
       strcmp(tracked_path, full_path) == 0;
+
   if (!app_db_titles_ready) {
-    if (link_matches_source && is_data_mounted(title_id))
-      cache_game_entry(full_path, title_id, title_name);
+    if (link_matches_source && is_data_mounted(info->title_id))
+      cache_game_entry(full_path, info->title_id, info->title_name);
     return true;
   }
-  bool in_app_db = app_db_title_list_contains(app_db_titles, title_id);
-  bool installed = in_app_db && is_installed(title_id);
+
+  bool in_app_db = app_db_title_list_contains(app_db_titles, info->title_id);
+  bool installed = in_app_db && is_installed(info->title_id);
   link_matches_source = installed && link_matches_source;
-  bool mounted = false;
-  if (link_matches_source) {
-    mounted = is_data_mounted(title_id);
-    if (!mounted && mount_title_nullfs(title_id, full_path))
-      mounted = is_data_mounted(title_id);
-  }
+  if (link_matches_source && !is_data_mounted(info->title_id))
+    (void)mount_title_nullfs(info->title_id, full_path);
 
   if (in_app_db) {
     const char *cached_path = NULL;
-    if (find_cached_game(full_path, title_id, &cached_path)) {
+    if (find_cached_game(full_path, info->title_id, &cached_path)) {
       if (cached_path && strcmp(cached_path, full_path) != 0)
-        notify_duplicate_title_once(title_id, full_path, cached_path);
+        notify_duplicate_title_once(info->title_id, full_path, cached_path);
       return true;
     }
   }
 
-  if (!in_app_db && was_register_attempted(title_id)) {
-    uint8_t register_attempts = get_register_attempts(title_id);
+  if (!in_app_db && was_register_attempted(info->title_id)) {
+    uint8_t register_attempts = get_register_attempts(info->title_id);
     log_debug("  [SKIP] register/install retry limit reached (%u/%u): %s (%s)",
               (unsigned)register_attempts, (unsigned)MAX_REGISTER_ATTEMPTS,
-              title_name, title_id);
+              info->title_name, info->title_id);
     return true;
   }
 
   // Installed status requires both app files and app.db presence.
   if (link_matches_source) {
-    cache_game_entry(full_path, title_id, title_name);
+    cache_game_entry(full_path, info->title_id, info->title_name);
     return true;
   }
 
-  uint8_t failed_attempts = get_failed_mount_attempts(title_id);
+  *installed_out = installed;
+  *in_app_db_out = in_app_db;
+  return false;
+}
+
+static bool enqueue_directory_candidate(
+    const char *full_path, scan_candidate_t *candidates, int max_candidates,
+    int *candidate_count, const directory_candidate_info_t *info, bool installed,
+    bool in_app_db, bool *unstable_found_out) {
+  uint8_t failed_attempts = get_failed_mount_attempts(info->title_id);
   if (failed_attempts >= MAX_FAILED_MOUNT_ATTEMPTS) {
     log_debug("  [SKIP] mount/register retry limit reached (%u/%u): %s (%s)",
               (unsigned)failed_attempts, (unsigned)MAX_FAILED_MOUNT_ATTEMPTS,
-              title_name, title_id);
+              info->title_name, info->title_id);
     return true;
   }
 
-  if (!wait_for_stability_fast(full_path, title_name)) {
+  if (!wait_for_stability_fast(full_path, info->title_name)) {
     if (unstable_found_out)
       *unstable_found_out = true;
-    log_debug("  [SKIP] source not stable yet: %s (%s)", title_name, full_path);
+    log_debug("  [SKIP] source not stable yet: %s (%s)", info->title_name,
+              full_path);
     return true;
   }
 
   if (*candidate_count >= max_candidates) {
     log_debug("  [SKIP] candidate queue full (%d): %s (%s)", max_candidates,
-              title_name, title_id);
+              info->title_name, info->title_id);
     return true;
   }
 
   (void)strlcpy(candidates[*candidate_count].path, full_path,
                 sizeof(candidates[*candidate_count].path));
-  (void)strlcpy(candidates[*candidate_count].title_id, title_id,
+  (void)strlcpy(candidates[*candidate_count].title_id, info->title_id,
                 sizeof(candidates[*candidate_count].title_id));
-  (void)strlcpy(candidates[*candidate_count].title_name, title_name,
+  (void)strlcpy(candidates[*candidate_count].title_name, info->title_name,
                 sizeof(candidates[*candidate_count].title_name));
   candidates[*candidate_count].installed = installed;
   candidates[*candidate_count].in_app_db = in_app_db;
   (*candidate_count)++;
   return true;
+}
+
+static bool try_collect_candidate_for_directory(
+    const char *full_path, scan_candidate_t *candidates, int max_candidates,
+    int *candidate_count, const struct AppDbTitleList *app_db_titles,
+    bool app_db_titles_ready, char discovered_param_roots[][MAX_PATH],
+    int *discovered_param_root_count, bool *unstable_found_out) {
+  directory_candidate_info_t info;
+  directory_candidate_probe_t probe_result =
+      probe_directory_candidate(full_path, discovered_param_roots,
+                                discovered_param_root_count, &info);
+
+  if (probe_result == DIRECTORY_CANDIDATE_SKIP_DESCEND)
+    return true;
+  if (probe_result == DIRECTORY_CANDIDATE_DESCEND)
+    return false;
+
+  if (is_duplicate_scan_candidate(full_path, info.title_id, candidates,
+                                  *candidate_count)) {
+    return true;
+  }
+
+  bool installed = false;
+  bool in_app_db = false;
+  if (handle_existing_directory_candidate(
+          full_path, app_db_titles, app_db_titles_ready, &info, &installed,
+          &in_app_db)) {
+    return true;
+  }
+
+  return enqueue_directory_candidate(full_path, candidates, max_candidates,
+                                     candidate_count, &info, installed,
+                                     in_app_db, unstable_found_out);
 }
 
 typedef struct {
