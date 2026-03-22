@@ -10,6 +10,8 @@ typedef struct runtime_config runtime_config_t;
 void ensure_runtime_config_ready(void);
 // Load runtime configuration from disk and apply defaults.
 bool load_runtime_config(void);
+// Reload runtime configuration from disk when config.ini changed.
+bool reload_runtime_config_if_changed(bool *reloaded_out);
 // Return the current runtime configuration.
 const runtime_config_t *runtime_config(void);
 // Return the number of configured scan roots.

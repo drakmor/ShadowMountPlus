@@ -9,5 +9,7 @@ bool start_game_lifecycle_watcher(void);
 void wake_game_lifecycle_watcher(void);
 // Stop the shared watcher and let lifecycle modules clean up tracked state.
 void stop_game_lifecycle_watcher(void);
+// Start or stop the shared watcher to match the current runtime config.
+bool refresh_game_lifecycle_watcher(void);
 
 #endif

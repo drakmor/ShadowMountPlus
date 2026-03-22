@@ -283,7 +283,6 @@ static void stop_conflicting_backpork(void) {
 
 int main(void) {
   bool restarted_previous_instance = false;
-  bool kstuff_runtime_enabled = false;
   pid_t existing_pid = 0;
 
   sceUserServiceInitialize(0);
@@ -335,10 +334,8 @@ int main(void) {
   stop_conflicting_backpork();
   if (!sm_shellcore_flags_start())
     log_debug("  [SHELLFLAG] monitor unavailable");
-  kstuff_runtime_enabled = runtime_config()->kstuff_game_auto_toggle;
-  if (kstuff_runtime_enabled)
-    sm_kstuff_init();
-  if (!start_game_lifecycle_watcher())
+  sm_kstuff_init();
+  if (!refresh_game_lifecycle_watcher())
     log_debug("  [GAME] lifecycle watcher unavailable");
 
   if (mkdir("/system_ex/app", 0777) != 0 && errno != EEXIST) {
@@ -374,8 +371,7 @@ shutdown:
   sm_shellcore_flags_stop();
   stop_game_lifecycle_watcher();
   sm_scanner_shutdown();
-  if (kstuff_runtime_enabled)
-    sm_kstuff_shutdown();
+  sm_kstuff_shutdown();
   shutdown_title_mounts();
   if (!shutdown_image_mounts()) {
     log_debug("[SHUTDOWN] some image mounts or devices were not fully released");

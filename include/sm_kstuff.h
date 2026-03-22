@@ -31,5 +31,7 @@ void sm_kstuff_game_on_exit(pid_t pid);
 void sm_kstuff_game_poll(void);
 // Clear tracked game state and restore kstuff if the watcher paused it.
 void sm_kstuff_game_shutdown(void);
+// Re-apply runtime config changes to the currently tracked game, if any.
+void sm_kstuff_on_config_reload(void);
 
 #endif

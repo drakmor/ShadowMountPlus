@@ -510,3 +510,20 @@ void stop_game_lifecycle_watcher(void) {
   g_game_lifecycle_stop_requested = 0;
   close_game_lifecycle_wake_pipe();
 }
+
+bool refresh_game_lifecycle_watcher(void) {
+  bool should_run =
+      sm_fakelib_game_feature_enabled() || sm_kstuff_game_feature_enabled();
+
+  if (!should_run) {
+    if (g_game_lifecycle_thread_started)
+      stop_game_lifecycle_watcher();
+    return true;
+  }
+
+  if (!g_game_lifecycle_thread_started)
+    return start_game_lifecycle_watcher();
+
+  wake_game_lifecycle_watcher();
+  return true;
+}

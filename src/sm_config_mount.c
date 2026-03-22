@@ -8,6 +8,8 @@
 #include "sm_path_utils.h"
 #include "sm_paths.h"
 
+#include <stdatomic.h>
+
 static const char *const k_default_scan_paths[] = SM_DEFAULT_SCAN_PATHS_INITIALIZER;
 
 typedef struct {
@@ -22,19 +24,50 @@ typedef struct {
   bool valid;
 } kstuff_delay_rule_t;
 
-static runtime_config_t g_runtime_cfg;
-static bool g_runtime_cfg_ready = false;
-static const char *g_scan_paths[MAX_SCAN_PATHS + 1];
-static char g_scan_path_storage[MAX_SCAN_PATHS][MAX_PATH];
-static int g_scan_path_count = 0;
-static image_mode_rule_t g_image_mode_rules[MAX_IMAGE_MODE_RULES];
-static char g_kstuff_no_pause_title_ids[MAX_KSTUFF_TITLE_RULES][MAX_TITLE_ID];
-static int g_kstuff_no_pause_title_count = 0;
-static kstuff_delay_rule_t g_kstuff_delay_rules[MAX_KSTUFF_TITLE_RULES];
+typedef struct {
+  runtime_config_t cfg;
+  char scan_path_storage[MAX_SCAN_PATHS][MAX_PATH];
+  int scan_path_count;
+  image_mode_rule_t image_mode_rules[MAX_IMAGE_MODE_RULES];
+  char kstuff_no_pause_title_ids[MAX_KSTUFF_TITLE_RULES][MAX_TITLE_ID];
+  int kstuff_no_pause_title_count;
+  kstuff_delay_rule_t kstuff_delay_rules[MAX_KSTUFF_TITLE_RULES];
+} runtime_config_state_t;
+
+typedef struct {
+  bool present;
+  uint64_t inode;
+  uint64_t size;
+  uint64_t mtime_sec;
+  uint64_t mtime_nsec;
+  uint64_t ctime_sec;
+  uint64_t ctime_nsec;
+} config_file_stamp_t;
+
+typedef enum {
+  CONFIG_LOAD_OK = 0,
+  CONFIG_LOAD_MISSING,
+  CONFIG_LOAD_ERROR,
+} config_load_status_t;
+
+#define RUNTIME_CONFIG_ACTIVE_SLOT_COUNT 2
+#define RUNTIME_CONFIG_PARSE_SLOT RUNTIME_CONFIG_ACTIVE_SLOT_COUNT
+
+static runtime_config_state_t
+    g_runtime_state_slots[RUNTIME_CONFIG_ACTIVE_SLOT_COUNT + 1];
+static _Atomic int g_runtime_state_active_index = 0;
+static atomic_bool g_runtime_cfg_ready = false;
+static config_file_stamp_t g_config_file_stamp;
 
 static char *trim_ascii(char *s);
 static bool normalize_title_id_value(const char *value,
                                      char out[MAX_TITLE_ID]);
+static config_load_status_t load_runtime_config_state(runtime_config_state_t *state);
+
+static const runtime_config_state_t *active_runtime_state(void) {
+  return &g_runtime_state_slots[atomic_load_explicit(&g_runtime_state_active_index,
+                                                     memory_order_acquire)];
+}
 
 static attach_backend_t default_exfat_backend(void) {
 #if EXFAT_ATTACH_USE_MDCTL
@@ -52,13 +85,13 @@ static attach_backend_t default_ufs_backend(void) {
 #endif
 }
 
-static void clear_runtime_scan_paths(void) {
-  g_scan_path_count = 0;
-  memset(g_scan_paths, 0, sizeof(g_scan_paths));
-  memset(g_scan_path_storage, 0, sizeof(g_scan_path_storage));
+static void clear_runtime_scan_paths(runtime_config_state_t *state) {
+  state->scan_path_count = 0;
+  memset(state->scan_path_storage, 0, sizeof(state->scan_path_storage));
 }
 
-static bool add_runtime_scan_path(const char *path) {
+static bool add_runtime_scan_path(runtime_config_state_t *state,
+                                  const char *path) {
   while (*path && isspace((unsigned char)*path))
     path++;
 
@@ -76,83 +109,147 @@ static bool add_runtime_scan_path(const char *path) {
     len--;
   }
 
-  for (int i = 0; i < g_scan_path_count; i++) {
-    if (g_scan_paths[i] && strcmp(g_scan_paths[i], normalized) == 0)
+  for (int i = 0; i < state->scan_path_count; i++) {
+    if (strcmp(state->scan_path_storage[i], normalized) == 0)
       return true;
   }
 
-  if (g_scan_path_count >= MAX_SCAN_PATHS)
+  if (state->scan_path_count >= MAX_SCAN_PATHS)
     return false;
 
-  (void)strlcpy(g_scan_path_storage[g_scan_path_count], normalized,
-                sizeof(g_scan_path_storage[g_scan_path_count]));
-  g_scan_paths[g_scan_path_count] = g_scan_path_storage[g_scan_path_count];
-  g_scan_path_count++;
-  g_scan_paths[g_scan_path_count] = NULL;
+  (void)strlcpy(state->scan_path_storage[state->scan_path_count], normalized,
+                sizeof(state->scan_path_storage[state->scan_path_count]));
+  state->scan_path_count++;
   return true;
 }
 
-static void init_runtime_scan_paths_defaults(void) {
-  clear_runtime_scan_paths();
+static void init_runtime_scan_paths_defaults(runtime_config_state_t *state) {
+  clear_runtime_scan_paths(state);
   for (int i = 0; k_default_scan_paths[i] != NULL; i++)
-    (void)add_runtime_scan_path(k_default_scan_paths[i]);
-  (void)add_runtime_scan_path(IMAGE_MOUNT_BASE);
+    (void)add_runtime_scan_path(state, k_default_scan_paths[i]);
+  (void)add_runtime_scan_path(state, IMAGE_MOUNT_BASE);
 }
 
-static void clear_kstuff_title_rules(void) {
-  g_kstuff_no_pause_title_count = 0;
-  memset(g_kstuff_no_pause_title_ids, 0, sizeof(g_kstuff_no_pause_title_ids));
-  memset(g_kstuff_delay_rules, 0, sizeof(g_kstuff_delay_rules));
+static void clear_kstuff_title_rules(runtime_config_state_t *state) {
+  state->kstuff_no_pause_title_count = 0;
+  memset(state->kstuff_no_pause_title_ids, 0,
+         sizeof(state->kstuff_no_pause_title_ids));
+  memset(state->kstuff_delay_rules, 0, sizeof(state->kstuff_delay_rules));
 }
 
-static void init_runtime_config_defaults(void) {
-  g_runtime_cfg.debug_enabled = true;
-  g_runtime_cfg.quiet_mode = false;
-  g_runtime_cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
-  g_runtime_cfg.force_mount = false;
-  g_runtime_cfg.backport_fakelib_enabled = true;
-  g_runtime_cfg.kstuff_game_auto_toggle = true;
-  g_runtime_cfg.legacy_recursive_scan_forced = false;
-  g_runtime_cfg.scan_depth = DEFAULT_SCAN_DEPTH;
-  g_runtime_cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
-  g_runtime_cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
-  g_runtime_cfg.kstuff_pause_delay_image_seconds =
+static void init_runtime_config_defaults(runtime_config_state_t *state) {
+  memset(state, 0, sizeof(*state));
+  state->cfg.debug_enabled = true;
+  state->cfg.quiet_mode = false;
+  state->cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
+  state->cfg.force_mount = false;
+  state->cfg.backport_fakelib_enabled = true;
+  state->cfg.kstuff_game_auto_toggle = true;
+  state->cfg.legacy_recursive_scan_forced = false;
+  state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
+  state->cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
+  state->cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
+  state->cfg.kstuff_pause_delay_image_seconds =
       DEFAULT_KSTUFF_PAUSE_DELAY_IMAGE_SECONDS;
-  g_runtime_cfg.kstuff_pause_delay_direct_seconds =
+  state->cfg.kstuff_pause_delay_direct_seconds =
       DEFAULT_KSTUFF_PAUSE_DELAY_DIRECT_SECONDS;
-  g_runtime_cfg.exfat_backend = default_exfat_backend();
-  g_runtime_cfg.ufs_backend = default_ufs_backend();
-  g_runtime_cfg.lvd_sector_exfat = LVD_SECTOR_SIZE_EXFAT;
-  g_runtime_cfg.lvd_sector_ufs = LVD_SECTOR_SIZE_UFS;
-  g_runtime_cfg.lvd_sector_pfs = LVD_SECTOR_SIZE_PFS;
-  g_runtime_cfg.md_sector_exfat = MD_SECTOR_SIZE_EXFAT;
-  g_runtime_cfg.md_sector_ufs = MD_SECTOR_SIZE_UFS;
-  memset(g_image_mode_rules, 0, sizeof(g_image_mode_rules));
-  clear_kstuff_title_rules();
-  init_runtime_scan_paths_defaults();
-  g_runtime_cfg_ready = true;
+  state->cfg.exfat_backend = default_exfat_backend();
+  state->cfg.ufs_backend = default_ufs_backend();
+  state->cfg.lvd_sector_exfat = LVD_SECTOR_SIZE_EXFAT;
+  state->cfg.lvd_sector_ufs = LVD_SECTOR_SIZE_UFS;
+  state->cfg.lvd_sector_pfs = LVD_SECTOR_SIZE_PFS;
+  state->cfg.md_sector_exfat = MD_SECTOR_SIZE_EXFAT;
+  state->cfg.md_sector_ufs = MD_SECTOR_SIZE_UFS;
+  memset(state->image_mode_rules, 0, sizeof(state->image_mode_rules));
+  clear_kstuff_title_rules(state);
+  init_runtime_scan_paths_defaults(state);
+}
+
+static config_file_stamp_t read_config_file_stamp(void) {
+  config_file_stamp_t stamp;
+  memset(&stamp, 0, sizeof(stamp));
+
+  struct stat st;
+  if (stat(CONFIG_FILE, &st) != 0)
+    return stamp;
+
+  stamp.present = true;
+  stamp.inode = (uint64_t)st.st_ino;
+  stamp.size = (uint64_t)st.st_size;
+  stamp.mtime_sec = (uint64_t)st.st_mtim.tv_sec;
+  stamp.mtime_nsec = (uint64_t)st.st_mtim.tv_nsec;
+  stamp.ctime_sec = (uint64_t)st.st_ctim.tv_sec;
+  stamp.ctime_nsec = (uint64_t)st.st_ctim.tv_nsec;
+  return stamp;
+}
+
+static bool config_file_stamp_equals(const config_file_stamp_t *a,
+                                     const config_file_stamp_t *b) {
+  return a->present == b->present && a->inode == b->inode &&
+         a->size == b->size && a->mtime_sec == b->mtime_sec &&
+         a->mtime_nsec == b->mtime_nsec && a->ctime_sec == b->ctime_sec &&
+         a->ctime_nsec == b->ctime_nsec;
+}
+
+static void apply_reloadable_runtime_fields(runtime_config_state_t *dst,
+                                            const runtime_config_state_t *src) {
+  dst->cfg.debug_enabled = src->cfg.debug_enabled;
+  dst->cfg.quiet_mode = src->cfg.quiet_mode;
+  dst->cfg.mount_read_only = src->cfg.mount_read_only;
+  dst->cfg.force_mount = src->cfg.force_mount;
+  dst->cfg.backport_fakelib_enabled = src->cfg.backport_fakelib_enabled;
+  dst->cfg.kstuff_game_auto_toggle = src->cfg.kstuff_game_auto_toggle;
+  dst->cfg.scan_interval_us = src->cfg.scan_interval_us;
+  dst->cfg.stability_wait_seconds = src->cfg.stability_wait_seconds;
+  dst->cfg.kstuff_pause_delay_image_seconds =
+      src->cfg.kstuff_pause_delay_image_seconds;
+  dst->cfg.kstuff_pause_delay_direct_seconds =
+      src->cfg.kstuff_pause_delay_direct_seconds;
+  memcpy(dst->image_mode_rules, src->image_mode_rules,
+         sizeof(dst->image_mode_rules));
+  memcpy(dst->kstuff_no_pause_title_ids, src->kstuff_no_pause_title_ids,
+         sizeof(dst->kstuff_no_pause_title_ids));
+  dst->kstuff_no_pause_title_count = src->kstuff_no_pause_title_count;
+  memcpy(dst->kstuff_delay_rules, src->kstuff_delay_rules,
+         sizeof(dst->kstuff_delay_rules));
+}
+
+static bool runtime_config_states_equal(const runtime_config_state_t *a,
+                                        const runtime_config_state_t *b) {
+  return memcmp(a, b, sizeof(*a)) == 0;
+}
+
+static void activate_runtime_config_state(int slot_index) {
+  atomic_store_explicit(&g_runtime_state_active_index, slot_index,
+                        memory_order_release);
+  atomic_store_explicit(&g_runtime_cfg_ready, true, memory_order_release);
 }
 
 void ensure_runtime_config_ready(void) {
-  if (!g_runtime_cfg_ready)
-    init_runtime_config_defaults();
+  if (atomic_load_explicit(&g_runtime_cfg_ready, memory_order_acquire))
+    return;
+
+  init_runtime_config_defaults(&g_runtime_state_slots[0]);
+  activate_runtime_config_state(0);
+  g_config_file_stamp = read_config_file_stamp();
 }
 
 const runtime_config_t *runtime_config(void) {
   ensure_runtime_config_ready();
-  return &g_runtime_cfg;
+  return &active_runtime_state()->cfg;
 }
 
 int get_scan_path_count(void) {
   ensure_runtime_config_ready();
-  return g_scan_path_count;
+  return active_runtime_state()->scan_path_count;
 }
 
 const char *get_scan_path(int index) {
   ensure_runtime_config_ready();
-  if (index < 0 || index >= g_scan_path_count)
+  const runtime_config_state_t *state = active_runtime_state();
+  if (index < 0 || index >= state->scan_path_count)
     return NULL;
-  return g_scan_paths[index];
+  return state->scan_path_storage[index];
 }
 
 bool get_image_mode_override(const char *filename, bool *mount_read_only_out) {
@@ -160,12 +257,13 @@ bool get_image_mode_override(const char *filename, bool *mount_read_only_out) {
   if (!filename || !mount_read_only_out)
     return false;
 
+  const runtime_config_state_t *state = active_runtime_state();
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
-    if (!g_image_mode_rules[k].valid)
+    if (!state->image_mode_rules[k].valid)
       continue;
-    if (strcasecmp(g_image_mode_rules[k].filename, filename) != 0)
+    if (strcasecmp(state->image_mode_rules[k].filename, filename) != 0)
       continue;
-    *mount_read_only_out = g_image_mode_rules[k].mount_read_only;
+    *mount_read_only_out = state->image_mode_rules[k].mount_read_only;
     return true;
   }
 
@@ -174,13 +272,14 @@ bool get_image_mode_override(const char *filename, bool *mount_read_only_out) {
 
 bool is_kstuff_pause_disabled_for_title(const char *title_id) {
   ensure_runtime_config_ready();
+  const runtime_config_state_t *state = active_runtime_state();
 
   char normalized[MAX_TITLE_ID];
   if (!normalize_title_id_value(title_id, normalized))
     return false;
 
-  for (int i = 0; i < g_kstuff_no_pause_title_count; ++i) {
-    if (strcmp(g_kstuff_no_pause_title_ids[i], normalized) == 0)
+  for (int i = 0; i < state->kstuff_no_pause_title_count; ++i) {
+    if (strcmp(state->kstuff_no_pause_title_ids[i], normalized) == 0)
       return true;
   }
 
@@ -193,16 +292,17 @@ bool get_kstuff_pause_delay_override_for_title(const char *title_id,
   if (!delay_seconds_out)
     return false;
 
+  const runtime_config_state_t *state = active_runtime_state();
   char normalized[MAX_TITLE_ID];
   if (!normalize_title_id_value(title_id, normalized))
     return false;
 
   for (int i = 0; i < MAX_KSTUFF_TITLE_RULES; ++i) {
-    if (!g_kstuff_delay_rules[i].valid)
+    if (!state->kstuff_delay_rules[i].valid)
       continue;
-    if (strcmp(g_kstuff_delay_rules[i].title_id, normalized) != 0)
+    if (strcmp(state->kstuff_delay_rules[i].title_id, normalized) != 0)
       continue;
-    *delay_seconds_out = g_kstuff_delay_rules[i].delay_seconds;
+    *delay_seconds_out = state->kstuff_delay_rules[i].delay_seconds;
     return true;
   }
 
@@ -296,54 +396,57 @@ static bool is_valid_sector_size(uint32_t size) {
   return (size & (size - 1u)) == 0u;
 }
 
-static bool set_image_mode_rule(const char *path, bool mount_read_only) {
+static bool set_image_mode_rule(runtime_config_state_t *state, const char *path,
+                                bool mount_read_only) {
   const char *filename = get_filename_component(path);
   if (filename[0] == '\0')
     return false;
 
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
-    if (!g_image_mode_rules[k].valid)
+    if (!state->image_mode_rules[k].valid)
       continue;
-    if (strcasecmp(g_image_mode_rules[k].filename, filename) != 0)
+    if (strcasecmp(state->image_mode_rules[k].filename, filename) != 0)
       continue;
-    g_image_mode_rules[k].mount_read_only = mount_read_only;
+    state->image_mode_rules[k].mount_read_only = mount_read_only;
     return true;
   }
 
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
-    if (g_image_mode_rules[k].valid)
+    if (state->image_mode_rules[k].valid)
       continue;
-    (void)strlcpy(g_image_mode_rules[k].filename, filename,
-                  sizeof(g_image_mode_rules[k].filename));
-    g_image_mode_rules[k].mount_read_only = mount_read_only;
-    g_image_mode_rules[k].valid = true;
+    (void)strlcpy(state->image_mode_rules[k].filename, filename,
+                  sizeof(state->image_mode_rules[k].filename));
+    state->image_mode_rules[k].mount_read_only = mount_read_only;
+    state->image_mode_rules[k].valid = true;
     return true;
   }
 
   return false;
 }
 
-static bool add_kstuff_no_pause_title_rule(const char *value) {
+static bool add_kstuff_no_pause_title_rule(runtime_config_state_t *state,
+                                           const char *value) {
   char normalized[MAX_TITLE_ID];
   if (!normalize_title_id_value(value, normalized))
     return false;
 
-  for (int i = 0; i < g_kstuff_no_pause_title_count; ++i) {
-    if (strcmp(g_kstuff_no_pause_title_ids[i], normalized) == 0)
+  for (int i = 0; i < state->kstuff_no_pause_title_count; ++i) {
+    if (strcmp(state->kstuff_no_pause_title_ids[i], normalized) == 0)
       return true;
   }
 
-  if (g_kstuff_no_pause_title_count >= MAX_KSTUFF_TITLE_RULES)
+  if (state->kstuff_no_pause_title_count >= MAX_KSTUFF_TITLE_RULES)
     return false;
 
-  (void)strlcpy(g_kstuff_no_pause_title_ids[g_kstuff_no_pause_title_count],
+  (void)strlcpy(state->kstuff_no_pause_title_ids[state->kstuff_no_pause_title_count],
                 normalized,
-                sizeof(g_kstuff_no_pause_title_ids[g_kstuff_no_pause_title_count]));
-  g_kstuff_no_pause_title_count++;
+                sizeof(state->kstuff_no_pause_title_ids[state->kstuff_no_pause_title_count]));
+  state->kstuff_no_pause_title_count++;
   return true;
 }
 
-static bool set_kstuff_pause_delay_override_rule(const char *value) {
+static bool set_kstuff_pause_delay_override_rule(runtime_config_state_t *state,
+                                                 const char *value) {
   if (!value)
     return false;
 
@@ -368,38 +471,39 @@ static bool set_kstuff_pause_delay_override_rule(const char *value) {
   }
 
   for (int i = 0; i < MAX_KSTUFF_TITLE_RULES; ++i) {
-    if (!g_kstuff_delay_rules[i].valid)
+    if (!state->kstuff_delay_rules[i].valid)
       continue;
-    if (strcmp(g_kstuff_delay_rules[i].title_id, normalized) != 0)
+    if (strcmp(state->kstuff_delay_rules[i].title_id, normalized) != 0)
       continue;
-    g_kstuff_delay_rules[i].delay_seconds = delay_seconds;
+    state->kstuff_delay_rules[i].delay_seconds = delay_seconds;
     return true;
   }
 
   for (int i = 0; i < MAX_KSTUFF_TITLE_RULES; ++i) {
-    if (g_kstuff_delay_rules[i].valid)
+    if (state->kstuff_delay_rules[i].valid)
       continue;
-    (void)strlcpy(g_kstuff_delay_rules[i].title_id, normalized,
-                  sizeof(g_kstuff_delay_rules[i].title_id));
-    g_kstuff_delay_rules[i].delay_seconds = delay_seconds;
-    g_kstuff_delay_rules[i].valid = true;
+    (void)strlcpy(state->kstuff_delay_rules[i].title_id, normalized,
+                  sizeof(state->kstuff_delay_rules[i].title_id));
+    state->kstuff_delay_rules[i].delay_seconds = delay_seconds;
+    state->kstuff_delay_rules[i].valid = true;
     return true;
   }
 
   return false;
 }
 
-bool load_runtime_config(void) {
-  init_runtime_config_defaults();
+static config_load_status_t load_runtime_config_state(runtime_config_state_t *state) {
+  init_runtime_config_defaults(state);
 
   FILE *f = fopen(CONFIG_FILE, "r");
   if (!f) {
     if (errno != ENOENT) {
       log_debug("  [CFG] open failed: %s (%s)", CONFIG_FILE, strerror(errno));
+      return CONFIG_LOAD_ERROR;
     } else {
       log_debug("  [CFG] not found, using defaults");
+      return CONFIG_LOAD_MISSING;
     }
-    return false;
   }
 
   char line[512];
@@ -444,7 +548,7 @@ bool load_runtime_config(void) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
-      g_runtime_cfg.debug_enabled = bval;
+      state->cfg.debug_enabled = bval;
       continue;
     }
 
@@ -453,7 +557,7 @@ bool load_runtime_config(void) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
-      g_runtime_cfg.quiet_mode = bval;
+      state->cfg.quiet_mode = bval;
       continue;
     }
 
@@ -463,7 +567,7 @@ bool load_runtime_config(void) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
-      g_runtime_cfg.mount_read_only = bval;
+      state->cfg.mount_read_only = bval;
       continue;
     }
 
@@ -472,14 +576,14 @@ bool load_runtime_config(void) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
-      g_runtime_cfg.force_mount = bval;
+      state->cfg.force_mount = bval;
       continue;
     }
 
     if (strcasecmp(key, "image_ro") == 0 ||
         strcasecmp(key, "image_rw") == 0) {
       bool rule_read_only = (strcasecmp(key, "image_ro") == 0);
-      if (!set_image_mode_rule(value, rule_read_only)) {
+      if (!set_image_mode_rule(state, value, rule_read_only)) {
         log_debug("  [CFG] invalid image mode rule at line %d: %s=%s", line_no,
                   key, value);
       }
@@ -504,7 +608,7 @@ bool load_runtime_config(void) {
                   (unsigned)MAX_SCAN_DEPTH);
         continue;
       }
-      g_runtime_cfg.scan_depth = u32;
+      state->cfg.scan_depth = u32;
       continue;
     }
 
@@ -513,7 +617,7 @@ bool load_runtime_config(void) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
-      g_runtime_cfg.backport_fakelib_enabled = bval;
+      state->cfg.backport_fakelib_enabled = bval;
       continue;
     }
 
@@ -522,12 +626,12 @@ bool load_runtime_config(void) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
-      g_runtime_cfg.kstuff_game_auto_toggle = bval;
+      state->cfg.kstuff_game_auto_toggle = bval;
       continue;
     }
 
     if (strcasecmp(key, "kstuff_no_pause") == 0) {
-      if (!add_kstuff_no_pause_title_rule(value)) {
+      if (!add_kstuff_no_pause_title_rule(state, value)) {
         log_debug("  [CFG] invalid kstuff no-pause title rule at line %d: "
                   "%s=%s", line_no, key, value);
       }
@@ -535,7 +639,7 @@ bool load_runtime_config(void) {
     }
 
     if (strcasecmp(key, "kstuff_delay") == 0) {
-      if (!set_kstuff_pause_delay_override_rule(value)) {
+      if (!set_kstuff_pause_delay_override_rule(state, value)) {
         log_debug("  [CFG] invalid kstuff pause override at line %d: %s=%s "
                   "(format: TITLEID:SECONDS, max: %u)",
                   line_no, key, value,
@@ -553,7 +657,7 @@ bool load_runtime_config(void) {
                   (unsigned)MAX_SCAN_INTERVAL_SECONDS);
         continue;
       }
-      g_runtime_cfg.scan_interval_us = u32 * 1000000u;
+      state->cfg.scan_interval_us = u32 * 1000000u;
       continue;
     }
 
@@ -564,7 +668,7 @@ bool load_runtime_config(void) {
                   line_no, key, value, (unsigned)MAX_STABILITY_WAIT_SECONDS);
         continue;
       }
-      g_runtime_cfg.stability_wait_seconds = u32;
+      state->cfg.stability_wait_seconds = u32;
       continue;
     }
 
@@ -576,7 +680,7 @@ bool load_runtime_config(void) {
                   (unsigned)MAX_KSTUFF_PAUSE_DELAY_SECONDS);
         continue;
       }
-      g_runtime_cfg.kstuff_pause_delay_image_seconds = u32;
+      state->cfg.kstuff_pause_delay_image_seconds = u32;
       continue;
     }
 
@@ -588,7 +692,7 @@ bool load_runtime_config(void) {
                   (unsigned)MAX_KSTUFF_PAUSE_DELAY_SECONDS);
         continue;
       }
-      g_runtime_cfg.kstuff_pause_delay_direct_seconds = u32;
+      state->cfg.kstuff_pause_delay_direct_seconds = u32;
       continue;
     }
 
@@ -598,7 +702,7 @@ bool load_runtime_config(void) {
                   value);
         continue;
       }
-      g_runtime_cfg.exfat_backend = backend;
+      state->cfg.exfat_backend = backend;
       continue;
     }
 
@@ -608,16 +712,16 @@ bool load_runtime_config(void) {
                   value);
         continue;
       }
-      g_runtime_cfg.ufs_backend = backend;
+      state->cfg.ufs_backend = backend;
       continue;
     }
 
     if (strcasecmp(key, "scanpath") == 0) {
       if (!has_custom_scanpaths) {
-        clear_runtime_scan_paths();
+        clear_runtime_scan_paths(state);
         has_custom_scanpaths = true;
       }
-      if (!add_runtime_scan_path(value)) {
+      if (!add_runtime_scan_path(state, value)) {
         log_debug("  [CFG] invalid scanpath at line %d: %s=%s", line_no, key,
                   value);
       }
@@ -643,42 +747,42 @@ bool load_runtime_config(void) {
     }
 
     if (strcasecmp(key, "lvd_exfat_sector_size") == 0) {
-      g_runtime_cfg.lvd_sector_exfat = u32;
+      state->cfg.lvd_sector_exfat = u32;
     } else if (strcasecmp(key, "lvd_ufs_sector_size") == 0) {
-      g_runtime_cfg.lvd_sector_ufs = u32;
+      state->cfg.lvd_sector_ufs = u32;
     } else if (strcasecmp(key, "lvd_pfs_sector_size") == 0) {
-      g_runtime_cfg.lvd_sector_pfs = u32;
+      state->cfg.lvd_sector_pfs = u32;
     } else if (strcasecmp(key, "md_exfat_sector_size") == 0) {
-      g_runtime_cfg.md_sector_exfat = u32;
+      state->cfg.md_sector_exfat = u32;
     } else if (strcasecmp(key, "md_ufs_sector_size") == 0) {
-      g_runtime_cfg.md_sector_ufs = u32;
+      state->cfg.md_sector_ufs = u32;
     }
   }
 
   fclose(f);
 
-  if (has_custom_scanpaths && g_scan_path_count == 0) {
+  if (has_custom_scanpaths && state->scan_path_count == 0) {
     log_debug("  [CFG] no valid scanpath entries, using defaults");
-    init_runtime_scan_paths_defaults();
+    init_runtime_scan_paths_defaults(state);
   } else {
-    (void)add_runtime_scan_path(IMAGE_MOUNT_BASE);
+    (void)add_runtime_scan_path(state, IMAGE_MOUNT_BASE);
   }
 
   if (legacy_recursive_scan_requested) {
-    g_runtime_cfg.scan_depth = 2u;
-    g_runtime_cfg.legacy_recursive_scan_forced = true;
+    state->cfg.scan_depth = 2u;
+    state->cfg.legacy_recursive_scan_forced = true;
     log_debug("  [CFG] recursive_scan=1 is deprecated; forcing scan_depth=2");
   }
 
   int image_rule_count = 0;
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
-    if (g_image_mode_rules[k].valid)
+    if (state->image_mode_rules[k].valid)
       image_rule_count++;
   }
 
   int kstuff_delay_rule_count = 0;
   for (int k = 0; k < MAX_KSTUFF_TITLE_RULES; k++) {
-    if (g_kstuff_delay_rules[k].valid)
+    if (state->kstuff_delay_rules[k].valid)
       kstuff_delay_rule_count++;
   }
 
@@ -690,25 +794,62 @@ bool load_runtime_config(void) {
             "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u) "
             "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d "
             "kstuff_no_pause=%d kstuff_delay_rules=%d",
-            g_runtime_cfg.debug_enabled ? 1 : 0,
-            g_runtime_cfg.quiet_mode ? 1 : 0,
-            g_runtime_cfg.mount_read_only ? 1 : 0,
-            g_runtime_cfg.force_mount ? 1 : 0,
-            g_runtime_cfg.scan_depth,
-            g_runtime_cfg.legacy_recursive_scan_forced ? 1 : 0,
-            g_runtime_cfg.backport_fakelib_enabled ? 1 : 0,
-            g_runtime_cfg.kstuff_game_auto_toggle ? 1 : 0,
-            g_runtime_cfg.kstuff_pause_delay_image_seconds,
-            g_runtime_cfg.kstuff_pause_delay_direct_seconds,
-            attach_backend_name(g_runtime_cfg.exfat_backend),
-            attach_backend_name(g_runtime_cfg.ufs_backend),
-            g_runtime_cfg.lvd_sector_exfat, g_runtime_cfg.lvd_sector_ufs,
-            g_runtime_cfg.lvd_sector_pfs, g_runtime_cfg.md_sector_exfat,
-            g_runtime_cfg.md_sector_ufs,
-            g_runtime_cfg.scan_interval_us / 1000000u,
-            g_runtime_cfg.stability_wait_seconds, g_scan_path_count,
-            image_rule_count, g_kstuff_no_pause_title_count,
+            state->cfg.debug_enabled ? 1 : 0, state->cfg.quiet_mode ? 1 : 0,
+            state->cfg.mount_read_only ? 1 : 0,
+            state->cfg.force_mount ? 1 : 0, state->cfg.scan_depth,
+            state->cfg.legacy_recursive_scan_forced ? 1 : 0,
+            state->cfg.backport_fakelib_enabled ? 1 : 0,
+            state->cfg.kstuff_game_auto_toggle ? 1 : 0,
+            state->cfg.kstuff_pause_delay_image_seconds,
+            state->cfg.kstuff_pause_delay_direct_seconds,
+            attach_backend_name(state->cfg.exfat_backend),
+            attach_backend_name(state->cfg.ufs_backend),
+            state->cfg.lvd_sector_exfat, state->cfg.lvd_sector_ufs,
+            state->cfg.lvd_sector_pfs, state->cfg.md_sector_exfat,
+            state->cfg.md_sector_ufs, state->cfg.scan_interval_us / 1000000u,
+            state->cfg.stability_wait_seconds, state->scan_path_count,
+            image_rule_count, state->kstuff_no_pause_title_count,
             kstuff_delay_rule_count);
 
+  return CONFIG_LOAD_OK;
+}
+
+bool load_runtime_config(void) {
+  bool loaded =
+      load_runtime_config_state(&g_runtime_state_slots[0]) == CONFIG_LOAD_OK;
+  activate_runtime_config_state(0);
+  g_config_file_stamp = read_config_file_stamp();
+  return loaded;
+}
+
+bool reload_runtime_config_if_changed(bool *reloaded_out) {
+  ensure_runtime_config_ready();
+  if (reloaded_out)
+    *reloaded_out = false;
+
+  config_file_stamp_t new_stamp = read_config_file_stamp();
+  if (config_file_stamp_equals(&new_stamp, &g_config_file_stamp))
+    return true;
+
+  const runtime_config_state_t *current = active_runtime_state();
+  runtime_config_state_t *parsed = &g_runtime_state_slots[RUNTIME_CONFIG_PARSE_SLOT];
+  config_load_status_t status = load_runtime_config_state(parsed);
+  if (status == CONFIG_LOAD_ERROR)
+    return false;
+
+  int current_slot = atomic_load_explicit(&g_runtime_state_active_index,
+                                          memory_order_acquire);
+  int candidate_slot = (current_slot == 0) ? 1 : 0;
+  runtime_config_state_t *candidate = &g_runtime_state_slots[candidate_slot];
+  memcpy(candidate, current, sizeof(*candidate));
+  apply_reloadable_runtime_fields(candidate, parsed);
+
+  g_config_file_stamp = new_stamp;
+  if (runtime_config_states_equal(candidate, current))
+    return true;
+
+  activate_runtime_config_state(candidate_slot);
+  if (reloaded_out)
+    *reloaded_out = true;
   return true;
 }

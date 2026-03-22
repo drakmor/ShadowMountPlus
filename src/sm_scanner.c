@@ -5,9 +5,12 @@
 #include <sys/event.h>
 
 #include "sm_config_mount.h"
+#include "sm_fakelib.h"
 #include "sm_filesystem.h"
+#include "sm_game_lifecycle.h"
 #include "sm_image.h"
 #include "sm_install.h"
+#include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_path_utils.h"
@@ -22,6 +25,8 @@
 #define SCANNER_EVENT_BATCH 32
 #define SCANNER_EVENT_DRAIN_BATCHES 8
 #define SCANNER_WATCH_INDEX_NONE ((size_t)-1)
+#define SCANNER_CONFIG_RELOAD_DEBOUNCE_US 250000ull
+#define SCANNER_CONFIG_PROBE_INTERVAL_US 10000000ull
 
 typedef enum {
   SCANNER_WATCH_SCAN_ROOT = 0,
@@ -52,6 +57,7 @@ typedef struct {
 
 static int g_scanner_wake_pipe[2] = {-1, -1};
 static int g_scanner_control_dir_fd = -1;
+static int g_scanner_config_fd = -1;
 static volatile sig_atomic_t g_scanner_wake_write_fd = -1;
 static scanner_watch_entry_t *g_scanner_watch_entries = NULL;
 static size_t g_scanner_watch_count = 0;
@@ -60,6 +66,9 @@ static size_t g_scanner_root_watch_heads[MAX_SCAN_PATHS];
 static size_t *g_scanner_watch_fd_index = NULL;
 static size_t g_scanner_watch_fd_index_capacity = 0;
 static scanner_root_state_t g_scanner_root_states[MAX_SCAN_PATHS];
+static bool g_scanner_config_reload_pending = false;
+static uint64_t g_scanner_config_reload_ready_after_us = 0;
+static uint64_t g_scanner_config_probe_due_us = 0;
 
 static uint64_t scanner_stability_wait_us(void) {
   return (uint64_t)runtime_config()->stability_wait_seconds * 1000000ull;
@@ -67,6 +76,16 @@ static uint64_t scanner_stability_wait_us(void) {
 
 static uint64_t scanner_full_resync_interval_us(void) {
   return (uint64_t)runtime_config()->scan_interval_us;
+}
+
+static void schedule_config_reload(uint64_t now_us) {
+  g_scanner_config_reload_pending = true;
+  g_scanner_config_reload_ready_after_us =
+      now_us + SCANNER_CONFIG_RELOAD_DEBOUNCE_US;
+}
+
+static void schedule_config_probe(uint64_t now_us) {
+  g_scanner_config_probe_due_us = now_us + SCANNER_CONFIG_PROBE_INTERVAL_US;
 }
 
 static bool set_fd_nonblocking(int fd) {
@@ -110,6 +129,13 @@ static void close_scanner_control_dir(void) {
   if (g_scanner_control_dir_fd >= 0) {
     close(g_scanner_control_dir_fd);
     g_scanner_control_dir_fd = -1;
+  }
+}
+
+static void close_scanner_config_file(void) {
+  if (g_scanner_config_fd >= 0) {
+    close(g_scanner_config_fd);
+    g_scanner_config_fd = -1;
   }
 }
 
@@ -161,6 +187,12 @@ static bool ensure_scanner_watch_capacity(size_t needed_count) {
   g_scanner_watch_entries = new_entries;
   g_scanner_watch_capacity = new_capacity;
   return true;
+}
+
+static void clear_scanner_config_reload_state(void) {
+  g_scanner_config_reload_pending = false;
+  g_scanner_config_reload_ready_after_us = 0;
+  g_scanner_config_probe_due_us = 0;
 }
 
 static size_t scanner_watch_fd_hash(uintptr_t ident) {
@@ -699,6 +731,55 @@ static bool reopen_control_dir_watch(int kq) {
   return register_control_dir_watch(kq);
 }
 
+static void register_config_file_watch(int kq, uint64_t now_us) {
+  if (g_scanner_config_fd < 0)
+    return;
+
+  struct kevent kev;
+  EV_SET(&kev, (uintptr_t)g_scanner_config_fd, EVFILT_VNODE,
+         EV_ADD | EV_ENABLE | EV_CLEAR,
+         NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_DELETE | NOTE_RENAME |
+             NOTE_REVOKE,
+         0, NULL);
+  if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) {
+    log_debug("  [CFG] config watcher registration failed: %s",
+              strerror(errno));
+    close_scanner_config_file();
+    schedule_config_probe(now_us);
+    return;
+  }
+
+  g_scanner_config_probe_due_us = 0;
+}
+
+static void reopen_config_file_watch(int kq, uint64_t now_us) {
+  close_scanner_config_file();
+
+  g_scanner_config_fd = open(CONFIG_FILE, O_RDONLY);
+  if (g_scanner_config_fd < 0) {
+    if (errno != ENOENT) {
+      log_debug("  [CFG] config watcher unavailable for %s: %s", CONFIG_FILE,
+                strerror(errno));
+    }
+    schedule_config_probe(now_us);
+    return;
+  }
+
+  register_config_file_watch(kq, now_us);
+}
+
+static void apply_runtime_config_reload_effects(const runtime_config_t *old_cfg,
+                                                const runtime_config_t *new_cfg) {
+  if (old_cfg->backport_fakelib_enabled && !new_cfg->backport_fakelib_enabled)
+    sm_fakelib_game_shutdown();
+
+  sm_kstuff_on_config_reload();
+
+  if (!refresh_game_lifecycle_watcher()) {
+    log_debug("  [CFG] lifecycle watcher refresh failed after config reload");
+  }
+}
+
 static bool run_full_scan_cycle(bool startup_sync, const char *reason,
                                 bool *unstable_found_out) {
   scan_candidate_t candidates[MAX_PENDING];
@@ -774,6 +855,16 @@ static int find_pending_cleanup_scan_root(void) {
   return -1;
 }
 
+static bool config_reload_due(uint64_t now_us) {
+  return g_scanner_config_reload_pending &&
+         now_us >= g_scanner_config_reload_ready_after_us;
+}
+
+static bool config_probe_due(uint64_t now_us) {
+  return g_scanner_config_fd < 0 && g_scanner_config_probe_due_us != 0 &&
+         now_us >= g_scanner_config_probe_due_us;
+}
+
 static int find_due_dirty_scan_root(uint64_t now_us) {
   int selected_root = -1;
   uint64_t selected_deadline = 0;
@@ -795,6 +886,17 @@ static int find_due_dirty_scan_root(uint64_t now_us) {
 
 static uint64_t compute_next_scan_deadline_us(uint64_t full_resync_due_us) {
   uint64_t next_deadline = full_resync_due_us;
+
+  if (g_scanner_config_reload_pending &&
+      (next_deadline == 0 ||
+       g_scanner_config_reload_ready_after_us < next_deadline)) {
+    next_deadline = g_scanner_config_reload_ready_after_us;
+  }
+
+  if (g_scanner_config_fd < 0 && g_scanner_config_probe_due_us != 0 &&
+      (next_deadline == 0 || g_scanner_config_probe_due_us < next_deadline)) {
+    next_deadline = g_scanner_config_probe_due_us;
+  }
 
   for (int i = 0; i < get_scan_path_count(); i++) {
     const scanner_root_state_t *state = &g_scanner_root_states[i];
@@ -859,6 +961,14 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
       continue;
     }
 
+    if (event->ident == (uintptr_t)g_scanner_config_fd) {
+      if ((event->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0)
+        reopen_config_file_watch(kq, now_us);
+      if (g_scanner_config_fd >= 0)
+        schedule_config_reload(now_us);
+      continue;
+    }
+
     scanner_watch_entry_t *watch_entry =
         find_scanner_watch_entry_by_fd(event->ident);
     if (!watch_entry)
@@ -906,8 +1016,10 @@ static void request_scanner_shutdown(const char *reason) {
 bool sm_scanner_init(void) {
   close_scanner_wake_pipe();
   close_scanner_control_dir();
+  close_scanner_config_file();
   clear_scanner_watch_entries();
   reset_scanner_root_states();
+  clear_scanner_config_reload_state();
 
   if (pipe(g_scanner_wake_pipe) != 0) {
     log_debug("  [SCAN] wake pipe creation failed: %s", strerror(errno));
@@ -928,6 +1040,14 @@ bool sm_scanner_init(void) {
     log_debug("  [SCAN] control dir watch unavailable for %s: %s", LOG_DIR,
               strerror(errno));
   }
+
+  g_scanner_config_fd = open(CONFIG_FILE, O_RDONLY);
+  if (g_scanner_config_fd < 0 && errno != ENOENT) {
+    log_debug("  [CFG] config watch unavailable for %s: %s", CONFIG_FILE,
+              strerror(errno));
+  }
+  if (g_scanner_config_fd < 0)
+    schedule_config_probe(monotonic_time_us());
 
   return true;
 }
@@ -975,9 +1095,11 @@ void sm_scanner_run_loop(void) {
     return;
   }
 
+  register_config_file_watch(kq, monotonic_time_us());
   if (!register_control_dir_watch(kq) || !rebuild_all_scan_root_watch_trees(kq)) {
     close(kq);
     clear_scanner_watch_entries();
+    close_scanner_config_file();
     request_scanner_shutdown("scanner watcher initialization failed");
     return;
   }
@@ -1016,6 +1138,33 @@ void sm_scanner_run_loop(void) {
     }
 
     uint64_t now_us = monotonic_time_us();
+    if (config_probe_due(now_us)) {
+      g_scanner_config_probe_due_us = 0;
+      reopen_config_file_watch(kq, now_us);
+      if (g_scanner_config_fd >= 0)
+        schedule_config_reload(now_us);
+      continue;
+    }
+
+    if (config_reload_due(now_us)) {
+      g_scanner_config_reload_pending = false;
+      g_scanner_config_reload_ready_after_us = 0;
+
+      runtime_config_t old_cfg = *runtime_config();
+      bool reloaded = false;
+      if (!reload_runtime_config_if_changed(&reloaded)) {
+        log_debug("  [CFG] runtime config reload failed");
+      } else if (reloaded) {
+        const runtime_config_t *new_cfg = runtime_config();
+        apply_runtime_config_reload_effects(&old_cfg, new_cfg);
+        notify_system("ShadowMount+: config reloaded.");
+        log_debug("  [CFG] runtime config reloaded");
+        now_us = monotonic_time_us();
+        next_full_resync_us = now_us + scanner_full_resync_interval_us();
+      }
+      continue;
+    }
+
     if (now_us >= next_full_resync_us) {
       bool unstable_found = false;
       if (!run_full_scan_cycle(false, NULL, &unstable_found))
@@ -1115,7 +1264,9 @@ void sm_scanner_run_loop(void) {
 
 void sm_scanner_shutdown(void) {
   clear_scanner_watch_entries();
+  close_scanner_config_file();
   close_scanner_control_dir();
   close_scanner_wake_pipe();
   reset_scanner_root_states();
+  clear_scanner_config_reload_state();
 }

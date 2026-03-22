@@ -21,6 +21,7 @@ typedef struct {
   bool focus_override_active;
   pid_t pid;
   uint32_t app_id;
+  uint64_t launch_time_us;
   uint64_t pause_deadline_us;
   char title_id[MAX_TITLE_ID];
 } kstuff_game_entry_t;
@@ -40,8 +41,12 @@ typedef struct {
 static kstuff_state_t g_kstuff;
 static _Atomic uint32_t g_pending_app_focus_id;
 static _Atomic bool g_pending_app_focus_valid;
+static _Atomic bool g_pending_config_reload;
 
 static bool refresh_kstuff_support_state(void);
+static uint32_t get_pause_delay_seconds_for_title(const char *title_id,
+                                                  bool *image_backed_out);
+static void restore_kstuff_if_needed(const char *reason);
 
 static bool resolve_kstuff_sysentvec_addrs(intptr_t *ps5_out, intptr_t *ps4_out) {
   if (!ps5_out || !ps4_out)
@@ -205,6 +210,47 @@ static bool apply_kstuff_enabled_state(bool enabled, bool notify_user,
 static void mark_restore_needed(void) {
   g_kstuff.restore_on_empty = true;
   g_kstuff.restore_retry_us = 0;
+}
+
+static bool tracked_game_requires_restore(void) {
+  return g_kstuff.restore_on_empty || g_kstuff.game.focus_override_active;
+}
+
+static void apply_kstuff_config_reload(void) {
+  if (!runtime_config()->kstuff_game_auto_toggle) {
+    sm_kstuff_game_shutdown();
+    return;
+  }
+
+  if (!g_kstuff.game.active)
+    return;
+
+  if (is_kstuff_pause_disabled_for_title(g_kstuff.game.title_id)) {
+    bool restore_needed = tracked_game_requires_restore();
+    log_debug("  [KSTUFF] cleared tracked game by config reload: %s",
+              g_kstuff.game.title_id);
+    memset(&g_kstuff.game, 0, sizeof(g_kstuff.game));
+    if (restore_needed) {
+      mark_restore_needed();
+      restore_kstuff_if_needed("config reload");
+    }
+    return;
+  }
+
+  if (g_kstuff.game.pause_applied)
+    return;
+
+  bool image_backed = false;
+  uint32_t delay_seconds =
+      get_pause_delay_seconds_for_title(g_kstuff.game.title_id, &image_backed);
+  g_kstuff.game.image_backed = image_backed;
+  g_kstuff.game.pause_deadline_us =
+      g_kstuff.game.launch_time_us == 0
+          ? 0
+          : g_kstuff.game.launch_time_us + (uint64_t)delay_seconds * 1000000ull;
+  log_debug("  [KSTUFF] updated tracked game config: %s source=%s pause_delay=%us",
+            g_kstuff.game.title_id, image_backed ? "image" : "direct",
+            delay_seconds);
 }
 
 static uint32_t get_pause_delay_seconds_for_title(const char *title_id,
@@ -472,12 +518,15 @@ void sm_kstuff_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id,
       return;
     }
 
+    bool restore_needed = tracked_game_requires_restore();
     log_debug("  [KSTUFF] handoff tracked game pid=%ld (%s) -> pid=%ld (%s)",
               (long)g_kstuff.game.pid, g_kstuff.game.title_id, (long)pid,
               title_id);
     memset(&g_kstuff.game, 0, sizeof(g_kstuff.game));
-    mark_restore_needed();
-    restore_kstuff_if_needed("tracked game handoff");
+    if (restore_needed) {
+      mark_restore_needed();
+      restore_kstuff_if_needed("tracked game handoff");
+    }
   }
 
   if (is_kstuff_pause_disabled_for_title(title_id)) {
@@ -498,6 +547,7 @@ void sm_kstuff_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id,
   g_kstuff.game.focus_override_active = false;
   g_kstuff.game.pid = pid;
   g_kstuff.game.app_id = app_id;
+  g_kstuff.game.launch_time_us = base_time_us;
   g_kstuff.game.pause_deadline_us =
       base_time_us == 0 ? 0 : base_time_us + (uint64_t)delay_seconds * 1000000ull;
   (void)strlcpy(g_kstuff.game.title_id, title_id, sizeof(g_kstuff.game.title_id));
@@ -516,15 +566,20 @@ void sm_kstuff_game_on_exit(pid_t pid) {
   if (!g_kstuff.game.active || g_kstuff.game.pid != pid)
     return;
 
+  bool restore_needed = tracked_game_requires_restore();
   log_debug("  [KSTUFF] game stopped: %s pid=%ld",
             g_kstuff.game.title_id, (long)pid);
   memset(&g_kstuff.game, 0, sizeof(g_kstuff.game));
-  if (!g_kstuff.game.active)
+  if (restore_needed) {
     mark_restore_needed();
-  restore_kstuff_if_needed("tracked game exit");
+    restore_kstuff_if_needed("tracked game exit");
+  }
 }
 
 void sm_kstuff_game_poll(void) {
+  if (atomic_exchange(&g_pending_config_reload, false))
+    apply_kstuff_config_reload();
+
   if (!sm_kstuff_game_feature_enabled())
     return;
 
@@ -537,14 +592,23 @@ void sm_kstuff_game_poll(void) {
 }
 
 void sm_kstuff_game_shutdown(void) {
+  bool restore_needed = tracked_game_requires_restore();
   memset(&g_kstuff.game, 0, sizeof(g_kstuff.game));
-  restore_kstuff_if_needed("watcher shutdown");
+  if (restore_needed) {
+    mark_restore_needed();
+    restore_kstuff_if_needed("watcher shutdown");
+  }
+}
+
+void sm_kstuff_on_config_reload(void) {
+  atomic_store(&g_pending_config_reload, true);
 }
 
 void sm_kstuff_init(void) {
   memset(&g_kstuff, 0, sizeof(g_kstuff));
   atomic_store(&g_pending_app_focus_id, 0);
   atomic_store(&g_pending_app_focus_valid, false);
+  atomic_store(&g_pending_config_reload, false);
 
   if (!resolve_kstuff_sysentvec_addrs(&g_kstuff.sysentvec_ps5,
                                       &g_kstuff.sysentvec_ps4)) {
@@ -570,5 +634,6 @@ void sm_kstuff_shutdown(void) {
   sm_kstuff_game_shutdown();
   atomic_store(&g_pending_app_focus_id, 0);
   atomic_store(&g_pending_app_focus_valid, false);
+  atomic_store(&g_pending_config_reload, false);
   memset(&g_kstuff, 0, sizeof(g_kstuff));
 }
