@@ -1113,8 +1113,8 @@ void sm_scanner_run_loop(void) {
       break;
     }
 
-    const char *scan_reason = NULL;
-    if (consume_scan_now_request(&scan_reason)) {
+    char scan_reason[128];
+    if (consume_scan_now_request(scan_reason, sizeof(scan_reason))) {
       bool unstable_found = false;
       if (!run_full_scan_cycle(false, scan_reason, &unstable_found))
         break;

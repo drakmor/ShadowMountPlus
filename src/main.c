@@ -1,5 +1,6 @@
 #include "sm_platform.h"
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <sys/sysctl.h>
 
@@ -34,9 +35,17 @@
 
 static volatile sig_atomic_t g_stop_requested = 0;
 static atomic_bool g_shutdown_on_going_stop_requested = false;
-static atomic_bool g_scan_now_requested = false;
 static _Atomic(uintptr_t) g_shutdown_stop_reason_bits = 0;
-static _Atomic(uintptr_t) g_scan_now_reason_bits = 0;
+
+typedef struct {
+  pthread_mutex_t reason_mutex;
+  char reason[128];
+} immediate_scan_request_t;
+
+static immediate_scan_request_t g_scan_now = {
+    .reason_mutex = PTHREAD_MUTEX_INITIALIZER,
+    .reason = {0},
+};
 
 static void on_signal(int sig) {
   (void)sig;
@@ -85,32 +94,37 @@ void request_shutdown_stop(const char *reason) {
   sm_scanner_wake();
 }
 
-static char g_scan_now_reason[128];
-
 void request_scan_now(const char *reason) {
   const char *resolved_reason =
       (reason && reason[0] != '\0') ? reason : "unknown scan source";
-  bool already_requested =
-      atomic_exchange_explicit(&g_scan_now_requested, true, memory_order_acq_rel);
-  if (!already_requested) {
-    (void)strlcpy(g_scan_now_reason, resolved_reason, sizeof(g_scan_now_reason));
-    atomic_store_explicit(&g_scan_now_reason_bits, (uintptr_t)g_scan_now_reason,
-                          memory_order_release);
-    log_debug("[SCAN] immediate scan requested by %s", g_scan_now_reason);
+  char log_reason[sizeof(g_scan_now.reason)];
+  bool should_log = false;
+
+  pthread_mutex_lock(&g_scan_now.reason_mutex);
+  if (g_scan_now.reason[0] == '\0') {
+    (void)strlcpy(g_scan_now.reason, resolved_reason, sizeof(g_scan_now.reason));
+    (void)strlcpy(log_reason, g_scan_now.reason, sizeof(log_reason));
+    should_log = true;
   }
+  pthread_mutex_unlock(&g_scan_now.reason_mutex);
+
+  if (should_log)
+    log_debug("[SCAN] immediate scan requested by %s", log_reason);
   sm_scanner_wake();
 }
 
-bool consume_scan_now_request(const char **reason_out) {
-  if (!atomic_load_explicit(&g_scan_now_requested, memory_order_acquire))
+bool consume_scan_now_request(char *reason_out, size_t reason_out_size) {
+  if (reason_out && reason_out_size > 0)
+    reason_out[0] = '\0';
+  pthread_mutex_lock(&g_scan_now.reason_mutex);
+  if (g_scan_now.reason[0] == '\0') {
+    pthread_mutex_unlock(&g_scan_now.reason_mutex);
     return false;
-
-  if (reason_out)
-    *reason_out = (const char *)atomic_load_explicit(&g_scan_now_reason_bits,
-                                                     memory_order_acquire);
-  atomic_store_explicit(&g_scan_now_reason_bits, (uintptr_t)0,
-                        memory_order_release);
-  atomic_store_explicit(&g_scan_now_requested, false, memory_order_release);
+  }
+  if (reason_out && reason_out_size > 0)
+    (void)strlcpy(reason_out, g_scan_now.reason, reason_out_size);
+  g_scan_now.reason[0] = '\0';
+  pthread_mutex_unlock(&g_scan_now.reason_mutex);
   return true;
 }
 
@@ -120,8 +134,6 @@ bool sleep_with_stop_check(unsigned int total_us) {
   while (slept < total_us) {
     if (should_stop_requested())
       return true;
-    if (atomic_load_explicit(&g_scan_now_requested, memory_order_acquire))
-      return false;
     unsigned int remain = total_us - slept;
     unsigned int step = remain < chunk_us ? remain : chunk_us;
     sceKernelUsleep(step);

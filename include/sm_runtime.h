@@ -2,6 +2,7 @@
 #define SM_RUNTIME_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <sys/types.h>
 
 // Install process signal handlers used for graceful shutdown.
@@ -14,8 +15,8 @@ bool should_stop_requested(void);
 void request_shutdown_stop(const char *reason);
 // Request an immediate scan cycle with a descriptive source string.
 void request_scan_now(const char *reason);
-// Consume a pending immediate scan request, returning true if one was pending.
-bool consume_scan_now_request(const char **reason_out);
+// Consume a pending immediate scan request and copy its reason into caller storage.
+bool consume_scan_now_request(char *reason_out, size_t reason_out_size);
 // Sleep in chunks and stop early if shutdown was requested.
 bool sleep_with_stop_check(unsigned int total_us);
 
