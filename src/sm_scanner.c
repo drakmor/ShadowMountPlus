@@ -59,6 +59,7 @@ static int g_scanner_wake_pipe[2] = {-1, -1};
 static int g_scanner_control_dir_fd = -1;
 static int g_scanner_config_fd = -1;
 static volatile sig_atomic_t g_scanner_wake_write_fd = -1;
+static scan_candidate_t g_scanner_scan_candidates[MAX_PENDING];
 static scanner_watch_entry_t *g_scanner_watch_entries = NULL;
 static size_t g_scanner_watch_count = 0;
 static size_t g_scanner_watch_capacity = 0;
@@ -782,8 +783,7 @@ static void apply_runtime_config_reload_effects(const runtime_config_t *old_cfg,
 
 static bool run_full_scan_cycle(bool startup_sync, const char *reason,
                                 bool *unstable_found_out) {
-  scan_candidate_t candidates[MAX_PENDING];
-  memset(candidates, 0, sizeof(candidates));
+  scan_candidate_t *candidates = g_scanner_scan_candidates;
 
   log_immediate_scan_reason(reason);
 
@@ -825,8 +825,7 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
 static bool run_targeted_scan_cycle(int scan_root_index,
                                     bool *unstable_found_out) {
   const char *scan_root = get_scan_path(scan_root_index);
-  scan_candidate_t candidates[MAX_PENDING];
-  memset(candidates, 0, sizeof(candidates));
+  scan_candidate_t *candidates = g_scanner_scan_candidates;
 
   log_debug("[SCAN] running targeted scan for %s", scan_root);
 

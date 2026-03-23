@@ -18,6 +18,14 @@
 #include "sm_image_cache.h"
 #include "sm_image.h"
 
+typedef struct {
+  char discovered_param_roots[MAX_PENDING][MAX_PATH];
+} scan_workspace_t;
+
+// Reuse the largest transient scan buffer instead of placing ~512 KiB of path
+// state on the stack each cycle.
+static scan_workspace_t g_scan_workspace;
+
 static bool is_under_discovered_param_root(
     const char *path, char discovered_param_roots[][MAX_PATH],
     int discovered_count) {
@@ -449,9 +457,7 @@ int collect_scan_candidates_for_scan_root(const char *scan_root,
   int candidate_count = 0;
   const struct AppDbTitleList *app_db_titles = NULL;
   bool app_db_titles_ready = get_app_db_title_list_cached(&app_db_titles);
-  char discovered_param_roots[MAX_PENDING][MAX_PATH];
   int discovered_param_root_count = 0;
-  memset(discovered_param_roots, 0, sizeof(discovered_param_roots));
 
   if (!app_db_titles_ready)
     log_debug("  [DB] app.db title list unavailable for this scan cycle");
@@ -459,7 +465,7 @@ int collect_scan_candidates_for_scan_root(const char *scan_root,
   collect_scan_candidates_from_root(scan_root, candidates, max_candidates,
                                     &candidate_count, app_db_titles,
                                     app_db_titles_ready,
-                                    discovered_param_roots,
+                                    g_scan_workspace.discovered_param_roots,
                                     &discovered_param_root_count,
                                     unstable_found_out);
 
@@ -474,9 +480,7 @@ int collect_scan_candidates(scan_candidate_t *candidates, int max_candidates,
   int candidate_count = 0;
   const struct AppDbTitleList *app_db_titles = NULL;
   bool app_db_titles_ready = get_app_db_title_list_cached(&app_db_titles);
-  char discovered_param_roots[MAX_PENDING][MAX_PATH];
   int discovered_param_root_count = 0;
-  memset(discovered_param_roots, 0, sizeof(discovered_param_roots));
 
   if (!app_db_titles_ready)
     log_debug("  [DB] app.db title list unavailable for this scan cycle");
@@ -485,9 +489,10 @@ int collect_scan_candidates(scan_candidate_t *candidates, int max_candidates,
     if (should_stop_requested())
       break;
     collect_scan_candidates_from_root(get_scan_path(i), candidates,
-                                      max_candidates, &candidate_count,
+                                      max_candidates,
+                                      &candidate_count,
                                       app_db_titles, app_db_titles_ready,
-                                      discovered_param_roots,
+                                      g_scan_workspace.discovered_param_roots,
                                       &discovered_param_root_count,
                                       unstable_found_out);
   }
