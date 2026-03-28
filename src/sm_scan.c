@@ -184,6 +184,7 @@ static bool enqueue_directory_candidate(
     const char *full_path, scan_candidate_t *candidates, int max_candidates,
     int *candidate_count, const directory_candidate_info_t *info, bool installed,
     bool in_app_db, bool *unstable_found_out) {
+  char metadata_path[MAX_PATH];
   uint8_t failed_attempts = get_failed_mount_attempts(info->title_id);
   if (failed_attempts >= MAX_FAILED_MOUNT_ATTEMPTS) {
     log_debug("  [SKIP] mount/register retry limit reached (%u/%u): %s (%s)",
@@ -192,7 +193,15 @@ static bool enqueue_directory_candidate(
     return true;
   }
 
-  if (!wait_for_stability_fast(full_path, info->title_name)) {
+  int written =
+      snprintf(metadata_path, sizeof(metadata_path), "%s/sce_sys", full_path);
+  if (written < 0 || (size_t)written >= sizeof(metadata_path)) {
+    log_debug("  [SKIP] metadata path too long: %s (%s)", info->title_name,
+              full_path);
+    return true;
+  }
+
+  if (!wait_for_stability_fast(metadata_path, info->title_name)) {
     if (unstable_found_out)
       *unstable_found_out = true;
     log_debug("  [SKIP] source not stable yet: %s (%s)", info->title_name,

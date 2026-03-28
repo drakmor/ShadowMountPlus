@@ -87,6 +87,7 @@ Scan path behavior:
 - If `recursive_scan=1` is set, ShadowMount+ forces `scan_depth=2`.
 - Full scan loop runs every `scan_interval_seconds` (default: `10`).
 - Sources newer than `stability_wait_seconds` are deferred until stable (default: `10`).
+- Direct folder installs use `<game>/sce_sys` for this check; image and backport sources use the target path itself.
 
 Backport overlay behavior:
 - For each `scanpath`, use:
