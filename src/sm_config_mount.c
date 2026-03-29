@@ -230,7 +230,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.force_mount = false;
   state->cfg.backport_fakelib_enabled = true;
   state->cfg.kstuff_game_auto_toggle = true;
-  state->cfg.kstuff_crash_detection_enabled = true;
+  state->cfg.kstuff_crash_detection_enabled = false;
   state->cfg.legacy_recursive_scan_forced = false;
   state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
   state->cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
