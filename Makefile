@@ -1,7 +1,7 @@
 PS5_PAYLOAD_SDK ?= /opt/ps5-payload-sdk
 
 # Allow utility-only targets to run without the PS5 SDK toolchain present.
-ifeq ($(filter clean makezfs,$(MAKECMDGOALS)),)
+ifneq ($(filter-out clean makezfs,$(MAKECMDGOALS)),)
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 endif
 
