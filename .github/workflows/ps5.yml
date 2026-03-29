@@ -27,7 +27,7 @@ jobs:
       - name: Checkout pacbrew-repo
         uses: actions/checkout@v4
         with:
-          repository: ps5-payload-dev/pacbrew-repo
+          repository: EchoStretch/pacbrew-repo
           path: pacbrew-repo
 
       - name: Setup build environment
