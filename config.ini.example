@@ -27,8 +27,10 @@ force_mount=0
 # Per-image mount mode override by file name (can be repeated many times):
 # image_ro=<image_filename>
 # image_rw=<image_filename>
+# image_sector=<image_filename>:<sector_size>
 # image_ro=PPSA12345.ffpfs
 # image_rw=My Game Dump.exfat
+# image_sector=My Game Dump.exfat:65536
 
 # Scan depth relative to each scan root:
 # 1 -> scan only first-level subdirectories (default)

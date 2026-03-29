@@ -27,8 +27,20 @@ static uint32_t get_lvd_sector_size_fallback(image_fs_type_t fs_type) {
   }
 }
 
+static uint32_t get_image_sector_size_override_or_default(
+    const char *path, uint32_t fallback) {
+  uint32_t override = 0;
+  const char *filename = get_filename_component(path);
+  if (filename && filename[0] != '\0' &&
+      get_image_sector_size_override(filename, &override)) {
+    return override;
+  }
+  return fallback;
+}
+
 static uint32_t get_lvd_sector_size(const char *path, image_fs_type_t fs_type) {
-  uint32_t fallback = get_lvd_sector_size_fallback(fs_type);
+  uint32_t fallback = get_image_sector_size_override_or_default(
+      path, get_lvd_sector_size_fallback(fs_type));
   struct statfs sfs;
   if (statfs(path, &sfs) != 0)
     return fallback;
@@ -51,13 +63,23 @@ static uint32_t get_lvd_secondary_unit(const char *path,
 
 static uint32_t get_md_sector_size(image_fs_type_t fs_type) {
   const runtime_config_t *cfg = runtime_config();
+  uint32_t fallback = 0;
   switch (fs_type) {
   case IMAGE_FS_UFS:
-    return cfg->md_sector_ufs;
+    fallback = cfg->md_sector_ufs;
+    break;
   case IMAGE_FS_EXFAT:
   default:
-    return cfg->md_sector_exfat;
+    fallback = cfg->md_sector_exfat;
+    break;
   }
+  return fallback;
+}
+
+static uint32_t get_md_sector_size_for_path(const char *path,
+                                            image_fs_type_t fs_type) {
+  return get_image_sector_size_override_or_default(path,
+                                                   get_md_sector_size(fs_type));
 }
 
 static unsigned int get_md_attach_options(bool mount_read_only) {
@@ -245,7 +267,7 @@ static bool attach_md_backend(const char *file_path, image_fs_type_t fs_type,
   req.md_type = MD_VNODE;
   req.md_file = (char *)file_path;
   req.md_mediasize = file_size;
-  req.md_sectorsize = get_md_sector_size(fs_type);
+  req.md_sectorsize = get_md_sector_size_for_path(file_path, fs_type);
   req.md_options = get_md_attach_options(mount_read_only);
 
   int last_errno = 0;
@@ -661,22 +683,38 @@ static bool validate_mounted_image(const char *file_path, image_fs_type_t fs_typ
   }
 
   uint32_t min_device_sector =
-      (attach_backend == ATTACH_BACKEND_MD) ? get_md_sector_size(fs_type)
+      (attach_backend == ATTACH_BACKEND_MD) ? get_md_sector_size_for_path(file_path, fs_type)
                                             : get_lvd_sector_size(file_path,
                                                                   fs_type);
   uint64_t fs_block_size = (uint64_t)mounted_sfs.f_bsize;
   if (fs_block_size < (uint64_t)min_device_sector) {
+    uint32_t tuned_sector_size = 0;
+    bool autotuned =
+        fs_block_size <= UINT32_MAX &&
+        upsert_image_sector_size_autotune(get_filename_component(file_path),
+                                          (uint32_t)fs_block_size,
+                                          &tuned_sector_size);
     sm_error_set("IMG", EINVAL, file_path,
                  "Filesystem cluster size (%llu) is smaller than device "
                  "sector size (%u) for %s",
                  (unsigned long long)fs_block_size, min_device_sector, devname);
     log_debug("  [IMG][%s] %s", attach_backend_name(attach_backend),
               sm_last_error()->message);
-    notify_system("Image mount rejected:\n%s\nCluster size is too small "
-                  "(%llu < %u).\nUse a larger cluster size in the image or "
-                  "lower sector size in config.",
-                  file_path, (unsigned long long)fs_block_size,
-                  min_device_sector);
+    if (autotuned) {
+      log_debug("  [CFG] image sector autotuned: %s=%u",
+                get_filename_component(file_path), tuned_sector_size);
+      notify_system("Image mount rejected:\n%s\nCluster size is too small "
+                    "(%llu < %u).\nSaved image_sector override: %u.\nTry "
+                    "mounting again.",
+                    file_path, (unsigned long long)fs_block_size,
+                    min_device_sector, tuned_sector_size);
+    } else {
+      notify_system("Image mount rejected:\n%s\nCluster size is too small "
+                    "(%llu < %u).\nUse a larger cluster size in the image or "
+                    "lower sector size in config.",
+                    file_path, (unsigned long long)fs_block_size,
+                    min_device_sector);
+    }
     sm_error_mark_notified();
     (void)unmount_image(file_path, unit_id, attach_backend);
     errno = EINVAL;

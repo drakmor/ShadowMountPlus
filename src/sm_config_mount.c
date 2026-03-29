@@ -15,6 +15,9 @@ static const char *const k_default_scan_paths[] = SM_DEFAULT_SCAN_PATHS_INITIALI
 typedef struct {
   char filename[MAX_PATH];
   bool mount_read_only;
+  bool mount_mode_valid;
+  uint32_t sector_size;
+  bool sector_size_valid;
   bool valid;
 } image_mode_rule_t;
 
@@ -65,8 +68,22 @@ static bool normalize_title_id_value(const char *value,
                                      char out[MAX_TITLE_ID]);
 static config_load_status_t load_runtime_config_state(runtime_config_state_t *state);
 static bool parse_u32_ini(const char *value, uint32_t *out);
+static bool is_valid_sector_size(uint32_t size);
 static bool set_kstuff_pause_delay_override_rule(runtime_config_state_t *state,
                                                  const char *value);
+static bool normalize_image_filename_value(const char *value,
+                                           char out[MAX_PATH]);
+static bool set_image_sector_rule(runtime_config_state_t *state,
+                                  const char *value);
+static bool parse_image_sector_rule_value(const char *value,
+                                          char filename_out[MAX_PATH],
+                                          uint32_t *sector_size_out);
+static bool lookup_image_sector_override_in_file(const char *path,
+                                                 const char *filename,
+                                                 uint32_t *sector_size_out);
+static bool upsert_image_sector_override_in_file(const char *path,
+                                                 const char *filename,
+                                                 uint32_t sector_size);
 static bool parse_kstuff_delay_rule_value(const char *value,
                                           char title_id_out[MAX_TITLE_ID],
                                           uint32_t *delay_seconds_out);
@@ -329,12 +346,48 @@ bool get_image_mode_override(const char *filename, bool *mount_read_only_out) {
     return false;
 
   const runtime_config_state_t *state = active_runtime_state();
+  char normalized[MAX_PATH];
+  if (!normalize_image_filename_value(filename, normalized))
+    return false;
+
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
     if (!state->image_mode_rules[k].valid)
       continue;
-    if (strcasecmp(state->image_mode_rules[k].filename, filename) != 0)
+    if (!state->image_mode_rules[k].mount_mode_valid)
+      continue;
+    if (strcasecmp(state->image_mode_rules[k].filename, normalized) != 0)
       continue;
     *mount_read_only_out = state->image_mode_rules[k].mount_read_only;
+    return true;
+  }
+
+  return false;
+}
+
+bool get_image_sector_size_override(const char *filename,
+                                    uint32_t *sector_size_out) {
+  ensure_runtime_config_ready();
+  if (!filename || !sector_size_out)
+    return false;
+
+  if (lookup_image_sector_override_in_file(AUTOTUNE_FILE, filename,
+                                           sector_size_out)) {
+    return true;
+  }
+
+  const runtime_config_state_t *state = active_runtime_state();
+  char normalized[MAX_PATH];
+  if (!normalize_image_filename_value(filename, normalized))
+    return false;
+
+  for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
+    if (!state->image_mode_rules[k].valid)
+      continue;
+    if (!state->image_mode_rules[k].sector_size_valid)
+      continue;
+    if (strcasecmp(state->image_mode_rules[k].filename, normalized) != 0)
+      continue;
+    *sector_size_out = state->image_mode_rules[k].sector_size;
     return true;
   }
 
@@ -410,6 +463,28 @@ bool upsert_kstuff_autotune_pause_delay(const char *title_id,
   return true;
 }
 
+bool upsert_image_sector_size_autotune(const char *filename,
+                                       uint32_t sector_size,
+                                       uint32_t *sector_size_out) {
+  if (sector_size_out)
+    *sector_size_out = 0;
+  if (!is_valid_sector_size(sector_size))
+    return false;
+
+  char normalized_filename[MAX_PATH];
+  if (!normalize_image_filename_value(filename, normalized_filename))
+    return false;
+
+  if (!upsert_image_sector_override_in_file(AUTOTUNE_FILE, normalized_filename,
+                                            sector_size)) {
+    return false;
+  }
+
+  if (sector_size_out)
+    *sector_size_out = sector_size;
+  return true;
+}
+
 static bool normalize_title_id_value(const char *value,
                                      char out[MAX_TITLE_ID]) {
   if (!value || !out)
@@ -430,6 +505,23 @@ static bool normalize_title_id_value(const char *value,
   }
 
   out[len] = '\0';
+  return true;
+}
+
+static bool normalize_image_filename_value(const char *value,
+                                           char out[MAX_PATH]) {
+  if (!value || !out)
+    return false;
+
+  char local[MAX_PATH];
+  (void)strlcpy(local, value, sizeof(local));
+  char *trimmed = trim_ascii(local);
+  const char *filename = get_filename_component(trimmed);
+  size_t len = strlen(filename);
+  if (len == 0 || len >= MAX_PATH)
+    return false;
+
+  (void)strlcpy(out, filename, MAX_PATH);
   return true;
 }
 
@@ -471,6 +563,32 @@ static bool parse_kstuff_delay_rule_value(const char *value,
     return false;
   if (!parse_u32_ini(delay_value, delay_seconds_out) ||
       *delay_seconds_out > MAX_KSTUFF_PAUSE_DELAY_SECONDS) {
+    return false;
+  }
+
+  return true;
+}
+
+static bool parse_image_sector_rule_value(const char *value,
+                                          char filename_out[MAX_PATH],
+                                          uint32_t *sector_size_out) {
+  if (!value || !filename_out || !sector_size_out)
+    return false;
+
+  char local[MAX_PATH];
+  (void)strlcpy(local, value, sizeof(local));
+
+  char *sep = strrchr(local, ':');
+  if (!sep)
+    return false;
+  *sep = '\0';
+
+  char *filename = trim_ascii(local);
+  char *sector_value = trim_ascii(sep + 1);
+  if (!normalize_image_filename_value(filename, filename_out))
+    return false;
+  if (!parse_u32_ini(sector_value, sector_size_out) ||
+      !is_valid_sector_size(*sector_size_out)) {
     return false;
   }
 
@@ -533,6 +651,50 @@ static bool lookup_kstuff_delay_override_in_file(const char *path,
 
   fclose(f);
   return false;
+}
+
+static bool lookup_image_sector_override_in_file(const char *path,
+                                                 const char *filename,
+                                                 uint32_t *sector_size_out) {
+  if (!path || !filename || !sector_size_out)
+    return false;
+
+  char normalized_filename[MAX_PATH];
+  if (!normalize_image_filename_value(filename, normalized_filename))
+    return false;
+
+  FILE *f = fopen(path, "r");
+  if (!f)
+    return false;
+
+  bool found = false;
+  uint32_t last_sector_size = 0;
+  char line[512];
+  while (fgets(line, sizeof(line), f)) {
+    char *key = NULL;
+    char *value = NULL;
+    if (!parse_ini_line(line, &key, &value))
+      continue;
+    if (strcasecmp(key, "image_sector") != 0)
+      continue;
+
+    uint32_t sector_size = 0;
+    char parsed_filename[MAX_PATH];
+    if (!parse_image_sector_rule_value(value, parsed_filename, &sector_size))
+      continue;
+    if (strcasecmp(parsed_filename, normalized_filename) != 0)
+      continue;
+
+    last_sector_size = sector_size;
+    found = true;
+  }
+
+  fclose(f);
+  if (!found)
+    return false;
+
+  *sector_size_out = last_sector_size;
+  return true;
 }
 
 static bool upsert_kstuff_delay_override_in_file(const char *path,
@@ -632,6 +794,109 @@ write_failed:
   return false;
 }
 
+static bool upsert_image_sector_override_in_file(const char *path,
+                                                 const char *filename,
+                                                 uint32_t sector_size) {
+  if (!path || !filename || !is_valid_sector_size(sector_size))
+    return false;
+
+  char normalized_filename[MAX_PATH];
+  if (!normalize_image_filename_value(filename, normalized_filename))
+    return false;
+
+  char temp_path[MAX_PATH];
+  int written = snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
+  if (written <= 0 || (size_t)written >= sizeof(temp_path))
+    return false;
+
+  FILE *in = fopen(path, "r");
+  FILE *out = fopen(temp_path, "w");
+  if (!out) {
+    log_debug("  [CFG] autotune temp open failed: %s (%s)", temp_path,
+              strerror(errno));
+    if (in)
+      fclose(in);
+    return false;
+  }
+
+  bool found = false;
+  if (in) {
+    char line[512];
+    while (fgets(line, sizeof(line), in)) {
+      char original[sizeof(line)];
+      (void)strlcpy(original, line, sizeof(original));
+
+      char *key = NULL;
+      char *value = NULL;
+      if (!parse_ini_line(line, &key, &value)) {
+        if (fputs(original, out) == EOF)
+          goto write_failed;
+        continue;
+      }
+
+      if (strcasecmp(key, "image_sector") != 0) {
+        if (fputs(original, out) == EOF)
+          goto write_failed;
+        continue;
+      }
+
+      uint32_t parsed_sector = 0;
+      char parsed_filename[MAX_PATH];
+      if (!parse_image_sector_rule_value(value, parsed_filename,
+                                         &parsed_sector) ||
+          strcasecmp(parsed_filename, normalized_filename) != 0) {
+        if (fputs(original, out) == EOF)
+          goto write_failed;
+        continue;
+      }
+
+      if (!found) {
+        if (fprintf(out, "image_sector=%s:%u\n", normalized_filename,
+                    (unsigned)sector_size) < 0) {
+          goto write_failed;
+        }
+        found = true;
+      }
+    }
+
+    fclose(in);
+    in = NULL;
+  }
+
+  if (!found &&
+      fprintf(out, "image_sector=%s:%u\n", normalized_filename,
+              (unsigned)sector_size) < 0) {
+    goto write_failed;
+  }
+
+  if (fclose(out) != 0) {
+    out = NULL;
+    log_debug("  [CFG] autotune temp close failed: %s (%s)", temp_path,
+              strerror(errno));
+    unlink(temp_path);
+    return false;
+  }
+  out = NULL;
+
+  if (rename(temp_path, path) != 0) {
+    log_debug("  [CFG] autotune replace failed: %s -> %s (%s)", temp_path, path,
+              strerror(errno));
+    unlink(temp_path);
+    return false;
+  }
+
+  return true;
+
+write_failed:
+  log_debug("  [CFG] autotune temp write failed: %s (%s)", temp_path,
+            strerror(errno));
+  if (in)
+    fclose(in);
+  fclose(out);
+  unlink(temp_path);
+  return false;
+}
+
 static bool parse_backend_ini(const char *value, attach_backend_t *out) {
   if (!value || !out)
     return false;
@@ -666,25 +931,61 @@ static bool is_valid_sector_size(uint32_t size) {
 
 static bool set_image_mode_rule(runtime_config_state_t *state, const char *path,
                                 bool mount_read_only) {
-  const char *filename = get_filename_component(path);
-  if (filename[0] == '\0')
+  char normalized[MAX_PATH];
+  if (!normalize_image_filename_value(path, normalized))
     return false;
 
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
     if (!state->image_mode_rules[k].valid)
       continue;
-    if (strcasecmp(state->image_mode_rules[k].filename, filename) != 0)
+    if (strcasecmp(state->image_mode_rules[k].filename, normalized) != 0)
       continue;
     state->image_mode_rules[k].mount_read_only = mount_read_only;
+    state->image_mode_rules[k].mount_mode_valid = true;
     return true;
   }
 
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
     if (state->image_mode_rules[k].valid)
       continue;
-    (void)strlcpy(state->image_mode_rules[k].filename, filename,
+    (void)strlcpy(state->image_mode_rules[k].filename, normalized,
                   sizeof(state->image_mode_rules[k].filename));
     state->image_mode_rules[k].mount_read_only = mount_read_only;
+    state->image_mode_rules[k].mount_mode_valid = true;
+    state->image_mode_rules[k].valid = true;
+    return true;
+  }
+
+  return false;
+}
+
+static bool set_image_sector_rule(runtime_config_state_t *state,
+                                  const char *value) {
+  if (!state || !value)
+    return false;
+
+  char normalized[MAX_PATH];
+  uint32_t sector_size = 0;
+  if (!parse_image_sector_rule_value(value, normalized, &sector_size))
+    return false;
+
+  for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
+    if (!state->image_mode_rules[k].valid)
+      continue;
+    if (strcasecmp(state->image_mode_rules[k].filename, normalized) != 0)
+      continue;
+    state->image_mode_rules[k].sector_size = sector_size;
+    state->image_mode_rules[k].sector_size_valid = true;
+    return true;
+  }
+
+  for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
+    if (state->image_mode_rules[k].valid)
+      continue;
+    (void)strlcpy(state->image_mode_rules[k].filename, normalized,
+                  sizeof(state->image_mode_rules[k].filename));
+    state->image_mode_rules[k].sector_size = sector_size;
+    state->image_mode_rules[k].sector_size_valid = true;
     state->image_mode_rules[k].valid = true;
     return true;
   }
@@ -824,6 +1125,15 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       if (!set_image_mode_rule(state, value, rule_read_only)) {
         log_debug("  [CFG] invalid image mode rule at line %d: %s=%s", line_no,
                   key, value);
+      }
+      continue;
+    }
+
+    if (strcasecmp(key, "image_sector") == 0) {
+      if (!set_image_sector_rule(state, value)) {
+        log_debug("  [CFG] invalid image sector rule at line %d: %s=%s "
+                  "(format: IMAGE_FILENAME:SECTOR_SIZE)",
+                  line_no, key, value);
       }
       continue;
     }
