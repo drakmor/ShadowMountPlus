@@ -413,6 +413,7 @@ static bool inspect_title_stack(const char *title_id, const char *source_path,
                 state_out->system_ex_path, mntbuf[i].f_fstypename,
                 mntbuf[i].f_mntfromname, (unsigned long)mntbuf[i].f_flags);
     }
+    errno = inspect_errno;
     return false;
   }
 
@@ -776,26 +777,6 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
     }
   }
 
-  title_mount_state_t state;
-  if (!inspect_title_stack(title_id, src_path, NULL, &state)) {
-    log_debug("  [LINK] inspect failed for %s (%s): %s", title_id, dst,
-              strerror(errno));
-    return false;
-  }
-  if (state.mounted) {
-    if (state.has_our_nullfs &&
-        (state.top_is_our_nullfs || state.has_our_backport) &&
-        path_exists(dst_eboot)) {
-      log_debug("  [LINK] mount stack already active: %s -> %s", src_path, dst);
-      return true;
-    }
-    if (!unmount_controlled_mount_stack(dst)) {
-      log_debug("  [LINK] failed to reset mount stack for %s (%s)", title_id,
-                dst);
-      return false;
-    }
-  }
-
   int mkdir_res = mkdir(dst, 0755);
   if (mkdir_res != 0) {
     if (errno != EEXIST) {
@@ -812,6 +793,26 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
     if (!S_ISDIR(dst_st.st_mode)) {
       log_debug("  [LINK] mount target is not a directory: %s mode=0%o", dst,
                 (unsigned)(dst_st.st_mode & 077777));
+      return false;
+    }
+  }
+
+  title_mount_state_t state;
+  if (!inspect_title_stack(title_id, src_path, NULL, &state)) {
+    log_debug("  [LINK] inspect failed for %s (%s): %s", title_id, dst,
+              strerror(errno));
+    return false;
+  }
+  if (state.mounted) {
+    if (state.has_our_nullfs &&
+        (state.top_is_our_nullfs || state.has_our_backport) &&
+        path_exists(dst_eboot)) {
+      log_debug("  [LINK] mount stack already active: %s -> %s", src_path, dst);
+      return true;
+    }
+    if (!unmount_controlled_mount_stack(dst)) {
+      log_debug("  [LINK] failed to reset mount stack for %s (%s)", title_id,
+                dst);
       return false;
     }
   }
