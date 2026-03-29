@@ -17,6 +17,7 @@
 #include "sm_title_state.h"
 #include "sm_image_cache.h"
 #include "sm_image.h"
+#include "sm_install_queue.h"
 
 typedef struct {
   char discovered_param_roots[MAX_PENDING][MAX_PATH];
@@ -192,6 +193,9 @@ static existing_directory_result_t handle_existing_directory_candidate(
     cache_game_entry(tracked_path, info->title_id, info->title_name);
     return EXISTING_DIRECTORY_PREFER_CACHED;
   }
+
+  if (!in_app_db && is_title_install_pending(info->title_id))
+    return EXISTING_DIRECTORY_HANDLED;
 
   if (!in_app_db && was_register_attempted(info->title_id)) {
     return EXISTING_DIRECTORY_HANDLED;
