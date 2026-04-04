@@ -49,7 +49,7 @@ Supported keys (all optional):
 - `image_sector=<image_filename>:<sector_size>` (repeatable; force sector size for this image filename)
 - `scan_depth=<1..2>` (`1` = scan only first-level subfolders, `2` = also scan one additional nested level; default: `1`)
 - `recursive_scan=1|0` (deprecated compatibility key; `1` forces `scan_depth=2`)
-- `scan_interval_seconds=<1..3600>` (full scan loop interval; default: `10`)
+- `scan_interval_seconds=<1..3600>` (full scan loop interval; default: `60`)
 - `stability_wait_seconds=<0..3600>` (minimum source age before processing; default: `10`)
 - `exfat_backend=lvd|md` (default: `lvd`)
 - `ufs_backend=lvd|md` (default: `lvd`)
@@ -97,7 +97,7 @@ Scan path behavior:
 - With `scan_depth=1` (default), only first-level subfolders are checked.
 - With `scan_depth=2`, one additional nested level is checked.
 - If `recursive_scan=1` is set, ShadowMount+ forces `scan_depth=2`.
-- Full scan loop runs every `scan_interval_seconds` (default: `10`).
+- Full scan loop runs every `scan_interval_seconds` (default: `60`).
 - Sources newer than `stability_wait_seconds` are deferred until stable (default: `10`).
 - Direct folder installs use `<game>/sce_sys` for this check; image and backport sources use the target path itself.
 
