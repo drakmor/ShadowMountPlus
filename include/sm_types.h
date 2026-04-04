@@ -106,6 +106,8 @@ typedef struct runtime_config {
   bool quiet_mode;
   bool mount_read_only;
   bool force_mount;
+  bool app_install_all_enabled;
+  bool app_install_all_forced;
   bool backport_fakelib_enabled;
   bool kstuff_game_auto_toggle;
   bool kstuff_crash_detection_enabled;

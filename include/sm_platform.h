@@ -37,6 +37,7 @@ typedef struct {
 
 // --- SDK Imports ---
 int sceAppInstUtilInitialize(void);
+int sceAppInstUtilAppInstallAll(void);
 int sceAppInstUtilAppInstallTitleDir(const char *title_id,
                                      const char *install_path, void *reserved);
 int sceKernelGetAppInfo(pid_t pid, app_info_t *info);

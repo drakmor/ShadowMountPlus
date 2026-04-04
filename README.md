@@ -43,6 +43,7 @@ Supported keys (all optional):
 - `quiet_mode=1|0` (`1` suppresses plain informational popups but keeps rich toasts; default is `0`)
 - `mount_read_only=1|0` (default: `1`)
 - `force_mount=1|0` (mounting even damaged file systems; default: `0`)
+- `app_install_all=1|0` (`1` stages new titles and submits them through `sceAppInstUtilAppInstallAll`; default: `0` on FW below `12.00`, forced `1` on FW `12.00+`)
 - `image_ro=<image_filename>` (repeatable; force read-only mode for this image filename)
 - `image_rw=<image_filename>` (repeatable; force read-write mode for this image filename)
 - `image_sector=<image_filename>:<sector_size>` (repeatable; force sector size for this image filename)

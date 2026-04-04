@@ -96,6 +96,8 @@ static bool lookup_kstuff_delay_override_in_file(const char *path,
 static bool upsert_kstuff_delay_override_in_file(const char *path,
                                                  const char *title_id,
                                                  uint32_t delay_seconds);
+static uint32_t runtime_firmware_major_version(void);
+static void apply_firmware_runtime_overrides(runtime_config_state_t *state);
 
 static char *trim_ascii(char *s) {
   while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
@@ -147,6 +149,25 @@ static bool parse_ini_line(char *line, char **key_out, char **value_out) {
   *key_out = key;
   *value_out = value;
   return true;
+}
+
+static uint32_t runtime_firmware_major_version(void) {
+  uint32_t fw = kernel_get_fw_version();
+  uint32_t major_bcd = (fw >> 24) & 0xFFu;
+  return ((major_bcd >> 4) & 0xFu) * 10u + (major_bcd & 0xFu);
+}
+
+static void apply_firmware_runtime_overrides(runtime_config_state_t *state) {
+  if (!state)
+    return;
+
+  if (runtime_firmware_major_version() >= 12u) {
+    state->cfg.app_install_all_enabled = true;
+    state->cfg.app_install_all_forced = true;
+    return;
+  }
+
+  state->cfg.app_install_all_forced = false;
 }
 
 static const runtime_config_state_t *active_runtime_state(void) {
@@ -228,6 +249,8 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.quiet_mode = false;
   state->cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
   state->cfg.force_mount = false;
+  state->cfg.app_install_all_enabled = false;
+  state->cfg.app_install_all_forced = false;
   state->cfg.backport_fakelib_enabled = true;
   state->cfg.kstuff_game_auto_toggle = true;
   state->cfg.kstuff_crash_detection_enabled = false;
@@ -249,6 +272,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   memset(state->image_mode_rules, 0, sizeof(state->image_mode_rules));
   clear_kstuff_title_rules(state);
   init_runtime_scan_paths_defaults(state);
+  apply_firmware_runtime_overrides(state);
 }
 
 static config_file_stamp_t read_config_file_stamp(void) {
@@ -283,6 +307,8 @@ static void apply_reloadable_runtime_fields(runtime_config_state_t *dst,
   dst->cfg.quiet_mode = src->cfg.quiet_mode;
   dst->cfg.mount_read_only = src->cfg.mount_read_only;
   dst->cfg.force_mount = src->cfg.force_mount;
+  dst->cfg.app_install_all_enabled = src->cfg.app_install_all_enabled;
+  dst->cfg.app_install_all_forced = src->cfg.app_install_all_forced;
   dst->cfg.backport_fakelib_enabled = src->cfg.backport_fakelib_enabled;
   dst->cfg.kstuff_game_auto_toggle = src->cfg.kstuff_game_auto_toggle;
   dst->cfg.kstuff_crash_detection_enabled =
@@ -1119,6 +1145,16 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "app_install_all") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.app_install_all_enabled = bval;
+      state->cfg.app_install_all_forced = false;
+      continue;
+    }
+
     if (strcasecmp(key, "image_ro") == 0 ||
         strcasecmp(key, "image_rw") == 0) {
       bool rule_read_only = (strcasecmp(key, "image_ro") == 0);
@@ -1331,6 +1367,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     log_debug("  [CFG] recursive_scan=1 is deprecated; forcing scan_depth=2");
   }
 
+  apply_firmware_runtime_overrides(state);
+
   int image_rule_count = 0;
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
     if (state->image_mode_rules[k].valid)
@@ -1343,7 +1381,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       kstuff_delay_rule_count++;
   }
 
-  log_debug("  [CFG] loaded: debug=%d quiet=%d ro=%d force=%d scan_depth=%u "
+  log_debug("  [CFG] loaded: debug=%d quiet=%d ro=%d force=%d "
+            "app_install_all=%d app_install_all_forced=%d scan_depth=%u "
             "legacy_recursive_scan_forced=%d backport_fakelib=%d "
             "kstuff_game_auto_toggle=%d kstuff_crash_detection=%d "
             "kstuff_pause_delay_image_s=%u kstuff_pause_delay_direct_s=%u "
@@ -1353,7 +1392,9 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "kstuff_no_pause=%d kstuff_delay_rules=%d",
             state->cfg.debug_enabled ? 1 : 0, state->cfg.quiet_mode ? 1 : 0,
             state->cfg.mount_read_only ? 1 : 0,
-            state->cfg.force_mount ? 1 : 0, state->cfg.scan_depth,
+            state->cfg.force_mount ? 1 : 0,
+            state->cfg.app_install_all_enabled ? 1 : 0,
+            state->cfg.app_install_all_forced ? 1 : 0, state->cfg.scan_depth,
             state->cfg.legacy_recursive_scan_forced ? 1 : 0,
             state->cfg.backport_fakelib_enabled ? 1 : 0,
             state->cfg.kstuff_game_auto_toggle ? 1 : 0,

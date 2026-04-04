@@ -1,6 +1,8 @@
 #include "sm_platform.h"
+#include "sm_config_mount.h"
 #include "sm_runtime.h"
 #include "sm_install.h"
+#include "sm_install_queue.h"
 #include "sm_types.h"
 #include "sm_game_cache.h"
 #include "sm_log.h"
@@ -85,7 +87,9 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
 // --- Install/Remount Action ---
 static bool mount_and_install(const char *src_path, const char *title_id,
                               const char *title_name, bool is_remount,
-                              bool should_register) {
+                              bool should_register,
+                              bool use_app_install_all,
+                              bool *has_src_snd0_out) {
   char user_appmeta_dir[MAX_PATH];
   char user_app_dir[MAX_PATH];
   char user_sce_sys[MAX_PATH];
@@ -212,12 +216,20 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     return true;
   }
 
-  // REGISTER
   if (!metadata_restaged) {
     snprintf(src_snd0, sizeof(src_snd0), "%s/sce_sys/snd0.at9", src_path);
     has_src_snd0 = path_exists(src_snd0);
   }
 
+  if (use_app_install_all) {
+    if (has_src_snd0_out)
+      *has_src_snd0_out = has_src_snd0;
+    log_debug("  [REG] Prepared for batch install: %s (%s)", title_name,
+              title_id);
+    return true;
+  }
+
+  // REGISTER
   mark_register_attempted(title_id);
   int res = sceAppInstUtilAppInstallTitleDir(title_id, APP_BASE "/", 0);
   sceKernelUsleep(200000);
@@ -253,23 +265,50 @@ static bool mount_and_install(const char *src_path, const char *title_id,
 // --- Execution (per discovered candidate) ---
 void process_scan_candidates(const scan_candidate_t *candidates,
                              int candidate_count) {
+  sm_install_poll_pending();
+
   for (int i = 0; i < candidate_count; i++) {
     if (should_stop_requested())
       return;
 
     const scan_candidate_t *c = &candidates[i];
+    bool has_src_snd0 = false;
+    bool use_app_install_all =
+        runtime_config()->app_install_all_enabled && !c->in_app_db;
     if (c->installed) {
       log_debug("  [ACTION] Remounting: %s", c->title_name);
     } else {
       log_debug("  [ACTION] Installing: %s (%s)", c->title_name, c->title_id);
-      notify_system_info("Installing: %s (%s)...", c->title_name,
-                         c->title_id);
+      if (!use_app_install_all) {
+        notify_system_info("Installing: %s (%s)...", c->title_name,
+                           c->title_id);
+      }
     }
 
     if (mount_and_install(c->path, c->title_id, c->title_name, c->installed,
-                          !c->in_app_db)) {
-      clear_failed_mount_attempts(c->title_id);
-      cache_game_entry(c->path, c->title_id, c->title_name);
+                          !c->in_app_db, use_app_install_all,
+                          &has_src_snd0)) {
+      if (use_app_install_all) {
+        if (!sm_install_queue_candidate(c, has_src_snd0)) {
+          log_debug("  [REG] Failed to queue staged install: %s (%s)",
+                    c->title_name, c->title_id);
+          if (should_stop_requested())
+            return;
+
+          uint8_t failed_attempts = bump_failed_mount_attempts(c->title_id);
+          if (failed_attempts == MAX_FAILED_MOUNT_ATTEMPTS) {
+            log_debug("  [RETRY] limit reached (%u/%u): %s (%s)",
+                      (unsigned)failed_attempts,
+                      (unsigned)MAX_FAILED_MOUNT_ATTEMPTS, c->title_name,
+                      c->title_id);
+          }
+          continue;
+        }
+        clear_failed_mount_attempts(c->title_id);
+      } else {
+        clear_failed_mount_attempts(c->title_id);
+        cache_game_entry(c->path, c->title_id, c->title_name);
+      }
     } else {
       if (should_stop_requested())
         return;
@@ -283,4 +322,7 @@ void process_scan_candidates(const scan_candidate_t *candidates,
       }
     }
   }
+
+  if (!sm_install_submit_queued())
+    sm_install_note_submit_failure();
 }

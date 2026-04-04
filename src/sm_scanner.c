@@ -10,6 +10,7 @@
 #include "sm_game_lifecycle.h"
 #include "sm_image.h"
 #include "sm_install.h"
+#include "sm_install_queue.h"
 #include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_log.h"
@@ -807,21 +808,19 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
   if (should_abort_scan_cycle())
     return false;
 
-  if (candidate_count > 0) {
-    if (startup_sync) {
-      int new_games = 0;
-      for (int i = 0; i < candidate_count; i++) {
-        if (!candidates[i].installed)
-          new_games++;
-      }
-      if (new_games > 0)
-        notify_system_info("Found %d new games. Executing...", new_games);
+  if (candidate_count > 0 && startup_sync) {
+    int new_games = 0;
+    for (int i = 0; i < candidate_count; i++) {
+      if (!candidates[i].installed)
+        new_games++;
     }
-
-    process_scan_candidates(candidates, candidate_count);
-    if (should_abort_scan_cycle())
-      return false;
+    if (new_games > 0)
+      notify_system_info("Found %d new games. Executing...", new_games);
   }
+
+  process_scan_candidates(candidates, candidate_count);
+  if (should_abort_scan_cycle())
+    return false;
 
   mount_backport_overlays(&unstable_found);
   if (should_abort_scan_cycle())
@@ -858,8 +857,7 @@ static bool run_targeted_scan_cycle(int scan_root_index,
   if (should_abort_scan_cycle())
     return false;
 
-  if (candidate_count > 0)
-    process_scan_candidates(candidates, candidate_count);
+  process_scan_candidates(candidates, candidate_count);
   if (should_abort_scan_cycle())
     return false;
 
@@ -911,8 +909,15 @@ static int find_due_dirty_scan_root(uint64_t now_us) {
   return selected_root;
 }
 
-static uint64_t compute_next_scan_deadline_us(uint64_t full_resync_due_us) {
+static uint64_t compute_next_scan_deadline_us(uint64_t now_us,
+                                              uint64_t full_resync_due_us) {
   uint64_t next_deadline = full_resync_due_us;
+  uint64_t install_wake_us = sm_install_next_wake_us(now_us);
+
+  if (install_wake_us != 0 &&
+      (next_deadline == 0 || install_wake_us < next_deadline)) {
+    next_deadline = install_wake_us;
+  }
 
   if (g_scanner_config_reload_pending &&
       (next_deadline == 0 ||
@@ -1192,6 +1197,12 @@ void sm_scanner_run_loop(void) {
       continue;
     }
 
+    uint64_t install_wake_us = sm_install_next_wake_us(now_us);
+    if (install_wake_us != 0 && now_us >= install_wake_us) {
+      sm_install_service_pending();
+      continue;
+    }
+
     if (now_us >= next_full_resync_us) {
       bool unstable_found = false;
       if (!run_full_scan_cycle(false, NULL, &unstable_found))
@@ -1266,7 +1277,8 @@ void sm_scanner_run_loop(void) {
       continue;
     }
 
-    uint64_t deadline_us = compute_next_scan_deadline_us(next_full_resync_us);
+    uint64_t deadline_us =
+        compute_next_scan_deadline_us(now_us, next_full_resync_us);
     struct timespec timeout;
     build_wait_timeout(&timeout, now_us, deadline_us);
 

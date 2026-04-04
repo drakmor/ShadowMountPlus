@@ -24,6 +24,12 @@ mount_read_only=1
 # 0/false/no/off -> default mount options (default)
 force_mount=0
 
+# Use batch registration for newly staged titles
+# 1/true/yes/on  -> submit queued installs through sceAppInstUtilAppInstallAll
+# 0/false/no/off -> register each title directly (default on FW below 12.00)
+# Forced on automatically on firmware 12.00 and newer
+app_install_all=0
+
 # Per-image mount mode override by file name (can be repeated many times):
 # image_ro=<image_filename>
 # image_rw=<image_filename>
