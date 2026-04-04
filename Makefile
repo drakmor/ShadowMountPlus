@@ -13,7 +13,7 @@ LDFLAGS := -flto=thin -Wl,--gc-sections
 # Standard Libraries Only
 LIBS := -lkernel_sys -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lsqlite3
 
-ASSET_SRCS := src/notify_icon_asset.c
+ASSET_SRCS := src/notify_icon_asset.c src/config_ini_example_asset.c
 SRCS := src/main.c $(wildcard src/sm_*.c) $(ASSET_SRCS)
 OBJS := $(SRCS:.c=.o)
 HEADERS := $(wildcard include/*.h)
@@ -25,13 +25,16 @@ all: shadowmountplus.elf
 shadowmountplus.elf: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
 	$(PS5_PAYLOAD_SDK)/bin/prospero-strip --strip-all $@
-	rm -f src/notify_icon_asset.c
+	rm -f src/notify_icon_asset.c src/config_ini_example_asset.c
 
 src/notify_icon_asset.c: smp_icon.png
+	xxd -i $< > $@
+
+src/config_ini_example_asset.c: config.ini.example
 	xxd -i $< > $@
 
 src/%.o: src/%.c $(HEADERS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f shadowmountplus.elf kill.elf src/*.o src/notify_icon_asset.c
+	rm -f shadowmountplus.elf kill.elf src/*.o src/notify_icon_asset.c src/config_ini_example_asset.c

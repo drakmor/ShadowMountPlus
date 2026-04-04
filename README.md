@@ -36,7 +36,7 @@ Notes:
 
 ## Runtime config (`/data/shadowmount/config.ini`)
 
-This file is optional. If it does not exist, built-in defaults are used.
+This file is optional. If it does not exist, ShadowMountPlus creates it from the bundled `config.ini.example` template on startup and uses built-in defaults until you uncomment overrides.
 
 Supported keys (all optional):
 - `debug=1|0` (`1` enables `log_debug` output to console + `/data/shadowmount/debug.log`; default is `1`)
@@ -55,9 +55,9 @@ Supported keys (all optional):
 - `ufs_backend=lvd|md` (default: `lvd`)
 - `backport_fakelib=1|0` (`1` mounts sandbox `fakelib` overlays for running games; default: `1`)
 - `kstuff_game_auto_toggle=1|0` (`1` pauses kstuff after tracked game launches and resumes it on stop; default: `1`)
-- `kstuff_crash_detection=1|0` (`1` enables the early post-auto-pause crash heuristic and autotune updates; default: `1`)
-- `kstuff_pause_delay_image_seconds=<0..3600>` (delay before pausing kstuff for image-backed launches; default: `20`)
-- `kstuff_pause_delay_direct_seconds=<0..3600>` (delay before pausing kstuff for direct/non-image launches; default: `10`)
+- `kstuff_crash_detection=1|0` (`1` enables the early post-auto-pause crash heuristic and autotune updates; default: `0`)
+- `kstuff_pause_delay_image_seconds=<0..3600>` (delay before pausing kstuff for image-backed launches; default: `25`)
+- `kstuff_pause_delay_direct_seconds=<0..3600>` (delay before pausing kstuff for direct/non-image launches; default: `15`)
 - `kstuff_no_pause=<TITLE_ID>` (repeatable; keeps kstuff enabled for matching titles)
 - `kstuff_delay=<TITLE_ID>:<0..3600>` (repeatable; per-title pause delay override, last matching rule wins)
 - `/data/shadowmount/autotune.ini` may also provide per-title pause-delay overrides with highest priority:

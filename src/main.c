@@ -49,6 +49,9 @@ static immediate_scan_request_t g_scan_now = {
     .reason = {0},
 };
 
+extern unsigned char config_ini_example[];
+extern unsigned int config_ini_example_len;
+
 static void on_signal(int sig) {
   (void)sig;
   g_stop_requested = 1;
@@ -269,6 +272,50 @@ static void ensure_kstuff_noautomount_file(void) {
          strerror(errno));
 }
 
+static bool write_buffer_to_fd(int fd, const unsigned char *buf, size_t size) {
+  size_t offset = 0;
+  while (offset < size) {
+    ssize_t written = write(fd, buf + offset, size - offset);
+    if (written < 0) {
+      if (errno == EINTR)
+        continue;
+      return false;
+    }
+    if (written == 0) {
+      errno = EIO;
+      return false;
+    }
+    offset += (size_t)written;
+  }
+  return true;
+}
+
+static void ensure_runtime_config_file(void) {
+  int fd = open(CONFIG_FILE, O_WRONLY | O_CREAT | O_EXCL, 0666);
+  if (fd < 0) {
+    if (errno == EEXIST)
+      return;
+    printf("[CFG] Failed to create %s: %s\n", CONFIG_FILE, strerror(errno));
+    return;
+  }
+
+  size_t template_size = (size_t)config_ini_example_len;
+  int saved_errno = 0;
+  if (!write_buffer_to_fd(fd, config_ini_example, template_size))
+    saved_errno = errno;
+  if (close(fd) != 0 && saved_errno == 0)
+    saved_errno = errno;
+
+  if (saved_errno != 0) {
+    errno = saved_errno;
+    printf("[CFG] Failed to write %s: %s\n", CONFIG_FILE, strerror(errno));
+    (void)unlink(CONFIG_FILE);
+    return;
+  }
+
+  printf("[CFG] Created default config from template: %s\n", CONFIG_FILE);
+}
+
 static void cleanup_kstuff_noautomount_files(void) {
   static const char *const paths[] = {
       KSTUFF_NOAUTOMOUNT_FILE,
@@ -321,6 +368,7 @@ int main(void) {
   install_signal_handlers();
 
   mkdir(LOG_DIR, 0777);
+  ensure_runtime_config_file();
   ensure_kstuff_noautomount_file();
   existing_pid = find_pid_by_name(PAYLOAD_NAME, true);
   if (existing_pid < 0) {
