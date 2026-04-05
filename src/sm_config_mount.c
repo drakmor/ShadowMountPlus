@@ -96,7 +96,6 @@ static bool lookup_kstuff_delay_override_in_file(const char *path,
 static bool upsert_kstuff_delay_override_in_file(const char *path,
                                                  const char *title_id,
                                                  uint32_t delay_seconds);
-static uint32_t runtime_firmware_major_version(void);
 static void apply_firmware_runtime_overrides(runtime_config_state_t *state);
 
 static char *trim_ascii(char *s) {
@@ -151,17 +150,11 @@ static bool parse_ini_line(char *line, char **key_out, char **value_out) {
   return true;
 }
 
-static uint32_t runtime_firmware_major_version(void) {
-  uint32_t fw = kernel_get_fw_version();
-  uint32_t major_bcd = (fw >> 24) & 0xFFu;
-  return ((major_bcd >> 4) & 0xFu) * 10u + (major_bcd & 0xFu);
-}
-
 static void apply_firmware_runtime_overrides(runtime_config_state_t *state) {
   if (!state)
     return;
 
-  if (runtime_firmware_major_version() >= 12u) {
+  if (sm_firmware_major_version() >= 12u) {
     state->cfg.app_install_all_enabled = true;
     state->cfg.app_install_all_forced = true;
     return;

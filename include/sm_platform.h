@@ -35,11 +35,15 @@ typedef struct {
   char unknown2[0x3c];
 } app_info_t;
 
+static inline uint32_t sm_firmware_major_version(void) {
+  uint32_t fw = kernel_get_fw_version();
+  uint32_t major_bcd = (fw >> 24) & 0xFFu;
+  return ((major_bcd >> 4) & 0xFu) * 10u + (major_bcd & 0xFu);
+}
+
 // --- SDK Imports ---
 int sceAppInstUtilInitialize(void);
 int sceAppInstUtilAppInstallAll(void);
-int sceAppInstUtilAppInstallTitleDir(const char *title_id,
-                                     const char *install_path, void *reserved);
 int sceKernelGetAppInfo(pid_t pid, app_info_t *info);
 int sceKernelUsleep(unsigned int microseconds);
 int sceUserServiceInitialize(void *);

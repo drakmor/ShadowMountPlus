@@ -14,6 +14,52 @@
 #include "sm_image_cache.h"
 #include "sm_paths.h"
 
+#include <dlfcn.h>
+
+typedef int (*app_install_title_dir_fn_t)(const char *title_id,
+                                          const char *install_path,
+                                          void *reserved);
+
+static const char *const k_app_inst_util_sprx_path =
+    "/system/common/lib/libSceAppInstUtil.sprx";
+static const char *const k_app_install_title_dir_symbol =
+    "sceAppInstUtilAppInstallTitleDir";
+
+static app_install_title_dir_fn_t g_app_install_title_dir_fn = NULL;
+static bool g_app_install_title_dir_resolve_attempted = false;
+
+static app_install_title_dir_fn_t resolve_app_install_title_dir(void) {
+  if (g_app_install_title_dir_fn)
+    return g_app_install_title_dir_fn;
+  if (g_app_install_title_dir_resolve_attempted)
+    return NULL;
+  if (sm_firmware_major_version() >= 12u) {
+    g_app_install_title_dir_resolve_attempted = true;
+    return NULL;
+  }
+
+  g_app_install_title_dir_resolve_attempted = true;
+  void *app_inst_util_handle = dlopen(k_app_inst_util_sprx_path, RTLD_LAZY);
+  if (!app_inst_util_handle) {
+    const char *error = dlerror();
+    log_debug("  [REG] dlopen(%s) failed: %s", k_app_inst_util_sprx_path,
+              error ? error : "unknown");
+    return NULL;
+  }
+
+  dlerror();
+  g_app_install_title_dir_fn = (app_install_title_dir_fn_t)dlsym(
+      app_inst_util_handle, k_app_install_title_dir_symbol);
+  if (g_app_install_title_dir_fn)
+    return g_app_install_title_dir_fn;
+
+  const char *error = dlerror();
+  log_debug("  [REG] %s lookup in %s failed: %s",
+            k_app_install_title_dir_symbol, k_app_inst_util_sprx_path,
+            error ? error : "unknown");
+  return NULL;
+}
+
 static bool write_link_file(const char *path, const char *value) {
   FILE *f = fopen(path, "w");
   if (!f) {
@@ -230,8 +276,17 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   }
 
   // REGISTER
+  app_install_title_dir_fn_t app_install_title_dir_fn =
+      resolve_app_install_title_dir();
+  if (!app_install_title_dir_fn) {
+    log_debug("  [REG] sceAppInstUtilAppInstallTitleDir unavailable");
+    notify_system("Register failed: %s (%s)\nAppInstallTitleDir unavailable",
+                  title_name, title_id);
+    return false;
+  }
+
   mark_register_attempted(title_id);
-  int res = sceAppInstUtilAppInstallTitleDir(title_id, APP_BASE "/", 0);
+  int res = app_install_title_dir_fn(title_id, APP_BASE "/", 0);
   sceKernelUsleep(200000);
 
   if (res == 0) {
