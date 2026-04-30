@@ -20,4 +20,9 @@ bool consume_scan_now_request(char *reason_out, size_t reason_out_size);
 // Sleep in chunks and stop early if shutdown was requested.
 bool sleep_with_stop_check(unsigned int total_us);
 
+// power management for rest mode
+void request_power_pause(const char *reason);
+void request_power_resume(const char *reason);
+bool sm_is_power_paused(void);
+
 #endif
