@@ -40,6 +40,7 @@
 
 
 static volatile sig_atomic_t g_stop_requested = 0;
+static atomic_bool g_power_paused = false;
 static atomic_bool g_shutdown_on_going_stop_requested = false;
 static _Atomic(uintptr_t) g_shutdown_stop_reason_bits = 0;
 
@@ -143,12 +144,40 @@ bool sleep_with_stop_check(unsigned int total_us) {
   while (slept < total_us) {
     if (should_stop_requested())
       return true;
+
+    while (atomic_load(&g_power_paused)) {
+      sceKernelUsleep(500000);
+      if (should_stop_requested())
+        return true;
+    }
+
     unsigned int remain = total_us - slept;
     unsigned int step = remain < chunk_us ? remain : chunk_us;
     sceKernelUsleep(step);
     slept += step;
   }
   return should_stop_requested();
+}
+
+bool should_pause_work(void) {
+  return should_stop_requested() || atomic_load(&g_power_paused);
+}
+
+void request_power_pause(const char *reason) {
+  if (atomic_exchange(&g_power_paused, true))
+    return;
+  log_debug("[POWER] pausing for %s", reason ? reason : "unknown");
+}
+
+void request_power_resume(const char *reason) {
+  if (!atomic_exchange(&g_power_paused, false))
+    return;
+  log_debug("[POWER] resuming for %s", reason ? reason : "unknown");
+  request_scan_now("system wake");
+}
+
+bool sm_is_power_paused(void) {
+  return atomic_load(&g_power_paused);
 }
 
 static void get_firmware_version_string(char out[32]) {

@@ -132,7 +132,7 @@ bool wait_for_lvd_release(void) {
     if (waited_us == 0) {
       log_debug("  [IMG][LVD] waiting for /dev/lvd2 to be released...");
       for (int i = 0; i < mntcount && mntbuf; i++) {
-        if (strncmp(mntbuf[i].f_mntfromname, "/dev/lvd", 8) != 0)
+        if (strcmp(mntbuf[i].f_mntfromname, "/dev/lvd2") != 0)
           continue;
         log_debug("  [IMG][LVD] mounted: from=%s path=%s type=%s "
                   "bsize=%llu iosize=%llu blocks=%llu bfree=%llu "

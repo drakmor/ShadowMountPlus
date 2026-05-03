@@ -783,7 +783,11 @@ static void apply_runtime_config_reload_effects(const runtime_config_t *old_cfg,
 }
 
 static bool should_abort_scan_cycle(void) {
-  return should_stop_requested();
+  return should_pause_work();
+}
+
+static bool should_defer_after_scan_abort(void) {
+  return sm_is_power_paused() && !should_stop_requested();
 }
 
 static bool run_full_scan_cycle(bool startup_sync, const char *reason,
@@ -1149,12 +1153,20 @@ void sm_scanner_run_loop(void) {
       log_debug("[SHUTDOWN] stop requested");
       break;
     }
+    if (sm_is_power_paused()) {
+      if (sleep_with_stop_check(500000))
+        break;
+      continue;
+    }
 
     char scan_reason[128];
     if (consume_scan_now_request(scan_reason, sizeof(scan_reason))) {
       bool unstable_found = false;
-      if (!run_full_scan_cycle(false, scan_reason, &unstable_found))
+      if (!run_full_scan_cycle(false, scan_reason, &unstable_found)) {
+        if (should_defer_after_scan_abort())
+          continue;
         break;
+      }
       clear_all_dirty_scan_roots();
       if (!rebuild_all_scan_root_watch_trees(kq) ||
           !drain_scanner_events_nowait(kq)) {
@@ -1216,8 +1228,11 @@ void sm_scanner_run_loop(void) {
 
     if (next_full_resync_us != 0 && now_us >= next_full_resync_us) {
       bool unstable_found = false;
-      if (!run_full_scan_cycle(false, NULL, &unstable_found))
+      if (!run_full_scan_cycle(false, NULL, &unstable_found)) {
+        if (should_defer_after_scan_abort())
+          continue;
         break;
+      }
       clear_all_dirty_scan_roots();
       if (!rebuild_all_scan_root_watch_trees(kq) ||
           !drain_scanner_events_nowait(kq)) {
@@ -1263,8 +1278,11 @@ void sm_scanner_run_loop(void) {
       clear_scan_root_watch_tree_state(dirty_root_index);
 
       bool unstable_found = false;
-      if (!run_targeted_scan_cycle(dirty_root_index, &unstable_found))
+      if (!run_targeted_scan_cycle(dirty_root_index, &unstable_found)) {
+        if (should_defer_after_scan_abort())
+          continue;
         break;
+      }
 
       if (rebuild_watch_tree &&
           !rebuild_scan_root_watch_subtree(kq, dirty_root_index,
