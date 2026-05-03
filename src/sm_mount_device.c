@@ -118,23 +118,21 @@ bool wait_for_lvd_release(void) {
     int mntcount = getmntinfo(&mntbuf, MNT_NOWAIT);
     bool mounted = false;
     for (int i = 0; i < mntcount && mntbuf; i++) {
-      if (strncmp(mntbuf[i].f_mntfromname, "/dev/lvd", 8) != 0)
-        continue;
-      if (strncmp(mntbuf[i].f_mntonname, "/mnt/sandbox/", 13) != 0)
+      if (strcmp(mntbuf[i].f_mntfromname, "/dev/lvd2") != 0)
         continue;
       mounted = true;
       break;
     }
     if (!mounted) {
       if (waited_us != 0)
-        log_debug("  [IMG][LVD] sandbox LVD mounts released");
+        log_debug("  [IMG][LVD] /dev/lvd2 released");
       return true;
     }
 
     if (waited_us == 0) {
-      log_debug("  [IMG][LVD] waiting for sandbox LVD mounts to be released...");
+      log_debug("  [IMG][LVD] waiting for /dev/lvd2 to be released...");
       for (int i = 0; i < mntcount && mntbuf; i++) {
-        if (strncmp(mntbuf[i].f_mntfromname, "/dev/lvd", 8) != 0)
+        if (strcmp(mntbuf[i].f_mntfromname, "/dev/lvd2") != 0)
           continue;
         log_debug("  [IMG][LVD] mounted: from=%s path=%s type=%s "
                   "bsize=%llu iosize=%llu blocks=%llu bfree=%llu "
@@ -154,7 +152,7 @@ bool wait_for_lvd_release(void) {
     if (should_stop_requested())
       return false;
     if (waited_us >= LVD_RELEASE_WAIT_MAX_US) {
-      log_debug("  [IMG][LVD] sandbox LVD wait timeout reached (%u ms), "
+      log_debug("  [IMG][LVD] /dev/lvd2 wait timeout reached (%u ms), "
                 "continuing startup", LVD_RELEASE_WAIT_MAX_US / 1000u);
       return true;
     }
