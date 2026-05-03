@@ -733,6 +733,11 @@ static bool validate_mounted_image(const char *file_path, image_fs_type_t fs_typ
 // --- Image Attach + nmount Pipeline ---
 bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   sm_error_clear();
+  if (should_pause_work()) {
+    errno = EINTR;
+    return false;
+  }
+
   const runtime_config_t *cfg = runtime_config();
   bool mount_read_only = cfg->mount_read_only;
   bool mount_mode_overridden = false;
@@ -765,6 +770,11 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
 
   ensure_mount_dirs(mount_point);
 
+  if (should_pause_work()) {
+    errno = EINTR;
+    return false;
+  }
+
   attach_backend_t attach_backend = select_image_backend(cfg, fs_type);
   log_debug("  [IMG][%s] attach backend selected for %s",
             attach_backend_name(attach_backend), file_path);
@@ -776,8 +786,18 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
                            attach_backend, &unit_id, devname, sizeof(devname))) {
     return false;
   }
+  if (should_pause_work()) {
+    (void)detach_attached_unit(attach_backend, unit_id);
+    errno = EINTR;
+    return false;
+  }
   if (!perform_image_nmount(file_path, fs_type, attach_backend, unit_id, devname,
                             mount_point, mount_read_only, force_mount)) {
+    return false;
+  }
+  if (should_pause_work()) {
+    (void)unmount_image(file_path, unit_id, attach_backend);
+    errno = EINTR;
     return false;
   }
 

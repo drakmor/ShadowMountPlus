@@ -3,6 +3,7 @@
 #include "sm_fakelib.h"
 #include "sm_config_mount.h"
 #include "sm_log.h"
+#include "sm_runtime.h"
 #include "sm_types.h"
 
 typedef struct {
@@ -20,6 +21,9 @@ bool sm_fakelib_game_feature_enabled(void) {
 static bool mount_fakelib_overlay(const char *title_id,
                                   const char *source_path,
                                   const char *mount_path) {
+  if (should_pause_work())
+    return false;
+
   struct iovec overlay_iov[] = {
       IOVEC_ENTRY("fstype"), IOVEC_ENTRY("unionfs"),
       IOVEC_ENTRY("from"),   IOVEC_ENTRY(source_path),

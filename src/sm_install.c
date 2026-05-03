@@ -170,7 +170,7 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   restage_staging = (!is_remount || should_register);
   restage_appmeta = (!is_remount || appmeta_missing);
 
-  if (should_stop_requested())
+  if (should_pause_work())
     return false;
 
   // COPY FILES
@@ -215,7 +215,7 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     metadata_restaged = true;
   }
 
-  if (should_stop_requested())
+  if (should_pause_work())
     return false;
 
   if (!mount_title_nullfs(title_id, src_path)) {
@@ -268,6 +268,8 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   }
 
   if (use_app_install_all) {
+    if (should_pause_work())
+      return false;
     if (has_src_snd0_out)
       *has_src_snd0_out = has_src_snd0;
     log_debug("  [REG] Prepared for batch install: %s (%s)", title_name,
@@ -276,6 +278,9 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   }
 
   // REGISTER
+  if (should_pause_work())
+    return false;
+
   app_install_title_dir_fn_t app_install_title_dir_fn =
       resolve_app_install_title_dir();
   if (!app_install_title_dir_fn) {
@@ -323,7 +328,7 @@ void process_scan_candidates(const scan_candidate_t *candidates,
   sm_install_poll_pending();
 
   for (int i = 0; i < candidate_count; i++) {
-    if (should_stop_requested())
+    if (should_pause_work())
       return;
 
     const scan_candidate_t *c = &candidates[i];

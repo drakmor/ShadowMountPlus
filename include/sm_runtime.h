@@ -11,6 +11,8 @@ void install_signal_handlers(void);
 pid_t find_pid_by_name(const char *name, bool exclude_self);
 // Return true when shutdown was requested by signal or kill file.
 bool should_stop_requested(void);
+// Return true when foreground work should pause for stop or power transition.
+bool should_pause_work(void);
 // Request graceful shutdown with a descriptive source string.
 void request_shutdown_stop(const char *reason);
 // Request an immediate scan cycle with a descriptive source string.

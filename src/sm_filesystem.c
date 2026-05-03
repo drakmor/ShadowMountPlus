@@ -512,6 +512,9 @@ bool reconcile_title_backport_mount(const char *title_id, const char *src_path,
 bool mount_backport_overlay(const char *mount_point,
                             const char *backport_path,
                             const char *title_id) {
+  if (should_pause_work())
+    return true;
+
   struct stat backport_st;
   if (stat(backport_path, &backport_st) != 0 || !S_ISDIR(backport_st.st_mode))
     return true;
@@ -757,6 +760,9 @@ int remount_system_ex(void) {
 }
 
 bool mount_title_nullfs(const char *title_id, const char *src_path) {
+  if (should_pause_work())
+    return false;
+
   char dst[MAX_PATH];
   char src_eboot[MAX_PATH];
   char dst_eboot[MAX_PATH];
@@ -823,6 +829,9 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
       return false;
     }
   }
+
+  if (should_pause_work())
+    return false;
 
   struct iovec iov[] = {
       IOVEC_ENTRY("fstype"), IOVEC_ENTRY("nullfs"),

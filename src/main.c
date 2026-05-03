@@ -159,6 +159,10 @@ bool sleep_with_stop_check(unsigned int total_us) {
   return should_stop_requested();
 }
 
+bool should_pause_work(void) {
+  return should_stop_requested() || atomic_load(&g_power_paused);
+}
+
 void request_power_pause(const char *reason) {
   if (atomic_exchange(&g_power_paused, true))
     return;

@@ -464,6 +464,9 @@ static bool mount_backport_overlay_for_cached_game(const char *source_path,
 }
 
 void mount_backport_overlays(bool *unstable_found_out) {
+  if (should_pause_work())
+    return;
+
   backport_overlay_ctx_t ctx = {
       .unstable_found_out = unstable_found_out,
   };
@@ -472,6 +475,9 @@ void mount_backport_overlays(bool *unstable_found_out) {
 
 // --- Unified Scan Pass (images + game candidates) ---
 void cleanup_lost_sources_before_scan(void) {
+  if (should_pause_work())
+    return;
+
   // 1) Drop stale game cache entries for deleted sources.
   prune_game_cache();
   // 2) Drop stale/broken mount links and unmount stale /system_ex stacks.
@@ -483,6 +489,9 @@ void cleanup_lost_sources_before_scan(void) {
 }
 
 void cleanup_lost_sources_for_scan_root(const char *scan_root) {
+  if (should_pause_work())
+    return;
+
   prune_game_cache_for_root(scan_root);
   cleanup_mount_links(scan_root, true);
   cleanup_stale_image_mounts_for_root(scan_root);
@@ -495,6 +504,8 @@ static void collect_scan_candidates_from_root(
     bool app_db_titles_ready, char discovered_param_roots[][MAX_PATH],
     int *discovered_param_root_count, bool *unstable_found_out) {
   if (should_stop_requested())
+    return;
+  if (sm_is_power_paused())
     return;
 
   unsigned int scan_depth = runtime_config()->scan_depth;
@@ -557,7 +568,7 @@ int collect_scan_candidates(scan_candidate_t *candidates, int max_candidates,
     log_debug("  [DB] app.db title list unavailable for this scan cycle");
 
   for (int i = 0; i < get_scan_path_count(); i++) {
-    if (should_stop_requested())
+    if (should_pause_work())
       break;
     collect_scan_candidates_from_root(get_scan_path(i), candidates,
                                       max_candidates,
