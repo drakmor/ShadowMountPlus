@@ -591,13 +591,14 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   const char *ekpfs_key = PFS_ZERO_EKPFS_KEY_HEX;
 
   struct iovec iov_ufs[] = {
-      IOVEC_ENTRY("fstype"),     IOVEC_ENTRY("ufs"), IOVEC_ENTRY("from"),
-      IOVEC_ENTRY(devname),      IOVEC_ENTRY("fspath"),
-      IOVEC_ENTRY(mount_point),  IOVEC_ENTRY("budgetid"),
-      IOVEC_ENTRY(DEVPFS_BUDGET_GAME),
+      IOVEC_ENTRY("fstype"),     IOVEC_ENTRY("ufs"), 
+      IOVEC_ENTRY("from"),       IOVEC_ENTRY(devname),
+      IOVEC_ENTRY("fspath"),     IOVEC_ENTRY(mount_point),  
+      IOVEC_ENTRY("budgetid"),   IOVEC_ENTRY(DEVPFS_BUDGET_GAME),
       IOVEC_ENTRY("async"),      IOVEC_ENTRY(NULL),
       IOVEC_ENTRY("noatime"),    IOVEC_ENTRY(NULL),
       IOVEC_ENTRY("automounted"), IOVEC_ENTRY(NULL),
+//      IOVEC_ENTRY("compressedfile"), IOVEC_ENTRY(NULL),
       IOVEC_ENTRY("errmsg"),     {(void *)mount_errmsg, sizeof(mount_errmsg)},
       IOVEC_ENTRY("force"),      IOVEC_ENTRY(NULL)};
 
