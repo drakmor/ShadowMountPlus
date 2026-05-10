@@ -7,6 +7,7 @@
 #include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_runtime.h"
+#include "sm_scan.h"
 #include "sm_shellcore_flags.h"
 
 #define SHELLCORE_FLAG_WAITMODE_OR 2u
@@ -610,6 +611,8 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
   int rc;
   bool changed = false;
   bool entered_shutdown_on_going = false;
+  bool entered_main_on_standby = false;
+  bool entered_suspend_on_going = false;
   bool entered_resume_working = false;
   bool is_system_state_mgr_info = false;
   unsigned current_state = 0;
@@ -646,6 +649,14 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
         current_state == SYSTEM_STATE_MGR_STATE_SHUTDOWN_ON_GOING &&
         (!flag->has_last_pattern ||
          previous_state != SYSTEM_STATE_MGR_STATE_SHUTDOWN_ON_GOING);
+    entered_main_on_standby =
+        current_state == SYSTEM_STATE_MGR_STATE_MAIN_ON_STANDBY &&
+        (!flag->has_last_pattern ||
+         previous_state != SYSTEM_STATE_MGR_STATE_MAIN_ON_STANDBY);
+    entered_suspend_on_going =
+        current_state == SYSTEM_STATE_MGR_STATE_SUSPEND_ON_GOING &&
+        (!flag->has_last_pattern ||
+         previous_state != SYSTEM_STATE_MGR_STATE_SUSPEND_ON_GOING);
     entered_resume_working =
         flag->has_last_pattern &&
         current_state == SYSTEM_STATE_MGR_STATE_WORKING &&
@@ -664,8 +675,17 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
   if (entered_shutdown_on_going) {
     request_shutdown_stop("SceSystemStateMgrInfo=SHUTDOWN_ON_GOING");
   }
+  if (entered_main_on_standby) {
+    request_runtime_scan_block(true, "SceSystemStateMgrInfo=MAIN_ON_STANDBY");
+    unmount_usb_sources_for_suspend();
+  }
+  if (entered_suspend_on_going) {
+    request_runtime_sleep_mode(true, "SceSystemStateMgrInfo=SUSPEND_ON_GOING");
+  }
   if (entered_resume_working) {
     request_scan_now("SceSystemStateMgrInfo=WORKING");
+    request_runtime_sleep_mode(false, "SceSystemStateMgrInfo=WORKING");
+    request_runtime_scan_block(false, "SceSystemStateMgrInfo=WORKING");
   }
 }
 

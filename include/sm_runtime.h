@@ -13,6 +13,14 @@ pid_t find_pid_by_name(const char *name, bool exclude_self);
 bool should_stop_requested(void);
 // Request graceful shutdown with a descriptive source string.
 void request_shutdown_stop(const char *reason);
+// Return true when the payload is paused for system suspend/resume.
+bool runtime_sleep_mode_active(void);
+// Enter or leave sleep mode with a descriptive source string.
+void request_runtime_sleep_mode(bool active, const char *reason);
+// Return true when scan/remount work is paused by power-state handling.
+bool runtime_scan_blocked(void);
+// Enter or leave scan/remount pause with a descriptive source string.
+void request_runtime_scan_block(bool active, const char *reason);
 // Request an immediate scan cycle with a descriptive source string.
 void request_scan_now(const char *reason);
 // Consume a pending immediate scan request and copy its reason into caller storage.

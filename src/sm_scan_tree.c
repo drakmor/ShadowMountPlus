@@ -47,7 +47,7 @@ bool sm_scan_tree_walk(const char *scan_root, const char *dir_path,
                        unsigned int depth_from_root,
                        unsigned int remaining_depth,
                        const sm_scan_tree_callbacks_t *callbacks, void *ctx) {
-  if (should_stop_requested())
+  if (should_stop_requested() || runtime_scan_blocked())
     return true;
 
   if (depth_from_root > 0u &&
@@ -79,7 +79,7 @@ bool sm_scan_tree_walk(const char *scan_root, const char *dir_path,
 
   struct dirent *entry;
   while ((entry = readdir(d)) != NULL) {
-    if (should_stop_requested()) {
+    if (should_stop_requested() || runtime_scan_blocked()) {
       closedir(d);
       return true;
     }

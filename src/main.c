@@ -41,6 +41,8 @@
 
 static volatile sig_atomic_t g_stop_requested = 0;
 static atomic_bool g_shutdown_on_going_stop_requested = false;
+static atomic_bool g_runtime_sleep_mode_active = false;
+static atomic_bool g_runtime_scan_blocked = false;
 static _Atomic(uintptr_t) g_shutdown_stop_reason_bits = 0;
 
 typedef struct {
@@ -101,19 +103,75 @@ void request_shutdown_stop(const char *reason) {
   }
   g_stop_requested = 1;
   sm_scanner_wake();
+  wake_game_lifecycle_watcher();
+}
+
+bool runtime_sleep_mode_active(void) {
+  return atomic_load_explicit(&g_runtime_sleep_mode_active,
+                              memory_order_acquire);
+}
+
+bool runtime_scan_blocked(void) {
+  return runtime_sleep_mode_active() ||
+         atomic_load_explicit(&g_runtime_scan_blocked, memory_order_acquire);
+}
+
+static void clear_scan_now_request(void) {
+  pthread_mutex_lock(&g_scan_now.reason_mutex);
+  g_scan_now.reason[0] = '\0';
+  pthread_mutex_unlock(&g_scan_now.reason_mutex);
+}
+
+void request_runtime_sleep_mode(bool active, const char *reason) {
+  bool previous = atomic_exchange_explicit(&g_runtime_sleep_mode_active, active,
+                                           memory_order_acq_rel);
+  if (previous == active)
+    return;
+
+  if (active)
+    clear_scan_now_request();
+
+  const char *resolved_reason =
+      (reason && reason[0] != '\0') ? reason : "unknown sleep source";
+  log_debug("[SLEEP] %s by %s", active ? "entered" : "left",
+            resolved_reason);
+  sm_scanner_wake();
+  wake_game_lifecycle_watcher();
+}
+
+void request_runtime_scan_block(bool active, const char *reason) {
+  bool previous = atomic_exchange_explicit(&g_runtime_scan_blocked, active,
+                                           memory_order_acq_rel);
+  if (previous == active)
+    return;
+
+  if (active)
+    clear_scan_now_request();
+
+  const char *resolved_reason =
+      (reason && reason[0] != '\0') ? reason : "unknown scan block source";
+  log_debug("[SCAN] %s by %s", active ? "paused" : "resumed",
+            resolved_reason);
+  sm_scanner_wake();
 }
 
 void request_scan_now(const char *reason) {
   const char *resolved_reason =
       (reason && reason[0] != '\0') ? reason : "unknown scan source";
+  bool resume_scan =
+      strcmp(resolved_reason, "SceSystemStateMgrInfo=WORKING") == 0;
+  if (runtime_scan_blocked() && !resume_scan)
+    return;
+
   char log_reason[sizeof(g_scan_now.reason)];
-  bool should_log = false;
+  bool should_log = !resume_scan;
 
   pthread_mutex_lock(&g_scan_now.reason_mutex);
   if (g_scan_now.reason[0] == '\0') {
     (void)strlcpy(g_scan_now.reason, resolved_reason, sizeof(g_scan_now.reason));
     (void)strlcpy(log_reason, g_scan_now.reason, sizeof(log_reason));
-    should_log = true;
+  } else {
+    should_log = false;
   }
   pthread_mutex_unlock(&g_scan_now.reason_mutex);
 

@@ -830,9 +830,18 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
       IOVEC_ENTRY("fspath"), IOVEC_ENTRY(dst),
   };
 
+  if (runtime_scan_blocked())
+    return false;
+
   if (nmount(iov, IOVEC_SIZE(iov), 0) != 0) {
     log_debug("  [LINK] Failed to auto-mount nullfs title=%s src=%s dst=%s: %s",
               title_id, src_path, dst, strerror(errno));
+    return false;
+  }
+
+  if (runtime_scan_blocked()) {
+    if (unmount(dst, 0) != 0 && errno != ENOENT && errno != EINVAL)
+      (void)unmount(dst, MNT_FORCE);
     return false;
   }
 
@@ -851,19 +860,12 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
   return true;
 }
 
-bool path_matches_root_or_child(const char *path, const char *root) {
-  if (!path || !root || root[0] == '\0')
-    return false;
-  size_t root_len = strlen(root);
-  if (strncmp(path, root, root_len) != 0)
-    return false;
-  return (path[root_len] == '\0' || path[root_len] == '/');
-}
-
 typedef struct {
   const char *removed_source_root;
   bool unmount_system_ex_bind;
   bool tried_image_recovery;
+  bool force_remove_matching_source;
+  bool match_usb_sources;
 } cleanup_mount_links_ctx_t;
 
 static bool cleanup_mount_links_entry(const char *title_id,
@@ -877,6 +879,8 @@ static bool cleanup_mount_links_entry(const char *title_id,
 
   char source_path[MAX_PATH];
   char image_source_path[MAX_PATH];
+  source_path[0] = '\0';
+  image_source_path[0] = '\0';
   bool has_image_source = false;
   bool should_remove = false;
   bool matches_removed_source = false;
@@ -888,7 +892,14 @@ static bool cleanup_mount_links_entry(const char *title_id,
   }
 
   if (!should_remove) {
-    if (ctx->removed_source_root && ctx->removed_source_root[0] != '\0') {
+    if (ctx->match_usb_sources) {
+      matches_removed_source =
+          is_usb_storage_path(source_path) ||
+          (has_image_source && is_usb_storage_path(image_source_path));
+      if (!matches_removed_source)
+        return true;
+      should_remove = true;
+    } else if (ctx->removed_source_root && ctx->removed_source_root[0] != '\0') {
       matches_removed_source =
           path_matches_root_or_child(source_path, ctx->removed_source_root) ||
           (has_image_source &&
@@ -896,7 +907,8 @@ static bool cleanup_mount_links_entry(const char *title_id,
                                       ctx->removed_source_root));
       if (!matches_removed_source)
         return true;
-      should_remove = (has_image_source && !path_exists(image_source_path)) ||
+      should_remove = ctx->force_remove_matching_source ||
+                      (has_image_source && !path_exists(image_source_path)) ||
                       source_path_needs_cleanup(source_path,
                                                 &ctx->tried_image_recovery);
     } else {
@@ -976,9 +988,38 @@ void cleanup_mount_links(const char *removed_source_root,
       .removed_source_root = removed_source_root,
       .unmount_system_ex_bind = unmount_system_ex_bind,
       .tried_image_recovery = false,
+      .force_remove_matching_source = false,
+      .match_usb_sources = false,
   };
   for_each_title_app_dir("", !unmount_system_ex_bind, cleanup_mount_links_entry,
                          &ctx);
+}
+
+void cleanup_mount_links_for_source_unmount(const char *source_root) {
+  if (!source_root || source_root[0] == '\0')
+    return;
+
+  cleanup_mount_links_ctx_t ctx = {
+      .removed_source_root = source_root,
+      .unmount_system_ex_bind = true,
+      .tried_image_recovery = false,
+      .force_remove_matching_source = true,
+      .match_usb_sources = false,
+  };
+  for_each_title_app_dir(" during source unmount cleanup", false,
+                         cleanup_mount_links_entry, &ctx);
+}
+
+void cleanup_usb_mount_links_for_suspend(void) {
+  cleanup_mount_links_ctx_t ctx = {
+      .removed_source_root = NULL,
+      .unmount_system_ex_bind = true,
+      .tried_image_recovery = false,
+      .force_remove_matching_source = false,
+      .match_usb_sources = true,
+  };
+  for_each_title_app_dir(" during USB suspend cleanup", false,
+                         cleanup_mount_links_entry, &ctx);
 }
 
 static bool shutdown_title_mounts_entry(const char *title_id,

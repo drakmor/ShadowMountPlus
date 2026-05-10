@@ -15,6 +15,8 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
 void cleanup_stale_image_mounts(void);
 // Reconcile cached image mounts that belong to a specific scan root.
 void cleanup_stale_image_mounts_for_root(const char *root);
+// Unmount cached image mounts backed by USB storage during suspend.
+bool unmount_usb_image_mounts_for_suspend(void);
 // Unmount every cached image mount during shutdown.
 bool shutdown_image_mounts(void);
 // Remove empty directories left under the image mount root.

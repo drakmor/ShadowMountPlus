@@ -756,6 +756,8 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
     return false;
   if (!stat_image_file(file_path, &st))
     return false;
+  if (runtime_scan_blocked())
+    return false;
 
   log_debug("  [IMG] Mounting image (%s): %s -> %s", image_fs_name(fs_type),
             file_path, mount_point);
@@ -777,8 +779,16 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
                            attach_backend, &unit_id, devname, sizeof(devname))) {
     return false;
   }
+  if (runtime_scan_blocked()) {
+    (void)detach_attached_unit(attach_backend, unit_id);
+    return false;
+  }
   if (!perform_image_nmount(file_path, fs_type, attach_backend, unit_id, devname,
                             mount_point, mount_read_only, force_mount)) {
+    return false;
+  }
+  if (runtime_scan_blocked()) {
+    (void)unmount_image(file_path, unit_id, attach_backend);
     return false;
   }
 
@@ -825,7 +835,7 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
 
   // Remove mount.lnk and unmount /system_ex/app/<titleid> that point to this
   // source before unmounting the virtual disk itself.
-  cleanup_mount_links(mount_point, true);
+  cleanup_mount_links_for_source_unmount(mount_point);
   clear_cached_game(mount_point);
 
   // Unmount stacked layers (unionfs over image fs).
@@ -977,6 +987,32 @@ void cleanup_stale_image_mounts_for_root(const char *root) {
       notify_image_mount_failed(source_path, mount_err);
     }
   }
+}
+
+bool unmount_usb_image_mounts_for_suspend(void) {
+  bool all_unmounted = true;
+
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
+    image_cache_entry_t cached_entry;
+    if (!get_image_cache_entry(k, &cached_entry))
+      continue;
+    if (!is_usb_storage_path(cached_entry.path))
+      continue;
+
+    log_debug("  [IMG][%s] USB suspend unmount: %s",
+              attach_backend_name(cached_entry.backend), cached_entry.path);
+    if (unmount_image(cached_entry.path, cached_entry.unit_id,
+                      cached_entry.backend)) {
+      invalidate_image_cache_entry(k);
+      continue;
+    }
+
+    all_unmounted = false;
+    log_debug("  [IMG][%s] USB suspend unmount pending: %s",
+              attach_backend_name(cached_entry.backend), cached_entry.path);
+  }
+
+  return all_unmounted;
 }
 
 void cleanup_mount_dirs(void) {

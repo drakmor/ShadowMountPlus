@@ -9,6 +9,8 @@ typedef struct scan_candidate scan_candidate_t;
 void cleanup_lost_sources_before_scan(void);
 // Unmount and clean up mounts whose backing sources disappeared under one root.
 void cleanup_lost_sources_for_scan_root(const char *scan_root);
+// Immediately unmount runtime mounts backed by USB storage for suspend.
+void unmount_usb_sources_for_suspend(void);
 // Scan configured roots and collect install candidates.
 int collect_scan_candidates(scan_candidate_t *candidates, int max_candidates,
                             int *total_found_out,

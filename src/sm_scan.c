@@ -489,12 +489,22 @@ void cleanup_lost_sources_for_scan_root(const char *scan_root) {
   prune_path_state_for_root(scan_root);
 }
 
+void unmount_usb_sources_for_suspend(void) {
+  log_debug("[SLEEP] USB-backed mount cleanup begin");
+  cleanup_usb_mount_links_for_suspend();
+  if (!unmount_usb_image_mounts_for_suspend()) {
+    log_debug("[SLEEP] some USB-backed image mounts remain busy");
+  }
+  cleanup_mount_dirs();
+  log_debug("[SLEEP] USB-backed mount cleanup done");
+}
+
 static void collect_scan_candidates_from_root(
     const char *scan_path, scan_candidate_t *candidates, int max_candidates,
     int *candidate_count, const struct AppDbTitleList *app_db_titles,
     bool app_db_titles_ready, char discovered_param_roots[][MAX_PATH],
     int *discovered_param_root_count, bool *unstable_found_out) {
-  if (should_stop_requested())
+  if (should_stop_requested() || runtime_scan_blocked())
     return;
 
   unsigned int scan_depth = runtime_config()->scan_depth;
@@ -557,7 +567,7 @@ int collect_scan_candidates(scan_candidate_t *candidates, int max_candidates,
     log_debug("  [DB] app.db title list unavailable for this scan cycle");
 
   for (int i = 0; i < get_scan_path_count(); i++) {
-    if (should_stop_requested())
+    if (should_stop_requested() || runtime_scan_blocked())
       break;
     collect_scan_candidates_from_root(get_scan_path(i), candidates,
                                       max_candidates,

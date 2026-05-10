@@ -170,7 +170,7 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   restage_staging = (!is_remount || should_register);
   restage_appmeta = (!is_remount || appmeta_missing);
 
-  if (should_stop_requested())
+  if (should_stop_requested() || runtime_scan_blocked())
     return false;
 
   // COPY FILES
@@ -215,7 +215,7 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     metadata_restaged = true;
   }
 
-  if (should_stop_requested())
+  if (should_stop_requested() || runtime_scan_blocked())
     return false;
 
   if (!mount_title_nullfs(title_id, src_path)) {
@@ -320,10 +320,13 @@ static bool mount_and_install(const char *src_path, const char *title_id,
 // --- Execution (per discovered candidate) ---
 void process_scan_candidates(const scan_candidate_t *candidates,
                              int candidate_count) {
+  if (runtime_scan_blocked())
+    return;
+
   sm_install_poll_pending();
 
   for (int i = 0; i < candidate_count; i++) {
-    if (should_stop_requested())
+    if (should_stop_requested() || runtime_scan_blocked())
       return;
 
     const scan_candidate_t *c = &candidates[i];
@@ -347,7 +350,7 @@ void process_scan_candidates(const scan_candidate_t *candidates,
         if (!sm_install_queue_candidate(c, has_src_snd0)) {
           log_debug("  [REG] Failed to queue staged install: %s (%s)",
                     c->title_name, c->title_id);
-          if (should_stop_requested())
+          if (should_stop_requested() || runtime_scan_blocked())
             return;
 
           uint8_t failed_attempts = bump_failed_mount_attempts(c->title_id);
@@ -365,7 +368,7 @@ void process_scan_candidates(const scan_candidate_t *candidates,
         cache_game_entry(c->path, c->title_id, c->title_name);
       }
     } else {
-      if (should_stop_requested())
+      if (should_stop_requested() || runtime_scan_blocked())
         return;
 
       uint8_t failed_attempts = bump_failed_mount_attempts(c->title_id);

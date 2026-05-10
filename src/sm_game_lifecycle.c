@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <sys/event.h>
+#include <sys/select.h>
 
 #include "sm_fakelib.h"
 #include "sm_game_lifecycle.h"
@@ -166,6 +167,31 @@ static void close_game_lifecycle_wake_pipe(void) {
   if (g_game_lifecycle_wake_pipe[1] >= 0) {
     close(g_game_lifecycle_wake_pipe[1]);
     g_game_lifecycle_wake_pipe[1] = -1;
+  }
+}
+
+static void drain_game_lifecycle_wake_pipe(void) {
+  char drain_buf[32];
+  while (read(g_game_lifecycle_wake_pipe[0], drain_buf, sizeof(drain_buf)) > 0) {
+  }
+}
+
+static bool discard_game_lifecycle_events_nowait(int kq) {
+  struct kevent events[16];
+  struct timespec timeout;
+  memset(&timeout, 0, sizeof(timeout));
+
+  while (true) {
+    int nev = kevent(kq, NULL, 0, events, sizeof(events) / sizeof(events[0]),
+                     &timeout);
+    if (nev < 0) {
+      if (errno == EINTR)
+        continue;
+      log_debug("  [GAME] stale event drain failed: %s", strerror(errno));
+      return false;
+    }
+    if (nev == 0)
+      return true;
   }
 }
 
@@ -375,6 +401,23 @@ static void handle_game_exit(pid_t pid) {
   sm_kstuff_game_on_exit(pid);
 }
 
+static void restore_suspended_game_if_alive(int kq, pid_t pid) {
+  if (pid <= 0 || !is_process_alive(pid))
+    return;
+
+  char title_id[MAX_TITLE_ID];
+  uint32_t app_id = 0;
+  if (!resolve_game_title_id(pid, title_id, &app_id))
+    return;
+  if (!is_supported_title_id(title_id))
+    return;
+
+  uint64_t now_us = monotonic_time_us();
+  log_debug("  [GAME] resumed: %s pid=%ld app_id=0x%08X", title_id,
+            (long)pid, app_id);
+  (void)dispatch_game_launch(kq, pid, now_us, title_id, app_id);
+}
+
 static void *game_lifecycle_watcher_main(void *arg) {
   (void)arg;
 
@@ -415,7 +458,41 @@ static void *game_lifecycle_watcher_main(void *arg) {
   set_game_lifecycle_start_result(true);
   log_debug("  [GAME] lifecycle watcher started");
 
+  bool sleep_cleanup_done = false;
+  pid_t suspended_game_pid = 0;
   while (!g_game_lifecycle_stop_requested && !should_stop_requested()) {
+    if (runtime_sleep_mode_active()) {
+      if (!sleep_cleanup_done) {
+        suspended_game_pid = atomic_load(&g_active_game_pid);
+        clear_all_pending_game_launches();
+        sm_fakelib_game_shutdown();
+        sm_kstuff_game_shutdown();
+        publish_active_game_pid(0);
+        sleep_cleanup_done = true;
+      }
+
+      fd_set readfds;
+      FD_ZERO(&readfds);
+      FD_SET(g_game_lifecycle_wake_pipe[0], &readfds);
+      int rc = select(g_game_lifecycle_wake_pipe[0] + 1, &readfds, NULL, NULL,
+                      NULL);
+      if (rc < 0) {
+        if (errno == EINTR)
+          continue;
+        log_debug("  [GAME] sleep wait failed: %s", strerror(errno));
+        break;
+      }
+      drain_game_lifecycle_wake_pipe();
+      continue;
+    }
+    if (sleep_cleanup_done) {
+      if (!discard_game_lifecycle_events_nowait(kq))
+        break;
+      sleep_cleanup_done = false;
+      restore_suspended_game_if_alive(kq, suspended_game_pid);
+      suspended_game_pid = 0;
+    }
+
     struct kevent event;
     struct timespec timeout;
     const struct timespec *timeout_ptr = compute_game_wait_timeout(&timeout);
@@ -431,9 +508,7 @@ static void *game_lifecycle_watcher_main(void *arg) {
     if (nev > 0) {
       if (event.filter == EVFILT_READ &&
           event.ident == (uintptr_t)g_game_lifecycle_wake_pipe[0]) {
-        char drain_buf[32];
-        (void)read(g_game_lifecycle_wake_pipe[0], drain_buf,
-                   sizeof(drain_buf));
+        drain_game_lifecycle_wake_pipe();
       } else if ((event.fflags & NOTE_TRACKERR) != 0) {
         log_debug("  [GAME] NOTE_TRACKERR for pid=%ld", (long)event.ident);
       } else {
@@ -444,6 +519,8 @@ static void *game_lifecycle_watcher_main(void *arg) {
       }
     }
 
+    if (runtime_sleep_mode_active())
+      continue;
     poll_game_modules(kq);
   }
 

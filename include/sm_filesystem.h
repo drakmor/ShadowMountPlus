@@ -35,11 +35,13 @@ bool mount_backport_overlay(const char *mount_point,
                             const char *title_id);
 // Unmount all managed /system_ex/app/<title_id> mount stacks on shutdown.
 void shutdown_title_mounts(void);
-// Return true when path is equal to root or is under it.
-bool path_matches_root_or_child(const char *path, const char *root);
 // Remove stale mount links and optionally restore image-backed mounts.
 void cleanup_mount_links(const char *removed_source_root,
                          bool unmount_system_ex_bind);
+// Unmount and remove title links that point under a source root.
+void cleanup_mount_links_for_source_unmount(const char *source_root);
+// Unmount and remove title links backed by USB sources or USB-backed images.
+void cleanup_usb_mount_links_for_suspend(void);
 // Recursively copy a directory tree.
 int copy_dir(const char *src, const char *dst);
 // Copy a single file.

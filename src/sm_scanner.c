@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/event.h>
+#include <sys/select.h>
 
 #include "sm_config_mount.h"
 #include "sm_fakelib.h"
@@ -886,7 +887,7 @@ static void apply_runtime_config_reload_effects(const runtime_config_t *old_cfg,
 }
 
 static bool should_abort_scan_cycle(void) {
-  return should_stop_requested();
+  return should_stop_requested() || runtime_scan_blocked();
 }
 
 static bool run_full_scan_cycle(bool startup_sync, const char *reason,
@@ -937,7 +938,7 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
                        total_found_games);
   }
 
-  return !should_stop_requested();
+  return !should_abort_scan_cycle();
 }
 
 static bool run_targeted_scan_cycle(int scan_root_index,
@@ -971,7 +972,7 @@ static bool run_targeted_scan_cycle(int scan_root_index,
   if (unstable_found_out)
     *unstable_found_out = unstable_found;
 
-  return !should_stop_requested();
+  return !should_abort_scan_cycle();
 }
 
 static int find_pending_cleanup_scan_root(void) {
@@ -1177,6 +1178,24 @@ static bool drain_scanner_events_nowait(int kq) {
   return true;
 }
 
+static bool discard_scanner_events_nowait(int kq) {
+  struct kevent events[SCANNER_EVENT_BATCH];
+  struct timespec timeout;
+  memset(&timeout, 0, sizeof(timeout));
+
+  while (true) {
+    int nev = kevent(kq, NULL, 0, events, SCANNER_EVENT_BATCH, &timeout);
+    if (nev < 0) {
+      if (errno == EINTR)
+        continue;
+      log_debug("  [SCAN] stale event drain failed: %s", strerror(errno));
+      return false;
+    }
+    if (nev == 0)
+      return true;
+  }
+}
+
 static char g_scanner_shutdown_reason[128];
 
 static void request_scanner_shutdown(const char *reason) {
@@ -1237,10 +1256,19 @@ void sm_scanner_wake(void) {
 }
 
 bool sm_scanner_run_startup_sync(void) {
-  if (should_stop_requested())
-    return false;
+  while (!should_stop_requested()) {
+    while (runtime_scan_blocked() && !should_stop_requested())
+      sceKernelUsleep(200000);
 
-  return run_full_scan_cycle(true, NULL, NULL);
+    if (should_stop_requested())
+      return false;
+    if (run_full_scan_cycle(true, NULL, NULL))
+      return true;
+    if (!runtime_scan_blocked())
+      return false;
+  }
+
+  return false;
 }
 
 void sm_scanner_run_loop(void) {
@@ -1281,6 +1309,7 @@ void sm_scanner_run_loop(void) {
 
   uint64_t next_full_resync_us =
       monotonic_time_us() + scanner_full_resync_interval_us();
+  bool was_sleeping = false;
 
   while (true) {
     if (should_stop_requested()) {
@@ -1288,11 +1317,42 @@ void sm_scanner_run_loop(void) {
       break;
     }
 
+    if (runtime_scan_blocked()) {
+      was_sleeping = true;
+      fd_set readfds;
+      FD_ZERO(&readfds);
+      FD_SET(g_scanner_wake_pipe[0], &readfds);
+      int rc = select(g_scanner_wake_pipe[0] + 1, &readfds, NULL, NULL, NULL);
+      if (rc < 0) {
+        if (errno == EINTR)
+          continue;
+        log_debug("  [SCAN] sleep wait failed: %s", strerror(errno));
+        close(kq);
+        clear_scanner_watch_entries();
+        request_scanner_shutdown("scanner sleep wait failed");
+        return;
+      }
+      drain_scanner_wake_pipe();
+      continue;
+    }
+    if (was_sleeping) {
+      was_sleeping = false;
+      if (!discard_scanner_events_nowait(kq)) {
+        close(kq);
+        clear_scanner_watch_entries();
+        request_scanner_shutdown("scanner stale event drain failed");
+        return;
+      }
+    }
+
     char scan_reason[128];
     if (consume_scan_now_request(scan_reason, sizeof(scan_reason))) {
       bool unstable_found = false;
-      if (!run_full_scan_cycle(false, scan_reason, &unstable_found))
+      if (!run_full_scan_cycle(false, scan_reason, &unstable_found)) {
+        if (runtime_scan_blocked())
+          continue;
         break;
+      }
       clear_all_dirty_scan_roots();
       if (!rebuild_all_scan_root_watch_trees(kq) ||
           !drain_scanner_events_nowait(kq)) {
@@ -1354,8 +1414,11 @@ void sm_scanner_run_loop(void) {
 
     if (next_full_resync_us != 0 && now_us >= next_full_resync_us) {
       bool unstable_found = false;
-      if (!run_full_scan_cycle(false, NULL, &unstable_found))
+      if (!run_full_scan_cycle(false, NULL, &unstable_found)) {
+        if (runtime_scan_blocked())
+          continue;
         break;
+      }
       clear_all_dirty_scan_roots();
       if (!rebuild_all_scan_root_watch_trees(kq) ||
           !drain_scanner_events_nowait(kq)) {
@@ -1384,6 +1447,8 @@ void sm_scanner_run_loop(void) {
 
     int dirty_root_index = find_due_dirty_scan_root(now_us);
     if (dirty_root_index >= 0) {
+      bool cleanup_pending =
+          g_scanner_root_states[dirty_root_index].cleanup_pending;
       bool rebuild_watch_tree =
           g_scanner_root_states[dirty_root_index].watch_tree_stale;
       uint8_t rebuild_watch_tree_depth =
@@ -1401,8 +1466,25 @@ void sm_scanner_run_loop(void) {
       clear_scan_root_watch_tree_state(dirty_root_index);
 
       bool unstable_found = false;
-      if (!run_targeted_scan_cycle(dirty_root_index, &unstable_found))
+      if (!run_targeted_scan_cycle(dirty_root_index, &unstable_found)) {
+        if (runtime_scan_blocked()) {
+          scanner_root_state_t *state =
+              &g_scanner_root_states[dirty_root_index];
+          if (cleanup_pending)
+            schedule_scan_root_cleanup(dirty_root_index);
+          schedule_scan_root_dirty(dirty_root_index, monotonic_time_us(), true);
+          if (rebuild_watch_tree) {
+            state->watch_tree_stale = true;
+            state->watch_tree_rebuild_depth = rebuild_watch_tree_depth;
+            state->watch_tree_rebuild_kind = rebuild_watch_tree_kind;
+            (void)strlcpy(state->watch_tree_rebuild_path,
+                          rebuild_watch_tree_path,
+                          sizeof(state->watch_tree_rebuild_path));
+          }
+          continue;
+        }
         break;
+      }
 
       if (rebuild_watch_tree &&
           !rebuild_scan_root_watch_subtree(kq, dirty_root_index,

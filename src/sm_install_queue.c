@@ -7,6 +7,7 @@
 #include "sm_game_cache.h"
 #include "sm_limits.h"
 #include "sm_log.h"
+#include "sm_runtime.h"
 #include "sm_time.h"
 #include "sm_title_state.h"
 
@@ -265,6 +266,9 @@ static void poll_pending_installs(void) {
 }
 
 uint64_t sm_install_next_wake_us(uint64_t now_us) {
+  if (runtime_scan_blocked())
+    return 0;
+
   if (!install_queue_active())
     return 0;
 
@@ -290,10 +294,16 @@ uint64_t sm_install_next_wake_us(uint64_t now_us) {
 }
 
 void sm_install_poll_pending(void) {
+  if (runtime_scan_blocked())
+    return;
+
   poll_pending_installs();
 }
 
 void sm_install_service_pending(void) {
+  if (runtime_scan_blocked())
+    return;
+
   if (!install_queue_active())
     return;
 
@@ -379,6 +389,9 @@ static void drop_queued_install_entry(pending_install_entry_t *entry) {
 }
 
 bool sm_install_submit_queued(void) {
+  if (runtime_scan_blocked())
+    return true;
+
   int queued_count = count_queued_installs();
   if (queued_count <= 0)
     return true;
