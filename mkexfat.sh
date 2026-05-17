@@ -1,17 +1,75 @@
 #!/bin/sh
 # For WSL2/Ubuntu/Debian: sudo apt-get install -y exfatprogs exfat-fuse fuse3 rsync
 # Create an exFAT image from a directory
-# Usage: mkexfat.sh <input_dir> [output_file]
+# Usage: mkexfat.sh [-t tmp_dir|--tmp-dir tmp_dir] <input_dir> [output_file]
 
 set -e
 
-if [ -z "$1" ]; then
-    echo "Usage: $0 <input_dir> [output_file]"
+TMP_BASE="/tmp"
+INPUT_DIR=""
+OUTPUT=""
+
+usage() {
+    echo "Usage: $0 [-t tmp_dir|--tmp-dir tmp_dir|--temp-dir tmp_dir] <input_dir> [output_file]"
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -t|--tmp-dir|--temp-dir)
+            if [ -z "$2" ]; then
+                echo "Error: missing value for $1"
+                usage
+                exit 1
+            fi
+            TMP_BASE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            while [ $# -gt 0 ]; do
+                if [ -z "$INPUT_DIR" ]; then
+                    INPUT_DIR="$1"
+                elif [ -z "$OUTPUT" ]; then
+                    OUTPUT="$1"
+                else
+                    echo "Error: too many positional arguments"
+                    usage
+                    exit 1
+                fi
+                shift
+            done
+            break
+            ;;
+        -*)
+            echo "Error: unknown option: $1"
+            usage
+            exit 1
+            ;;
+        *)
+            if [ -z "$INPUT_DIR" ]; then
+                INPUT_DIR="$1"
+            elif [ -z "$OUTPUT" ]; then
+                OUTPUT="$1"
+            else
+                echo "Error: too many positional arguments"
+                usage
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$INPUT_DIR" ]; then
+    usage
     exit 1
 fi
 
-INPUT_DIR="$1"
-OUTPUT="${2:-test.exfat}"
+OUTPUT="${OUTPUT:-test.exfat}"
 
 if [ ! -d "$INPUT_DIR" ]; then
     echo "Error: input directory not found: $INPUT_DIR"
@@ -20,6 +78,11 @@ fi
 
 if [ ! -f "$INPUT_DIR/eboot.bin" ]; then
     echo "Error: eboot.bin not found in source directory: $INPUT_DIR"
+    exit 1
+fi
+
+if [ ! -d "$TMP_BASE" ]; then
+    echo "Error: temp directory not found: $TMP_BASE"
     exit 1
 fi
 
@@ -84,13 +147,26 @@ echo "Input size (exFAT alloc): $DATA_BYTES bytes"
 echo "Files: $FILE_COUNT, Dirs: $DIR_COUNT"
 echo "exFAT profile: -c $MKFS_CLUSTER_ARG (avg file=$AVG_FILE_BYTES bytes)"
 echo "Image size: ${MB}MB"
+echo "Temp directory: $TMP_BASE"
 
 truncate -s "${MB}M" "$OUTPUT"
 mkfs.exfat -c "$MKFS_CLUSTER_ARG" "$OUTPUT"
-mkdir -p /mnt/exfat
-mount -t exfat-fuse -o loop "$OUTPUT" /mnt/exfat
-rsync -r --info=progress2 "$INPUT_DIR"/ /mnt/exfat/
+MOUNT_DIR=$(mktemp -d "$TMP_BASE/mkexfat.XXXXXX")
 
-umount /mnt/exfat
+cleanup() {
+    if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
+        umount "$MOUNT_DIR" || true
+    fi
+    rmdir "$MOUNT_DIR" 2>/dev/null || true
+}
+
+trap cleanup EXIT INT TERM
+
+# exfat-fuse can open a plain file without a kernel loop device.  mount -o loop
+# uses libmount/losetup and can fail on some removable exFAT targets (~large images).
+if ! mount -t exfat-fuse "$OUTPUT" "$MOUNT_DIR"; then
+    mount -t exfat-fuse -o loop "$OUTPUT" "$MOUNT_DIR"
+fi
+rsync -r --info=progress2 "$INPUT_DIR"/ "$MOUNT_DIR"/
 
 echo "Created $OUTPUT"

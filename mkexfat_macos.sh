@@ -1,19 +1,79 @@
 #!/bin/sh
 # macOS exFAT image builder — requires macOS 10.6.5+ (exFAT and rsync built-in)
-# Usage: mkexfat_macos.sh <input_dir> [output_file]
+# Usage: mkexfat_macos.sh [-t tmp_dir|--tmp-dir tmp_dir|--temp-dir tmp_dir] <input_dir> [output_file]
 # (c) @drakmor,@betmoar
 
 set -e
 
 # ── argument validation ───────────────────────────────────────────────────────
 
-if [ -z "$1" ]; then
-    echo "Usage: $0 <input_dir> [output_file]"
+USE_TMP_BASE=0
+TMP_BASE=""
+INPUT_DIR=""
+OUTPUT=""
+
+usage() {
+    echo "Usage: $0 [-t tmp_dir|--tmp-dir tmp_dir|--temp-dir tmp_dir] <input_dir> [output_file]"
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -t|--tmp-dir|--temp-dir)
+            if [ -z "$2" ]; then
+                echo "Error: missing value for $1"
+                usage
+                exit 1
+            fi
+            USE_TMP_BASE=1
+            TMP_BASE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            while [ $# -gt 0 ]; do
+                if [ -z "$INPUT_DIR" ]; then
+                    INPUT_DIR="$1"
+                elif [ -z "$OUTPUT" ]; then
+                    OUTPUT="$1"
+                else
+                    echo "Error: too many positional arguments"
+                    usage
+                    exit 1
+                fi
+                shift
+            done
+            break
+            ;;
+        -*)
+            echo "Error: unknown option: $1"
+            usage
+            exit 1
+            ;;
+        *)
+            if [ -z "$INPUT_DIR" ]; then
+                INPUT_DIR="$1"
+            elif [ -z "$OUTPUT" ]; then
+                OUTPUT="$1"
+            else
+                echo "Error: too many positional arguments"
+                usage
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$INPUT_DIR" ]; then
+    usage
     exit 1
 fi
 
-INPUT_DIR="$1"
-OUTPUT="${2:-test.exfat}"
+OUTPUT="${OUTPUT:-test.exfat}"
 # newfs_exfat interprets relative paths as device names under /dev/ — resolve to absolute
 OUTPUT="$(cd "$(dirname "$OUTPUT")" && pwd)/$(basename "$OUTPUT")"
 
@@ -25,6 +85,13 @@ fi
 if [ ! -f "$INPUT_DIR/eboot.bin" ]; then
     echo "Error: eboot.bin not found in source directory: $INPUT_DIR"
     exit 1
+fi
+
+if [ "$USE_TMP_BASE" -eq 1 ]; then
+    if [ ! -d "$TMP_BASE" ]; then
+        echo "Error: temp directory not found: $TMP_BASE"
+        exit 1
+    fi
 fi
 
 # ── sizing constants ──────────────────────────────────────────────────────────
@@ -40,7 +107,11 @@ ENTRY_META_BYTES=256
 # Single filesystem traversal: collect all file sizes into a temp file.
 # FILE_COUNT and RAW_FILE_BYTES are derived from it in one awk pass.
 # DIR_COUNT needs a separate traversal (different -type).
-SIZES_FILE=$(mktemp)
+if [ "$USE_TMP_BASE" -eq 1 ]; then
+    SIZES_FILE=$(mktemp "$TMP_BASE/mkexfat_sizes.XXXXXX")
+else
+    SIZES_FILE=$(mktemp)
+fi
 MOUNT_POINT=""
 LOOP_DEVICE=""
 
@@ -104,10 +175,17 @@ echo "Input size (exFAT alloc): $DATA_BYTES bytes"
 echo "Files: $FILE_COUNT, Dirs: $DIR_COUNT"
 echo "exFAT profile: -b ${CLUSTER_SIZE} (avg file=$AVG_FILE_BYTES bytes)"
 echo "Image size: ${MB}MB"
+if [ "$USE_TMP_BASE" -eq 1 ]; then
+    echo "Temp directory: $TMP_BASE"
+fi
 
 # ── create, attach, format, mount ────────────────────────────────────────────
 
-MOUNT_POINT=$(mktemp -d)
+if [ "$USE_TMP_BASE" -eq 1 ]; then
+    MOUNT_POINT=$(mktemp -d "$TMP_BASE/mkexfat.XXXXXX")
+else
+    MOUNT_POINT=$(mktemp -d)
+fi
 
 # mkfile -n creates a sparse file without writing zeros (equivalent to Linux truncate)
 mkfile -n "${MB}m" "$OUTPUT"
