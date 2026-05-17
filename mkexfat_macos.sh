@@ -75,7 +75,16 @@ fi
 
 OUTPUT="${OUTPUT:-test.exfat}"
 # newfs_exfat interprets relative paths as device names under /dev/ — resolve to absolute
-OUTPUT="$(cd "$(dirname "$OUTPUT")" && pwd)/$(basename "$OUTPUT")"
+OUT_DIR="$(dirname "$OUTPUT")"
+if [ ! -d "$OUT_DIR" ]; then
+    echo "Error: output directory not found: $OUT_DIR (for output $OUTPUT)"
+    exit 1
+fi
+if [ ! -w "$OUT_DIR" ] || [ ! -x "$OUT_DIR" ]; then
+    echo "Error: output directory is not writable: $OUT_DIR (for output $OUTPUT)"
+    exit 1
+fi
+OUTPUT="$(cd "$OUT_DIR" && pwd)/$(basename "$OUTPUT")"
 
 if [ ! -d "$INPUT_DIR" ]; then
     echo "Error: input directory not found: $INPUT_DIR"

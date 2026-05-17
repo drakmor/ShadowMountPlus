@@ -85,6 +85,10 @@ if [ ! -d "$TMP_BASE" ]; then
     echo "Error: temp directory not found: $TMP_BASE"
     exit 1
 fi
+if [ ! -w "$TMP_BASE" ] || [ ! -x "$TMP_BASE" ]; then
+    echo "Error: temp directory is not writable/executable: $TMP_BASE"
+    exit 1
+fi
 
 # More accurate sizing for exFAT:
 # - file payload rounded to cluster size

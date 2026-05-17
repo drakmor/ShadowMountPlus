@@ -143,7 +143,15 @@ function Initialize-ScriptTempDir([string]$dir) {
   if (-not (Test-Path -LiteralPath $resolved -PathType Container)) {
     throw "Temp directory not found: $resolved"
   }
-  $script:ScriptTempDir = (Resolve-Path -LiteralPath $resolved).Path
+  $resolvedPath = (Resolve-Path -LiteralPath $resolved).Path
+  $probe = Join-Path $resolvedPath ([System.IO.Path]::GetRandomFileName())
+  try {
+    Set-Content -LiteralPath $probe -Value "" -NoNewline
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+  } catch {
+    throw "Temp directory is not writable: $resolvedPath"
+  }
+  $script:ScriptTempDir = $resolvedPath
   $env:TEMP = $script:ScriptTempDir
   $env:TMP = $script:ScriptTempDir
   Write-Host "[Info] Temp directory: $script:ScriptTempDir"
