@@ -2,6 +2,9 @@
 
 **Repository:** https://github.com/drakmor/shadowMountPlus
 
+**Discord:** https://discord.gg/hVnfFMHK
+
+
 **Warning! Mounting images can cause shutdown problems and data corruption on internal drives! This depends on many factors, but is more common with older firmware versions. Please take this into account when testing.**
 
 
@@ -11,7 +14,7 @@
 **Compatibility:** Supports all Jailbroken PS5 firmwares running **[Kstuff-lite v1.05+](https://github.com/EchoStretch/kstuff-lite)**.
 
 
-**💜 Support Development**
+## 💜 Support Development
 
  If you want to support this project, you can donate
  - USDT (TRC-20):  **`TKaUGEwMm9KBXzEoiaaKYBX2yCHAKASW3p`**
