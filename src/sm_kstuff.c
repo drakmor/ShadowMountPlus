@@ -7,6 +7,7 @@
 #include "sm_log.h"
 #include "sm_mdbg.h"
 #include "sm_path_utils.h"
+#include "sm_runtime.h"
 #include "sm_time.h"
 #include "sm_types.h"
 
@@ -818,7 +819,12 @@ void sm_kstuff_game_poll(void) {
 
 void sm_kstuff_game_shutdown(void) {
   bool restore_needed = tracked_game_requires_restore();
-  if (g_kstuff.sleep_pause_restore) {
+  if (restore_needed && !g_kstuff.sleep_pause_restore &&
+      runtime_sleep_mode_active() && should_stop_requested()) {
+    restore_needed = false;
+    g_kstuff.restore_on_empty = false;
+    g_kstuff.restore_retry_us = 0;
+  } else if (g_kstuff.sleep_pause_restore) {
     restore_needed = true;
     g_kstuff.sleep_pause_restore = false;
   }
