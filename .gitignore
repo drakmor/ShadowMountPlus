@@ -6,3 +6,7 @@ notify.txt
 src/notify_icon_asset.c
 refs/*
 docs/*
+.idea/
+.vscode/
+/pacbrew-repo/
+/src/libkernel_sys_ext.so
