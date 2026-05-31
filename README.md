@@ -339,7 +339,7 @@ chmod +x build.sh
 
 **Optional:**
 - `SMP_FORCE_REBUILD_IMAGE=1` to rebuild the cached Docker image before building  
-  ```
+  ```bash
     SMP_FORCE_REBUILD_IMAGE=1 ./build.sh
   ```
 

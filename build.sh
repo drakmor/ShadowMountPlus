@@ -79,15 +79,20 @@ DEFAULT_LOCAL_BUILD_IMAGE="smp-build-cache:$(sanitize_image_key "$DOCKER_IMAGE")
 LOCAL_BUILD_IMAGE="$DEFAULT_LOCAL_BUILD_IMAGE"
 FORCE_REBUILD_IMAGE="${SMP_FORCE_REBUILD_IMAGE:-0}"
 APT_PACKAGES_INLINE="$(printf '%s ' "${APT_PACKAGES[@]}")"
+NO_CACHE_FLAG=""
+
+if [[ "$FORCE_REBUILD_IMAGE" == "1" ]]; then
+  NO_CACHE_FLAG="--no-cache"
+fi
 
 if [[ "$FORCE_REBUILD_IMAGE" == "1" ]] || ! docker image inspect "$LOCAL_BUILD_IMAGE" >/dev/null 2>&1; then
   log "Preparing cached build image: $LOCAL_BUILD_IMAGE"
-  docker build -t "$LOCAL_BUILD_IMAGE" -f - "$ROOT_DIR" <<EOF
+  docker build $NO_CACHE_FLAG -t "$LOCAL_BUILD_IMAGE" -f - "$ROOT_DIR" <<EOF
 FROM $DOCKER_IMAGE
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y $APT_PACKAGES_INLINE && rm -rf /var/lib/apt/lists/*
 RUN useradd -m -s /bin/bash smpbuilder
 RUN git clone --depth 1 https://github.com/ps5-payload-dev/pacbrew-repo /opt/pacbrew-repo
-RUN git clone --depth 1 https://github.com/ps5-payload-dev/sdk /opt/ps5-sdk
+COPY ps5-sdk/sce_stubs /opt/ps5-sdk/sce_stubs
 RUN chown -R smpbuilder:smpbuilder /opt/pacbrew-repo /opt/ps5-sdk
 RUN ln -sf /proc/self/mounts /etc/mtab
 RUN su - smpbuilder -c 'cd /opt/pacbrew-repo/sdk && makepkg -c -f'
