@@ -128,6 +128,57 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
 
   if (closedir(d) != 0)
     ok = false;
+
+  return ok;
+}
+
+static bool copy_optional_trophy_metadata_file(const char *src_sce_sys,
+                                               const char *dst_base,
+                                               const char *relative_path) {
+  char src_path[MAX_PATH];
+  char dst_path[MAX_PATH];
+
+  snprintf(src_path, sizeof(src_path), "%s/%s", src_sce_sys, relative_path);
+  if (access(src_path, F_OK) != 0)
+    return true;
+
+  snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_base, relative_path);
+  if (access(dst_path, F_OK) == 0)
+    return true;
+
+  if (copy_file(src_path, dst_path) == 0)
+    return true;
+
+  log_debug("  [COPY] Failed to copy trophy metadata: %s -> %s", src_path,
+            dst_path);
+  return false;
+}
+
+static bool update_trophy_metadata(const char *title_id,
+                                   const char *src_sce_sys) {
+  char dst_base[MAX_PATH];
+  char dst_dir[MAX_PATH];
+  bool ok = true;
+
+  snprintf(dst_base, sizeof(dst_base), "/system_data/priv/appmeta/%s",
+           title_id);
+  mkdir("/system_data/priv/appmeta", 0755);
+  mkdir(dst_base, 0755);
+
+  snprintf(dst_dir, sizeof(dst_dir), "%s/trophy2", dst_base);
+  mkdir(dst_dir, 0755);
+  snprintf(dst_dir, sizeof(dst_dir), "%s/uds", dst_base);
+  mkdir(dst_dir, 0755);
+
+  if (!copy_optional_trophy_metadata_file(src_sce_sys, dst_base,
+                                          "trophy2/npbind.dat"))
+    ok = false;
+  if (!copy_optional_trophy_metadata_file(src_sce_sys, dst_base,
+                                          "uds/npbind.dat"))
+    ok = false;
+  if (!copy_optional_trophy_metadata_file(src_sce_sys, dst_base, "param.json"))
+    ok = false;
+
   return ok;
 }
 
@@ -163,6 +214,7 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     }
   }
 
+  snprintf(src_sce_sys, sizeof(src_sce_sys), "%s/sce_sys", src_path);
   appmeta_missing = !has_appmeta_data(title_id);
   if (is_remount && appmeta_missing) {
     log_debug("  [REG] appmeta missing, restaging metadata only: %s", title_id);
@@ -175,13 +227,10 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     return false;
 
   // COPY FILES
-  if (restage_staging || restage_appmeta) {
-    snprintf(src_sce_sys, sizeof(src_sce_sys), "%s/sce_sys", src_path);
-    snprintf(src_snd0, sizeof(src_snd0), "%s/snd0.at9", src_sce_sys);
-    has_src_snd0 = path_exists(src_snd0);
-  } else {
+  snprintf(src_snd0, sizeof(src_snd0), "%s/snd0.at9", src_sce_sys);
+  has_src_snd0 = path_exists(src_snd0);
+  if (!restage_staging && !restage_appmeta)
     log_debug("  [SPEED] Skipping file copy (Assets already exist)");
-  }
 
   if (restage_staging) {
     mkdir(APP_BASE, 0777);
@@ -215,6 +264,9 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     }
     metadata_restaged = true;
   }
+
+  if (!update_trophy_metadata(title_id, src_sce_sys))
+    return false;
 
   if (should_stop_requested() || runtime_sleep_mode_active())
     return false;
@@ -279,11 +331,6 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     }
     log_debug("  [REG] Skip (already present in app.db)");
     return true;
-  }
-
-  if (!metadata_restaged) {
-    snprintf(src_snd0, sizeof(src_snd0), "%s/sce_sys/snd0.at9", src_path);
-      has_src_snd0 = path_exists(src_snd0);
   }
 
   if (use_app_install_all) {
