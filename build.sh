@@ -106,6 +106,10 @@ RUNTIME_IMAGE="$LOCAL_BUILD_IMAGE"
 BUILD_CMD=$(cat <<'EOF'
   set -euo pipefail
   cd /workspace
+  test -f /opt/ps5-sdk/sce_stubs/libkernel_sys.c || {
+    printf '[BUILD] Missing required stub: %s\n' /opt/ps5-sdk/sce_stubs/libkernel_sys.c
+    exit 1
+  }
   make clean all PS5_SCE_STUBS_DIR="/opt/ps5-sdk/sce_stubs"
 EOF
 )
