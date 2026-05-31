@@ -8,5 +8,4 @@ refs/*
 docs/*
 .idea/
 .vscode/
-/pacbrew-repo/
 /src/libkernel_sys_ext.so

@@ -337,9 +337,11 @@ chmod +x build.sh
 ./build.sh
 ```
 
-Artifact: `shadowmountplus.elf` (repository root)  
-Optional: `SMP_DOCKER_IMAGE` (default: `ubuntu:24.04`)  
-If Docker is unavailable, `build.sh` prints a friendly message and exits.
+**Optional:**
+- `SMP_FORCE_REBUILD_IMAGE=1` to rebuild the cached Docker image before building  
+  ```
+    SMP_FORCE_REBUILD_IMAGE=1 ./build.sh
+  ```
 
 ### CI
 

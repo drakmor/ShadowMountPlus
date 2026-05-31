@@ -1,13 +1,39 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# Build shadowmountplus.elf locally using Docker.
+# Usage:
+#  ./build.sh
+# Usage with cache disabled:
+#  SMP_FORCE_REBUILD_IMAGE=1 ./build.sh
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_IMAGE="${SMP_DOCKER_IMAGE:-ubuntu:24.04}"
+APT_PACKAGES=(
+  autoconf
+  automake
+  build-essential
+  clang-18
+  curl
+  git
+  libarchive-tools
+  libtool
+  lld-18
+  makepkg
+  meson
+  pacman-package-manager
+  pkg-config
+  tcl
+  xxd
+  zip
+)
 
+# log prints a consistently prefixed status/error message.
 log() {
-  printf '[build.sh] %s\n' "$*"
+  printf '[BUILD] %s\n' "$*"
 }
 
+# usage prints command-line help for this build entrypoint.
 usage() {
   cat <<'EOF'
 Build shadowmountplus.elf locally using Docker.
@@ -16,7 +42,7 @@ Usage:
   ./build.sh
 
 Optional env vars:
-  SMP_DOCKER_IMAGE   Docker image for the Linux build environment (default: ubuntu:24.04)
+  SMP_FORCE_REBUILD_IMAGE=1   Rebuild the cached Docker image before build
 EOF
 }
 
@@ -42,69 +68,54 @@ if ! docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
   docker pull "$DOCKER_IMAGE" >/dev/null
 fi
 
+sanitize_image_key() {
+  printf '%s' "$1" |
+    tr '[:upper:]' '[:lower:]' |
+    tr '/:@' '---' |
+    tr -cd '[:alnum:]._-'
+}
+
+DEFAULT_LOCAL_BUILD_IMAGE="smp-build-cache:$(sanitize_image_key "$DOCKER_IMAGE")"
+LOCAL_BUILD_IMAGE="$DEFAULT_LOCAL_BUILD_IMAGE"
+FORCE_REBUILD_IMAGE="${SMP_FORCE_REBUILD_IMAGE:-0}"
+APT_PACKAGES_INLINE="$(printf '%s ' "${APT_PACKAGES[@]}")"
+
+if [[ "$FORCE_REBUILD_IMAGE" == "1" ]] || ! docker image inspect "$LOCAL_BUILD_IMAGE" >/dev/null 2>&1; then
+  log "Preparing cached build image: $LOCAL_BUILD_IMAGE"
+  docker build -t "$LOCAL_BUILD_IMAGE" -f - "$ROOT_DIR" <<EOF
+FROM $DOCKER_IMAGE
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y $APT_PACKAGES_INLINE && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/bash smpbuilder
+RUN git clone --depth 1 https://github.com/ps5-payload-dev/pacbrew-repo /opt/pacbrew-repo
+RUN git clone --depth 1 https://github.com/ps5-payload-dev/sdk /opt/ps5-sdk
+RUN chown -R smpbuilder:smpbuilder /opt/pacbrew-repo /opt/ps5-sdk
+RUN ln -sf /proc/self/mounts /etc/mtab
+RUN su - smpbuilder -c 'cd /opt/pacbrew-repo/sdk && makepkg -c -f'
+RUN pacman --noconfirm -U /opt/pacbrew-repo/sdk/ps5-payload-*.pkg.tar.gz
+RUN su - smpbuilder -c 'cd /opt/pacbrew-repo/sqlite && makepkg -c -f'
+RUN pacman --noconfirm -U /opt/pacbrew-repo/sqlite/ps5-payload-*.pkg.tar.gz
+EOF
+else
+  log "Using cached build image: $LOCAL_BUILD_IMAGE"
+fi
+
+RUNTIME_IMAGE="$LOCAL_BUILD_IMAGE"
+
+# BUILD_CMD runs inside the container to install dependencies, prepare the
+# cached SDK components, and build the ELF.
 BUILD_CMD=$(cat <<'EOF'
-set -euo pipefail
-cd /workspace
-
-apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  autoconf \
-  automake \
-  build-essential \
-  clang-18 \
-  curl \
-  git \
-  libarchive-tools \
-  libtool \
-  lld-18 \
-  makepkg \
-  meson \
-  pacman-package-manager \
-  pkg-config \
-  tcl \
-  xxd \
-  zip
-
-HOST_UID="${HOST_UID:-1000}"
-HOST_GID="${HOST_GID:-1000}"
-BUILDER_USER="smpbuilder"
-
-if ! getent group "$BUILDER_USER" >/dev/null 2>&1; then
-  groupadd -g "$HOST_GID" "$BUILDER_USER" 2>/dev/null || groupadd "$BUILDER_USER"
-fi
-if ! id -u "$BUILDER_USER" >/dev/null 2>&1; then
-  useradd -m -s /bin/bash -u "$HOST_UID" -g "$BUILDER_USER" "$BUILDER_USER" || \
-    useradd -m -s /bin/bash -g "$BUILDER_USER" "$BUILDER_USER"
-fi
-
-if [ ! -d /workspace/pacbrew-repo/.git ]; then
-  rm -rf /workspace/pacbrew-repo
-  git clone --depth 1 https://github.com/ps5-payload-dev/pacbrew-repo /workspace/pacbrew-repo
-fi
-if [ ! -d /workspace/ps5-sdk/.git ]; then
-  rm -rf /workspace/ps5-sdk
-  git clone --depth 1 https://github.com/ps5-payload-dev/sdk /workspace/ps5-sdk
-fi
-
-su - "$BUILDER_USER" -c 'cd /workspace/pacbrew-repo/sdk && makepkg -c -f'
-pacman --noconfirm -U /workspace/pacbrew-repo/sdk/ps5-payload-*.pkg.tar.gz
-
-su - "$BUILDER_USER" -c 'cd /workspace/pacbrew-repo/sqlite && makepkg -c -f'
-pacman --noconfirm -U /workspace/pacbrew-repo/sqlite/ps5-payload-*.pkg.tar.gz
-
-cd /workspace
-make clean all PS5_SCE_STUBS_DIR="/workspace/ps5-sdk/sce_stubs"
-chown "$HOST_UID:$HOST_GID" /workspace/shadowmountplus.elf || true
+  set -euo pipefail
+  cd /workspace
+  make clean all PS5_SCE_STUBS_DIR="/opt/ps5-sdk/sce_stubs"
 EOF
 )
 
 log "Building in Docker..."
 docker run --rm \
-  -e HOST_UID="$(id -u)" \
-  -e HOST_GID="$(id -g)" \
+  --user "$(id -u):$(id -g)" \
   -v "$ROOT_DIR:/workspace" \
   -w /workspace \
-  "$DOCKER_IMAGE" \
+  "$RUNTIME_IMAGE" \
   /bin/bash -lc "$BUILD_CMD"
 
 if [[ ! -f "$ROOT_DIR/shadowmountplus.elf" ]]; then
