@@ -2,7 +2,7 @@
 
 **Repository:** https://github.com/drakmor/shadowMountPlus
 
-**Discord:** https://discord.gg/hVnfFMHK
+**Discord:** https://discord.gg/x2Ppvzwjhm
 
 
 **Warning! Mounting images can cause shutdown problems and data corruption on internal drives! This depends on many factors, but is more common with older firmware versions. Please take this into account when testing.**
