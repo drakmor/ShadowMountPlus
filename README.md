@@ -11,7 +11,7 @@
 **ShadowMountPlus** is a fully automated, background "Auto-Mounter" payload for Jailbroken PlayStation 5 consoles. It streamlines the game mounting process by eliminating the need for manual configuration or external tools (such as DumpRunner or Itemzflow). ShadowMountPlus automatically detects, mounts, and installs game dumps from both **internal and external storage**.
 
 
-**Compatibility:** Supports all Jailbroken PS5 firmwares running **[Kstuff-lite v1.05+](https://github.com/EchoStretch/kstuff-lite)**.
+**Compatibility:** Supports all Jailbroken PS5 firmwares running **[Kstuff-lite v1.07+](https://github.com/EchoStretch/kstuff-lite)**.
 
 
 ## 💜 Support Development
@@ -176,6 +176,86 @@ PFSC container layout requirement (`.ffpfsc`):
 - Place supported nested image files inside the container; ShadowMountPlus mounts those nested images and scans them for the game.
 - A nested `pfs_image.dat` file inside a PFSC container is treated as a PFS image.
 - `.ffpfsc` uses the nested outer PFS profile (`img_type=0x02`); `.ffpfs` and `pfs_image.dat` files mounted from inside it use the nested inner profile (`img_type=0x82`). Signature verification and GDDR5 cache setup are kept in code but currently disabled.
+
+## Compressed PFS containers (`.ffpfsc`)
+
+Compressed PFS mode is intended only for nested images. During packing, data is
+zero-padded to a `64 KB` sector boundary, so the compressed PFS should be used
+as an outer container for another image rather than as a direct game-file
+layout.
+
+Recommended layouts:
+- exFAT image inside compressed PFS.
+- Uncompressed PFS image inside compressed PFS.
+
+MkPFS uses zLib compression. Decompression is hardware-assisted, but throughput
+is limited to roughly `150-250 MB/s`. This is about one third of the speed of an
+external USB drive, FFPKG/exFAT images, or about one tenth of the internal drive
+speed. Keep this in mind when choosing which games to pack. Games that read large
+amounts of data or stream textures continuously may stutter.
+
+Use the official [PSBrew/MkPFS](https://github.com/PSBrew/MkPFS) tool to pack
+PFS images.
+
+### Packing an uncompressed PFS image into compressed PFS
+
+First create an uncompressed nested PFS image:
+
+```bash
+mkpfs pack folder --verify --no-compress --no-adjust-output-file-extension --version PS5 --inode-bits 32 \
+  './PPSA07923/PPSA07923-app' \
+  './pfs_image.dat'
+```
+
+Then pack the nested image into a compressed PFS container:
+
+```bash
+mkpfs pack file --verify --version PS5 --inode-bits 32 \
+  './pfs_image.dat' \
+  './PPSA12345.ffpfsc'
+```
+
+After successful packing, the temporary nested image can be removed:
+
+```bash
+rm './pfs_image.dat'
+```
+
+### Packing an exFAT image into compressed PFS
+
+First create a normal exFAT image using one of the methods from
+`Creating an exFAT image`. The nested exFAT image name must keep the `.exfat`
+extension, for example `PPSA12345.exfat`.
+
+Linux:
+
+```bash
+chmod +x mkexfat.sh
+./mkexfat.sh ./PPSA12345-app ./PPSA12345.exfat
+```
+
+Windows:
+
+```cmd
+make_image.bat "C:\images\PPSA12345.exfat" "C:\payload\PPSA12345-app"
+```
+
+The exFAT image must contain the game files at the image root, without an extra
+top-level folder.
+
+Then pack the exFAT image into a compressed PFS container:
+
+```bash
+mkpfs pack file --verify --version PS5 --inode-bits 32 \
+  './PPSA12345.exfat' \
+  './PPSA12345.ffpfsc'
+```
+
+After successful packing, the temporary exFAT image can be removed:
+
+```bash
+rm './PPSA12345.exfat'
+```
 
 ## Scan paths
 
@@ -372,5 +452,6 @@ If a game is mounted but does not start:
     * Gezine
     * earthonion
     * LightningMods
+    * RenanGBarreto for his excellent https://github.com/PSBrew/MkPFS
     * john-tornblom for SDK
     * PS5 R&D Community
