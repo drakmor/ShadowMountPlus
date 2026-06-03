@@ -65,6 +65,7 @@ static bool ensure_notification_icon_present(void) {
 }
 
 void sm_notifications_init(void) {
+  sm_l10n_init();
   pthread_mutex_lock(&g_notifications_mutex);
   if (!g_notifications_initialized)
     g_notifications_initialized = ensure_notification_icon_present();
@@ -154,6 +155,10 @@ static bool send_rich_notification(const char *message) {
   append_json_escaped(escaped_message, sizeof(escaped_message), message);
   append_json_escaped(escaped_version, sizeof(escaped_version),
                       SHADOWMOUNT_VERSION);
+  char escaped_action[256];
+  escaped_action[0] = '\0';
+  append_json_escaped(escaped_action, sizeof(escaped_action),
+                      sm_l10n_get(SM_L10N_ACTION_DEBUG_SETTINGS));
   if (!build_notification_metadata(created_at, notification_id,
                                    sizeof(notification_id))) {
     return false;
@@ -186,7 +191,7 @@ static bool send_rich_notification(const char *message) {
       "      },\n"
       "      \"actions\": [\n"
       "        {\n"
-      "          \"actionName\": \"Go to Debug Settings\",\n"
+      "          \"actionName\": \"%s\",\n"
       "          \"actionType\": \"DeepLink\",\n"
       "          \"defaultFocus\": true,\n"
       "          \"parameters\": {\n"
@@ -214,7 +219,7 @@ static bool send_rich_notification(const char *message) {
       "  \"createdDateTime\": \"%s\",\n"
       "  \"localNotificationId\": \"%s\"\n"
       "}",
-      escaped_message, escaped_version, escaped_message, created_at,
+      escaped_message, escaped_version, escaped_action, escaped_message, created_at,
       notification_id);
   if (len < 0 || (size_t)len >= sizeof(payload))
     return false;
@@ -246,6 +251,10 @@ static void notify_system_plain_v(const char *fmt, va_list args) {
   char message[3075];
   vsnprintf(message, sizeof(message), fmt, args);
   notify_system_plain_message(message);
+}
+
+static void notify_system_plain_l10n_v(sm_l10n_key_t key, va_list args) {
+  notify_system_plain_v(sm_l10n_get(key), args);
 }
 
 static FILE *ensure_log_file_open_locked(void) {
@@ -330,10 +339,30 @@ void notify_system_rich(bool allow_in_quiet_mode, const char *fmt, ...) {
   log_debug("NOTIFY: %s", message);
 }
 
+void notify_system_rich_l10n(bool allow_in_quiet_mode, sm_l10n_key_t key, ...) {
+  char message[3075];
+  va_list args;
+
+  if (runtime_config()->quiet_mode && !allow_in_quiet_mode)
+    return;
+
+  va_start(args, key);
+  vsnprintf(message, sizeof(message), sm_l10n_get(key), args);
+  va_end(args);
+
+  if (!send_rich_notification(message)) {
+    notify_system_plain_message(message);
+    return;
+  }
+
+  log_debug("NOTIFY: %s", message);
+}
+
 void notify_game_installed_rich(const char *title_id) {
   if (!send_game_installed_rich_notification(title_id)) {
-    notify_system_info("Installed: %s",
-                       (title_id && title_id[0] != '\0') ? title_id : "Unknown");
+    notify_system_info_l10n(SM_L10N_INSTALLED,
+                            (title_id && title_id[0] != '\0') ? title_id
+                                                              : "Unknown");
     return;
   }
 
@@ -347,6 +376,16 @@ void notify_system_info(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
   notify_system_plain_v(fmt, args);
+  va_end(args);
+}
+
+void notify_system_info_l10n(sm_l10n_key_t key, ...) {
+  if (runtime_config()->quiet_mode)
+    return;
+
+  va_list args;
+  va_start(args, key);
+  notify_system_plain_l10n_v(key, args);
   va_end(args);
 }
 
@@ -372,6 +411,24 @@ void sm_error_set(const char *subsystem, int code, const char *path,
   }
 }
 
+void sm_error_set_l10n(const char *subsystem, int code, const char *path,
+                       sm_l10n_key_t key, ...) {
+  memset(&g_last_error, 0, sizeof(g_last_error));
+  g_last_error.valid = true;
+  g_last_error.code = code;
+  if (subsystem && subsystem[0] != '\0')
+    (void)strlcpy(g_last_error.subsystem, subsystem,
+                  sizeof(g_last_error.subsystem));
+  if (path && path[0] != '\0')
+    (void)strlcpy(g_last_error.path, path, sizeof(g_last_error.path));
+
+  va_list args;
+  va_start(args, key);
+  vsnprintf(g_last_error.message, sizeof(g_last_error.message),
+            sm_l10n_get(key), args);
+  va_end(args);
+}
+
 const sm_error_t *sm_last_error(void) {
   return &g_last_error;
 }
@@ -391,6 +448,13 @@ void notify_system(const char *fmt, ...) {
   va_end(args);
 }
 
+void notify_system_l10n(sm_l10n_key_t key, ...) {
+  va_list args;
+  va_start(args, key);
+  notify_system_plain_l10n_v(key, args);
+  va_end(args);
+}
+
 void notify_image_mount_failed(const char *path, int mount_err) {
   if (g_last_error.valid && g_last_error.message[0] != '\0') {
     const char *error_path =
@@ -400,6 +464,6 @@ void notify_image_mount_failed(const char *path, int mount_err) {
     return;
   }
 
-  notify_system("Image mount failed: 0x%08X (%s)\n%s", (uint32_t)mount_err,
-                strerror(mount_err), path);
+  notify_system_l10n(SM_L10N_IMAGE_MOUNT_FAILED, (uint32_t)mount_err,
+                     strerror(mount_err), path);
 }

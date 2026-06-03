@@ -362,9 +362,8 @@ static void summarize_failure_reason(const char *reason, char *summary_out,
 static void handle_pre_pause_failure(const char *reason) {
   log_debug("  [MDBG] %s crashed before kstuff auto-pause%s%s",
             g_mdbg.game.title_id, reason ? ": " : "", reason ? reason : "");
-  notify_system_info("App crashed before KStuff pause: %s. KStuff is not to "
-                     "blame.",
-                     g_mdbg.game.title_id);
+  notify_system_info_l10n(SM_L10N_CRASH_BEFORE_KSTUFF,
+                          g_mdbg.game.title_id);
   clear_tracked_game();
 }
 
@@ -380,8 +379,8 @@ static void handle_post_pause_failure(const char *reason, uint64_t now_us) {
     log_debug("  [MDBG] %s crashed %us after kstuff pause; autotune skipped%s%s",
               g_mdbg.game.title_id, (unsigned)(post_pause_us / 1000000ull),
               reason ? ": " : "", reason ? reason : "");
-    notify_system_info("App crashed after KStuff pause: %s. Autotune skipped.",
-                       g_mdbg.game.title_id);
+    notify_system_info_l10n(SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED,
+                            g_mdbg.game.title_id);
     clear_tracked_game();
     return;
   }
@@ -400,16 +399,15 @@ static void handle_post_pause_failure(const char *reason, uint64_t now_us) {
     if (reason_summary[0] != '\0')
       log_debug("  [MDBG] autotune trigger: %s", reason_summary);
     if (is_rtld_error) {
-      notify_system_info("%s: %s. Delay increased to %us.\nLaunch the game again.",
-                         g_mdbg.game.title_id,
-                         reason_summary[0] != '\0' ? reason_summary
-                                                   : "Can't load module after "
-                                                     "KStuff pause",
-                         tuned_delay_seconds);
+      notify_system_info_l10n(
+          SM_L10N_DELAY_INCREASED_RELAUNCH, g_mdbg.game.title_id,
+          reason_summary[0] != '\0'
+              ? reason_summary
+              : sm_l10n_get(SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK),
+          tuned_delay_seconds);
     } else {
-      notify_system_info("Crash detected after KStuff pause: pause delay for %s "
-                         "increased to %us. Launch the game again.",
-                         g_mdbg.game.title_id, tuned_delay_seconds);
+      notify_system_info_l10n(SM_L10N_CRASH_DELAY_INCREASED,
+                              g_mdbg.game.title_id, tuned_delay_seconds);
     }
     clear_tracked_game();
     return;
@@ -417,9 +415,8 @@ static void handle_post_pause_failure(const char *reason, uint64_t now_us) {
 
   log_debug("  [MDBG] failed to persist autotune pause delay for %s%s%s",
             g_mdbg.game.title_id, reason ? ": " : "", reason ? reason : "");
-  notify_system_info("Crash detected after KStuff pause: %s. Failed to update "
-                     "autotune delay.",
-                     g_mdbg.game.title_id);
+  notify_system_info_l10n(SM_L10N_CRASH_DELAY_UPDATE_FAILED,
+                          g_mdbg.game.title_id);
   clear_tracked_game();
 }
 

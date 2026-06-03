@@ -135,8 +135,7 @@ void notify_duplicate_title_once(const char *title_id, const char *path_a,
   if (entry->duplicate_notified_once)
     return;
   entry->duplicate_notified_once = true;
-  notify_system("Duplicate %s ignored:\n%s\nexisting: %s", title_id, path_a,
-                path_b);
+  notify_system_l10n(SM_L10N_DUPLICATE_IGNORED, title_id, path_a, path_b);
 }
 
 void clear_duplicate_title_notification(const char *title_id) {

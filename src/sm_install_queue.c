@@ -239,8 +239,8 @@ static void finalize_pending_install_timeout(pending_install_entry_t *entry) {
 
   log_debug("  [REG] Install timeout after 5 minutes: %s (%s)",
             entry->title_name, entry->title_id);
-  notify_system("Install failed: %s (%s)\nTimed out after 5 minutes",
-                entry->title_name, entry->title_id);
+  notify_system_l10n(SM_L10N_INSTALL_FAILED_TIMEOUT, entry->title_name,
+                     entry->title_id);
   (void)note_pending_install_failure(entry);
   clear_pending_install_entry(entry);
 }
@@ -365,7 +365,8 @@ static void notify_queued_install_batch(void) {
 
   char message[3075];
   int shown_count = 0;
-  snprintf(message, sizeof(message), "Batch install queued (%d):", queued_count);
+  snprintf(message, sizeof(message), sm_l10n_get(SM_L10N_BATCH_INSTALL_QUEUED),
+           queued_count);
 
   for (int i = 0; i < MAX_PENDING; i++) {
     const pending_install_entry_t *entry = &g_pending_installs[i];
@@ -378,7 +379,8 @@ static void notify_queued_install_batch(void) {
   if (shown_count < queued_count) {
     size_t used = strlen(message);
     if (used < sizeof(message)) {
-      (void)snprintf(message + used, sizeof(message) - used, "\n... and %d more",
+      (void)snprintf(message + used, sizeof(message) - used,
+                     sm_l10n_get(SM_L10N_BATCH_INSTALL_AND_MORE),
                      queued_count - shown_count);
     }
   }
@@ -429,8 +431,8 @@ bool sm_install_submit_queued(void) {
   if (res != 0) {
     log_debug("  [REG] Batch install request failed: 0x%x", res);
     if (!g_queued_install_submit_failure_notified) {
-      notify_system("Batch install failed for %d app(s).\ncode=0x%08X",
-                    queued_count, (uint32_t)res);
+      notify_system_l10n(SM_L10N_BATCH_INSTALL_FAILED, queued_count,
+                         (uint32_t)res);
       g_queued_install_submit_failure_notified = true;
     }
     schedule_queued_install_submit_retry(now_us);

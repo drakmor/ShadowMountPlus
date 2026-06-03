@@ -978,7 +978,7 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
         new_games++;
     }
     if (new_games > 0)
-      notify_system_info("Found %d new games. Executing...", new_games);
+      notify_system_info_l10n(SM_L10N_FOUND_NEW_GAMES, new_games);
   }
 
   process_scan_candidates(candidates, candidate_count);
@@ -993,8 +993,7 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
     *unstable_found_out = unstable_found;
 
   if (startup_sync && !should_abort_scan_cycle()) {
-    notify_system_rich(true, "Library Synchronized.\nFound %d games.",
-                       total_found_games);
+    notify_system_rich_l10n(true, SM_L10N_LIBRARY_SYNCED, total_found_games);
   }
 
   return !should_abort_scan_cycle();
@@ -1493,7 +1492,7 @@ void sm_scanner_run_loop(void) {
           request_scanner_shutdown("scanner stale event drain after config reload failed");
           return;
         }
-        notify_system("ShadowMount+: config reloaded.");
+        notify_system_l10n(SM_L10N_CONFIG_RELOADED);
         log_debug("  [CFG] runtime config reloaded");
         now_us = monotonic_time_us();
         next_full_resync_us =

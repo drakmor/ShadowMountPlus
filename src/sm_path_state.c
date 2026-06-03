@@ -214,7 +214,7 @@ void record_missing_param_failure(const char *path) {
 
   log_debug("  [SCAN] missing/invalid param.json: %s", path);
   if (entry->missing_param_attempts == 1)
-    notify_system("Missing/invalid param.json:\n%s", path);
+    notify_system_l10n(SM_L10N_MISSING_PARAM, path);
   if (entry->missing_param_attempts >= MAX_MISSING_PARAM_SCAN_ATTEMPTS &&
       !entry->missing_param_limit_logged) {
     log_debug("  [SCAN] attempt limit reached (%u), skipping path: %s",

@@ -563,7 +563,8 @@ static bool reject_mounted_image_io(const char *file_path,
                                     const char *devname,
                                     const char *mount_point, int io_err,
                                     const char *stage) {
-  sm_error_set("IMG", io_err, file_path, "Mounted image is unreadable or damaged");
+  sm_error_set_l10n("IMG", io_err, file_path,
+                    SM_L10N_IMAGE_UNREADABLE_DAMAGED);
   log_debug("  [IMG][%s] unreadable or damaged mount (%s -> %s, %s): %s",
             attach_backend_name(attach_backend), devname, mount_point, stage,
             strerror(io_err));
@@ -626,9 +627,9 @@ static bool reuse_existing_image_mount(const char *file_path,
     }
     if (!cache_image_mount(file_path, mount_point, existing_unit,
                            existing_backend)) {
-      sm_error_set("IMG", ENOSPC, file_path,
-                   "Image cache full (%u entries), cannot track mount %s",
-                   (unsigned)MAX_IMAGE_MOUNTS, mount_point);
+      sm_error_set_l10n("IMG", ENOSPC, file_path,
+                        SM_L10N_IMAGE_CACHE_FULL_TRACK,
+                        (unsigned)MAX_IMAGE_MOUNTS, mount_point);
       log_debug("  [IMG] image cache full, refusing unmanaged mount reuse: %s",
                 mount_point);
       errno = ENOSPC;
@@ -892,26 +893,20 @@ static bool validate_mounted_image(const char *file_path, image_fs_type_t fs_typ
         upsert_image_sector_size_autotune(get_filename_component(file_path),
                                           (uint32_t)fs_block_size,
                                           &tuned_sector_size);
-    sm_error_set("IMG", EINVAL, file_path,
-                 "Filesystem cluster size (%llu) is smaller than device "
-                 "sector size (%u) for %s",
-                 (unsigned long long)fs_block_size, min_device_sector, devname);
+    sm_error_set_l10n("IMG", EINVAL, file_path, SM_L10N_FS_CLUSTER_SMALL,
+                      (unsigned long long)fs_block_size, min_device_sector,
+                      devname);
     log_debug("  [IMG][%s] %s", attach_backend_name(attach_backend),
               sm_last_error()->message);
     if (autotuned) {
       log_debug("  [CFG] image sector autotuned: %s=%u",
                 get_filename_component(file_path), tuned_sector_size);
-      notify_system("Image mount rejected:\n%s\nCluster size is too small "
-                    "(%llu < %u).\nSaved image_sector override: %u.\nTry "
-                    "mounting again.",
-                    file_path, (unsigned long long)fs_block_size,
-                    min_device_sector, tuned_sector_size);
+      notify_system_l10n(SM_L10N_IMAGE_REJECTED_CLUSTER_AUTOTUNED, file_path,
+                         (unsigned long long)fs_block_size, min_device_sector,
+                         tuned_sector_size);
     } else {
-      notify_system("Image mount rejected:\n%s\nCluster size is too small "
-                    "(%llu < %u).\nUse a larger cluster size in the image or "
-                    "lower sector size in config.",
-                    file_path, (unsigned long long)fs_block_size,
-                    min_device_sector);
+      notify_system_l10n(SM_L10N_IMAGE_REJECTED_CLUSTER_CONFIG, file_path,
+                         (unsigned long long)fs_block_size, min_device_sector);
     }
     sm_error_mark_notified();
     (void)unmount_image(file_path, unit_id, attach_backend);
@@ -1025,9 +1020,9 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   log_fs_stats("IMG", mount_point, image_fs_name(fs_type));
 
   if (!cache_image_mount(file_path, mount_point, unit_id, attach_backend)) {
-    sm_error_set("IMG", ENOSPC, file_path,
-                 "Image cache full (%u entries), rolling back mount",
-                 (unsigned)MAX_IMAGE_MOUNTS);
+    sm_error_set_l10n("IMG", ENOSPC, file_path,
+                      SM_L10N_IMAGE_CACHE_FULL_ROLLBACK,
+                      (unsigned)MAX_IMAGE_MOUNTS);
     log_debug("  [IMG] image cache full, rolling back mount: %s -> %s",
               file_path, mount_point);
     (void)unmount_image(file_path, unit_id, attach_backend);

@@ -483,14 +483,14 @@ int main(void) {
     log_debug("  [MOUNT] remount_system_ex failed: %s", strerror(errno));
   }
 
-  notify_system("ShadowMount+ v%s exFAT/UFS/PFS", SHADOWMOUNT_VERSION);
+  notify_system_l10n(SM_L10N_STARTUP, SHADOWMOUNT_VERSION);
   log_non_empty_scan_paths();
 
   if (runtime_config()->legacy_recursive_scan_forced) {
-    notify_system_info("ShadowMount+: recursive_scan=1 deprecated, using scan_depth=2.");
+    notify_system_info_l10n(SM_L10N_RECURSIVE_SCAN_DEPRECATED);
   } else if (runtime_config()->scan_depth > 1u) {
-    notify_system_info("ShadowMount+: scan depth %u enabled.",
-                       runtime_config()->scan_depth);
+    notify_system_info_l10n(SM_L10N_SCAN_DEPTH_ENABLED,
+                            runtime_config()->scan_depth);
   }
 
   cleanup_mount_dirs();

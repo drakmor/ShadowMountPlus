@@ -576,8 +576,8 @@ bool mount_backport_overlay(const char *mount_point,
   int overlay_err = errno;
   log_debug("  [IMG] backport overlay failed: %s -> %s (%s)", backport_path,
             mount_point, strerror(overlay_err));
-  notify_system("Backport overlay failed: %s\n%s\n0x%08X", title_id,
-                backport_path, (uint32_t)overlay_err);
+  notify_system_l10n(SM_L10N_BACKPORT_OVERLAY_FAILED, title_id, backport_path,
+                     (uint32_t)overlay_err);
   return false;
 }
 
@@ -901,7 +901,7 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
       log_debug("  [LINK] mount directory exists but stat failed for %s: %s",
                 dst, strerror(stat_errno));
       if (!recover_mount_directory_after_stat_failure(dst, &dst_st))
-        return false;
+      return false;
     }
     if (!S_ISDIR(dst_st.st_mode)) {
       log_debug("  [LINK] mount target is not a directory: %s mode=0%o", dst,

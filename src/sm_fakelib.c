@@ -281,7 +281,7 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id) {
   }
 
   if (has_game)
-    notify_system_info("Game backported: %s", title_id);
+    notify_system_info_l10n(SM_L10N_GAME_BACKPORTED, title_id);
   pthread_mutex_unlock(&g_fakelib_mutex);
 }
 
