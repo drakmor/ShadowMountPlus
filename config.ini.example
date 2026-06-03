@@ -45,6 +45,18 @@
 # Default: 1
 # scan_depth=1
 
+# Directory watcher granularity:
+# 1 -> keep vnode watchers on scan root subdirectories
+# 0 -> watch only scan roots/parents and rely on targeted/full scans for children
+# Default: 0
+# watch_subdirs=0
+
+# Image file watcher granularity:
+# 1 -> keep vnode watchers on discovered image files
+# 0 -> detect image file changes through targeted/full scans
+# Default: 1
+# watch_image_files=1
+
 # Legacy compatibility:
 # recursive_scan=1 forces scan_depth=2
 # Default: disabled

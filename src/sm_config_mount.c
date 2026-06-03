@@ -257,6 +257,8 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.kstuff_game_auto_toggle = true;
   state->cfg.kstuff_crash_detection_enabled = true;
   state->cfg.legacy_recursive_scan_forced = false;
+  state->cfg.watch_subdirs = false;
+  state->cfg.watch_image_files = true;
   (void)strlcpy(state->cfg.global_fakelib_path, DEFAULT_GLOBAL_FAKELIB_PATH,
                 sizeof(state->cfg.global_fakelib_path));
   state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
@@ -1241,6 +1243,24 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "watch_subdirs") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.watch_subdirs = bval;
+      continue;
+    }
+
+    if (strcasecmp(key, "watch_image_files") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.watch_image_files = bval;
+      continue;
+    }
+
     if (strcasecmp(key, "backport_fakelib") == 0) {
       if (!parse_bool_ini(value, &bval)) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
@@ -1488,6 +1508,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "legacy_recursive_scan_forced=%d backport_fakelib=%d "
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
+            "watch_subdirs=%d watch_image_files=%d "
             "kstuff_game_auto_toggle=%d kstuff_crash_detection=%d "
             "kstuff_pause_delay_image_s=%u kstuff_pause_delay_direct_s=%u "
             "exfat_backend=%s ufs_backend=%s "
@@ -1505,6 +1526,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.global_fakelib_mount_first ? "game" : "global",
             state->cfg.global_fakelib_path,
             state->cfg.global_fakelib_exclude_title_count,
+            state->cfg.watch_subdirs ? 1 : 0,
+            state->cfg.watch_image_files ? 1 : 0,
             state->cfg.kstuff_game_auto_toggle ? 1 : 0,
             state->cfg.kstuff_crash_detection_enabled ? 1 : 0,
             state->cfg.kstuff_pause_delay_image_seconds,

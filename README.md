@@ -61,6 +61,8 @@ Supported keys (all optional):
 - `image_rw=<image_filename>` (repeatable; force read-write mode for this image filename)
 - `image_sector=<image_filename>:<sector_size>` (repeatable; force sector size for this image filename)
 - `scan_depth=<1..2>` (`1` = scan only first-level subfolders, `2` = also scan one additional nested level; default: `1`)
+- `watch_subdirs=1|0` (`1` keeps vnode watchers on scan root subdirectories; default: `0`)
+- `watch_image_files=1|0` (`1` keeps vnode watchers on discovered image files; default: `1`)
 - `recursive_scan=1|0` (deprecated compatibility key; `1` forces `scan_depth=2`)
 - `scan_interval_seconds=<1..3600>` (full scan loop interval; default: `15`)
 - `stability_wait_seconds=<0..3600>` (minimum source age before processing; default: `10`)

@@ -240,7 +240,12 @@ static bool fakelib_runtime_config_changed(const runtime_config_t *old_cfg,
 static uint32_t scanner_config_topology_hash(void) {
   uint32_t hash = 2166136261u;
   int scan_path_count = get_scan_path_count();
-  uint32_t values[] = {runtime_config()->scan_depth, (uint32_t)scan_path_count};
+  uint32_t values[] = {
+      runtime_config()->scan_depth,
+      runtime_config()->watch_subdirs ? 1u : 0u,
+      runtime_config()->watch_image_files ? 1u : 0u,
+      (uint32_t)scan_path_count,
+  };
 
   for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
     for (unsigned shift = 0; shift < 32u; shift += 8u) {
@@ -584,6 +589,7 @@ static bool resolve_watch_tree_rebuild_target(const scanner_watch_entry_t *entry
 typedef struct {
   int kq;
   int scan_root_index;
+  bool watch_subdirs;
 } register_watch_tree_ctx_t;
 
 static sm_scan_tree_dir_visit_t register_watch_directory_visit(
@@ -592,9 +598,11 @@ static sm_scan_tree_dir_visit_t register_watch_directory_visit(
   scanner_watch_kind_t kind =
       (depth_from_root == 0u) ? SCANNER_WATCH_SCAN_ROOT
                               : SCANNER_WATCH_SCAN_SUBDIR;
-  if (!register_scanner_watch_entry(ctx->kq, ctx->scan_root_index, dir_path, kind,
-                                    (uint8_t)depth_from_root)) {
-    return SM_SCAN_TREE_DIR_ABORT;
+  if (depth_from_root == 0u || ctx->watch_subdirs) {
+    if (!register_scanner_watch_entry(ctx->kq, ctx->scan_root_index, dir_path,
+                                      kind, (uint8_t)depth_from_root)) {
+      return SM_SCAN_TREE_DIR_ABORT;
+    }
   }
 
   return SM_SCAN_TREE_DIR_DESCEND;
@@ -637,19 +645,28 @@ static bool rebuild_scan_root_watch_tree(int kq, int scan_root_index) {
     return true;
   }
 
-  unsigned int scan_depth = get_scan_depth_for_root(scan_root);
-
-  register_watch_tree_ctx_t walk_ctx = {
-      .kq = kq,
-      .scan_root_index = scan_root_index,
-  };
-  sm_scan_tree_callbacks_t callbacks = {
-      .on_directory = register_watch_directory_visit,
-      .on_image_file = register_watch_image_visit,
-  };
-  if (!sm_scan_tree_walk(scan_root, scan_root, 0u, scan_depth, &callbacks,
-                         &walk_ctx)) {
-    return false;
+  const runtime_config_t *cfg = runtime_config();
+  if (!cfg->watch_subdirs && !cfg->watch_image_files) {
+    if (!register_scanner_watch_entry(kq, scan_root_index, scan_root,
+                                      SCANNER_WATCH_SCAN_ROOT, 0u)) {
+      return false;
+    }
+  } else {
+    unsigned int scan_depth = get_scan_depth_for_root(scan_root);
+    register_watch_tree_ctx_t walk_ctx = {
+        .kq = kq,
+        .scan_root_index = scan_root_index,
+        .watch_subdirs = cfg->watch_subdirs,
+    };
+    sm_scan_tree_callbacks_t callbacks = {
+        .on_directory = register_watch_directory_visit,
+        .on_image_file =
+            cfg->watch_image_files ? register_watch_image_visit : NULL,
+    };
+    if (!sm_scan_tree_walk(scan_root, scan_root, 0u, scan_depth, &callbacks,
+                           &walk_ctx)) {
+      return false;
+    }
   }
 
   char backport_root[MAX_PATH];
@@ -690,10 +707,15 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
     return true;
   }
 
-  unsigned int scan_depth = get_scan_depth_for_root(scan_root);
-
   if (!remove_scan_root_watch_entries_for_path(scan_root_index, rebuild_path))
     return false;
+  const runtime_config_t *cfg = runtime_config();
+  if (!cfg->watch_subdirs && !cfg->watch_image_files) {
+    clear_scan_root_watch_tree_state(scan_root_index);
+    return true;
+  }
+
+  unsigned int scan_depth = get_scan_depth_for_root(scan_root);
   if (rebuild_depth > scan_depth) {
     clear_scan_root_watch_tree_state(scan_root_index);
     return true;
@@ -702,10 +724,11 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
   register_watch_tree_ctx_t walk_ctx = {
       .kq = kq,
       .scan_root_index = scan_root_index,
+      .watch_subdirs = cfg->watch_subdirs,
   };
   sm_scan_tree_callbacks_t callbacks = {
       .on_directory = register_watch_directory_visit,
-      .on_image_file = register_watch_image_visit,
+      .on_image_file = cfg->watch_image_files ? register_watch_image_visit : NULL,
   };
   if (!sm_scan_tree_walk(scan_root, rebuild_path, rebuild_depth,
                          scan_depth - rebuild_depth, &callbacks, &walk_ctx)) {
