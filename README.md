@@ -223,7 +223,7 @@ Then pack the exFAT image into a compressed PFS container (.ffpfsc):
 python -m pip install -U "mkpfs"
 
 # Convert the .exfat image into a .ffpfsc compressed PFS container. 
-python -m mkpfs pack file './PPSA12345.exfat' './PPSA12345.exfat.ffpfsc'
+python -m mkpfs pack file --verify './PPSA12345.exfat' './PPSA12345.exfat.ffpfsc'
 
 # OPTIONAL: After successful packing, the temporary exFAT image can be removed
 rm './PPSA12345.exfat'
@@ -239,11 +239,11 @@ First create an uncompressed nested PFS image and then compress it on a second l
 python -m pip install -U "mkpfs"
 
 # Create an uncompressed PFS image with the nested image name `pfs_image.dat`.
-python -m mkpfs pack folder --no-compress --no-adjust-output-file-extension './BREW1234-app' './pfs_image.dat'
+python -m mkpfs pack folder --verify --no-compress --no-adjust-output-file-extension './BREW1234-app' './pfs_image.dat'
 
 # Pack the pfs_image.dat into a compressed PFS container with the desired output name.
 # IMPORTANT: The internal file name MUST be exactly `pfs_image.dat`.
-python -m mkpfs pack file './pfs_image.dat' './BREW1234.ffpfsc'
+python -m mkpfs pack file --verify './pfs_image.dat' './BREW1234.ffpfsc'
 
 # Remove the temporary inner file.
 rm './pfs_image.dat'
@@ -266,7 +266,7 @@ nested exFAT image.
 python -m pip install -U "mkpfs"
 
 # Create a direct .ffpfs image from a game folder (single-pass, experimental)
-python -m mkpfs pack folder './BREW1234-app/' './BREW1234.ffpfs'
+python -m mkpfs pack folder --verify './BREW1234-app/' './BREW1234.ffpfs'
 ```
 
 
