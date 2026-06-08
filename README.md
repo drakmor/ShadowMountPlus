@@ -412,6 +412,37 @@ kstuff.elf
 
 ---
 
+## Building from source
+
+### Direct make
+
+```bash
+make clean all PS5_SCE_STUBS_DIR="$PWD/ps5-sdk/sce_stubs"
+```
+
+Requires local PS5 SDK setup (default `/opt/ps5-payload-sdk`) and `ps5-sdk/sce_stubs`.
+
+### Using Docker
+
+```bash
+chmod +x build.sh
+./build.sh
+```
+
+**Optional:**
+- `SMP_FORCE_REBUILD_IMAGE=1` to rebuild the cached Docker image before building  
+  ```bash
+    SMP_FORCE_REBUILD_IMAGE=1 ./build.sh
+  ```
+
+### CI
+
+Workflow: `.github/workflows/ps5.yml`  
+Installs dependencies, builds SDK/sqlite packages, runs  
+`make clean all PS5_SCE_STUBS_DIR="$GITHUB_WORKSPACE/ps5-sdk/sce_stubs"`, then archives release files.
+
+---
+
 ## Troubleshooting
 
 If a game is not mounted:
