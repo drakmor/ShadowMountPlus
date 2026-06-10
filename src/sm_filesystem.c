@@ -8,6 +8,7 @@
 #include "sm_image.h"
 #include "sm_path_utils.h"
 #include "sm_paths.h"
+#include "sm_mount_registry.h"
 
 // --- FILESYSTEM ---
 bool is_installed(const char *title_id) {
@@ -496,6 +497,8 @@ bool rollback_title_nullfs_mount(const char *title_id, const char *src_path) {
 
   if (!unmount_top_controlled_layer(state.system_ex_path))
     return false;
+
+  sm_mount_registry_remove(state.system_ex_path);
   log_debug("  [LINK] rolled back unpublished nullfs mount: %s -> %s",
             src_path, state.system_ex_path);
   return true;
@@ -568,6 +571,8 @@ bool mount_backport_overlay(const char *mount_point,
 
   int overlay_flags = mount_read_only ? MNT_RDONLY : 0;
   if (nmount(overlay_iov, IOVEC_SIZE(overlay_iov), overlay_flags) == 0) {
+    sm_mount_registry_push(mount_point, backport_path,
+                           SM_MOUNT_KIND_NULLFS_BACKPORT);
     log_debug("  [IMG] backport overlay mounted (%s): %s -> %s",
               mount_read_only ? "ro" : "rw", backport_path, mount_point);
     return true;
@@ -591,7 +596,10 @@ static bool unmount_controlled_mount_stack(const char *path) {
   }
 
   struct statfs mount_st;
-  return !get_top_mount(path, &mount_st);
+  bool fully_unmounted = !get_top_mount(path, &mount_st);
+  if (fully_unmounted)
+    sm_mount_registry_remove(path);
+  return fully_unmounted;
 }
 
 static bool cleanup_duplicate_title_mounts_entry(const char *title_id,
@@ -907,6 +915,8 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
     }
     return false;
   }
+
+  sm_mount_registry_push(dst, src_path, SM_MOUNT_KIND_NULLFS_TITLE);
   log_debug("  [LINK] nullfs mounted: %s -> %s", src_path, dst);
   return true;
 }

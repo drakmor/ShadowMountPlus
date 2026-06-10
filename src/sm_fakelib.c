@@ -1,10 +1,9 @@
 #include "sm_platform.h"
-
 #include "sm_fakelib.h"
 #include "sm_config_mount.h"
 #include "sm_log.h"
 #include "sm_types.h"
-
+#include "sm_mount_registry.h"
 #include <pthread.h>
 
 typedef struct {
@@ -54,6 +53,7 @@ static bool unmount_fakelib_overlay(const fakelib_layer_t *layer) {
   const char *mount_path = layer->mount_path;
   if (unmount(mount_path, MNT_FORCE) == 0 || errno == ENOENT ||
       errno == EINVAL) {
+    sm_mount_registry_remove(mount_path);
     log_debug("  [FAKELIB] %s libraries unmounted: %s -> %s", layer->label,
               layer->source_path, mount_path);
     return true;
@@ -75,6 +75,7 @@ static bool track_fakelib_overlay(const char *title_id,
   layer->label = label;
   (void)strlcpy(layer->source_path, source_path, sizeof(layer->source_path));
   (void)strlcpy(layer->mount_path, mount_path, sizeof(layer->mount_path));
+  sm_mount_registry_push(mount_path, source_path, SM_MOUNT_KIND_NULLFS_FAKELIB);
   return true;
 }
 

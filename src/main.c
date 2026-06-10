@@ -12,6 +12,7 @@
 #include "sm_game_lifecycle.h"
 #include "sm_kstuff.h"
 #include "sm_mount_device.h"
+#include "sm_mount_registry.h"
 #include "sm_filesystem.h"
 #include "sm_image.h"
 #include "sm_path_utils.h"
@@ -520,6 +521,7 @@ shutdown:
   sm_kstuff_shutdown();
   sm_mdbg_shutdown();
   cleanup_kstuff_noautomount_files();
+  sm_mount_registry_shutdown();
   shutdown_title_mounts();
   if (!shutdown_image_mounts()) {
     log_debug("[SHUTDOWN] some image mounts or devices were not fully released");

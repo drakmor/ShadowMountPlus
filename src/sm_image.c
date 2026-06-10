@@ -9,6 +9,7 @@
 #include "sm_limits.h"
 #include "sm_mount_defs.h"
 #include "sm_mount_device.h"
+#include "sm_mount_registry.h"
 #include "sm_filesystem.h"
 #include "sm_path_state.h"
 #include "sm_path_utils.h"
@@ -751,9 +752,9 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   }
 
   struct iovec iov_ufs[] = {
-      IOVEC_ENTRY("fstype"),     IOVEC_ENTRY("ufs"), 
+      IOVEC_ENTRY("fstype"),     IOVEC_ENTRY("ufs"),
       IOVEC_ENTRY("from"),       IOVEC_ENTRY(devname),
-      IOVEC_ENTRY("fspath"),     IOVEC_ENTRY(mount_point),  
+      IOVEC_ENTRY("fspath"),     IOVEC_ENTRY(mount_point),
       IOVEC_ENTRY("budgetid"),   IOVEC_ENTRY(DEVPFS_BUDGET_GAME),
       IOVEC_ENTRY("async"),      IOVEC_ENTRY(NULL),
       IOVEC_ENTRY("noatime"),    IOVEC_ENTRY(NULL),
@@ -1035,6 +1036,8 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
     runtime_mount_state_unlock();
     return false;
   }
+
+  sm_mount_registry_push(mount_point, file_path, SM_MOUNT_KIND_IMAGE);
   runtime_mount_state_unlock();
   return true;
 }
@@ -1089,12 +1092,9 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
     return false;
   }
 
-  // Remove mount.lnk and unmount /system_ex/app/<titleid> that point to this
-  // source before unmounting the virtual disk itself.
   cleanup_mount_links_for_source_unmount(mount_point);
   clear_cached_game(mount_point);
 
-  // Unmount stacked layers (unionfs over image fs).
   for (int i = 0; i < MAX_LAYERED_UNMOUNT_ATTEMPTS; i++) {
     if (!is_active_image_mount_point(mount_point))
       break;
@@ -1122,6 +1122,7 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
     detach_ok = detach_attached_unit(resolved_backend, resolved_unit);
 
   if (rmdir(mount_point) == 0) {
+    sm_mount_registry_remove(mount_point);
     log_debug("  [IMG] Removed mount directory: %s", mount_point);
     log_debug("  [IMG][%s] unmount complete: source=%s mount=%s unit=%d",
               attach_backend_name(resolved_backend), file_path, mount_point,
@@ -1131,6 +1132,7 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
 
   int err = errno;
   if (err == ENOENT) {
+    sm_mount_registry_remove(mount_point);
     log_debug("  [IMG][%s] unmount complete: source=%s mount=%s unit=%d",
               attach_backend_name(resolved_backend), file_path, mount_point,
               resolved_unit);
@@ -1140,6 +1142,7 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
     log_debug("  [IMG] Mount directory not removed (%s): %s",
               strerror(err), mount_point);
     if (detach_ok) {
+      sm_mount_registry_remove(mount_point);
       log_debug("  [IMG][%s] unmount complete with leftover dir: source=%s "
                 "mount=%s unit=%d",
                 attach_backend_name(resolved_backend), file_path, mount_point,
@@ -1147,6 +1150,7 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
     }
     return detach_ok;
   }
+
   log_debug("  [IMG] Failed to remove mount directory %s: %s", mount_point,
             strerror(err));
   return detach_ok;
