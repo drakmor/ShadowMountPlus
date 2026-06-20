@@ -9,10 +9,8 @@
 #include "sm_appdb.h"
 #include "sm_fakelib.h"
 #include "sm_game_lifecycle.h"
-#include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_log.h"
-#include "sm_mdbg.h"
 #include "sm_runtime.h"
 #include "sm_scanner.h"
 #include "sm_time.h"
@@ -164,8 +162,8 @@ static bool is_process_alive(pid_t pid) {
   return errno != ESRCH;
 }
 
-static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
-                                 const char *title_id, uint32_t app_id) {
+static bool dispatch_game_launch(int kq, pid_t pid, const char *title_id,
+                                 uint32_t app_id) {
   if (!register_game_exit_watch(kq, pid)) {
     log_debug("  [GAME] skipping launch tracking for %s pid=%ld without exit watch",
               title_id, (long)pid);
@@ -175,7 +173,6 @@ static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
   log_debug("  [GAME] started: %s pid=%ld app_id=0x%08X", title_id,
             (long)pid, app_id);
   publish_active_game(pid, title_id);
-  sm_kstuff_game_on_exec(pid, title_id, app_id, exec_time_us);
   sm_fakelib_game_on_exec(pid, title_id);
   return true;
 }
@@ -330,8 +327,6 @@ static const struct timespec *compute_game_wait_timeout(
   uint64_t next_wake_us = 0;
 
   next_wake_us = min_nonzero_u64(next_wake_us, next_pending_game_wake_us(now_us));
-  next_wake_us = min_nonzero_u64(next_wake_us, sm_kstuff_game_next_wake_us(now_us));
-  next_wake_us = min_nonzero_u64(next_wake_us, sm_mdbg_next_wake_us(now_us));
   if (next_wake_us == 0)
     return NULL;
 
@@ -359,7 +354,7 @@ static void poll_game_modules(int kq) {
       pid_t pid = entry->pid;
       uint64_t exec_time_us = entry->exec_time_us;
       if (is_supported_title_id(title_id)) {
-        if (dispatch_game_launch(kq, pid, exec_time_us, title_id, app_id)) {
+        if (dispatch_game_launch(kq, pid, title_id, app_id)) {
           clear_pending_game_launch(entry);
           clear_all_pending_game_launches();
           break;
@@ -380,9 +375,6 @@ static void poll_game_modules(int kq) {
       clear_pending_game_launch(entry);
     }
   }
-
-  sm_kstuff_game_poll();
-  sm_mdbg_poll();
 }
 
 static bool register_game_exit_watch(int kq, pid_t pid) {
@@ -406,7 +398,7 @@ static void handle_game_exec(int kq, pid_t pid) {
   uint32_t app_id = 0;
   if (resolve_game_title_id(pid, title_id, &app_id)) {
     if (is_supported_title_id(title_id)) {
-      if (dispatch_game_launch(kq, pid, now_us, title_id, app_id))
+      if (dispatch_game_launch(kq, pid, title_id, app_id))
         clear_all_pending_game_launches();
       else
         defer_confirmed_game_launch_retry(pid, now_us, now_us, title_id);
@@ -429,7 +421,6 @@ static void handle_game_exit(pid_t pid) {
   if (atomic_load(&g_active_game_pid) == pid)
     publish_active_game_pid(0);
   sm_fakelib_game_on_exit(pid);
-  sm_kstuff_game_on_exit(pid);
   if (had_active_title) {
     int snd0_updates = normalize_snd0info_for_title(title_id);
     if (snd0_updates >= 0)
@@ -449,10 +440,9 @@ static void restore_suspended_game_if_alive(int kq, pid_t pid) {
   if (!is_supported_title_id(title_id))
     return;
 
-  uint64_t now_us = monotonic_time_us();
   log_debug("  [GAME] resumed: %s pid=%ld app_id=0x%08X", title_id,
             (long)pid, app_id);
-  (void)dispatch_game_launch(kq, pid, now_us, title_id, app_id);
+  (void)dispatch_game_launch(kq, pid, title_id, app_id);
 }
 
 static void *game_lifecycle_watcher_main(void *arg) {
@@ -503,7 +493,6 @@ static void *game_lifecycle_watcher_main(void *arg) {
         suspended_game_pid = atomic_load(&g_active_game_pid);
         clear_all_pending_game_launches();
         sm_fakelib_game_shutdown();
-        sm_kstuff_sleep_enter();
         publish_active_game(0, NULL);
         sleep_cleanup_done = true;
       }
@@ -527,7 +516,6 @@ static void *game_lifecycle_watcher_main(void *arg) {
         break;
       sleep_cleanup_done = false;
       restore_suspended_game_if_alive(kq, suspended_game_pid);
-      sm_kstuff_sleep_leave();
       suspended_game_pid = 0;
     }
 
@@ -564,7 +552,6 @@ static void *game_lifecycle_watcher_main(void *arg) {
 
   clear_all_pending_game_launches();
   sm_fakelib_game_shutdown();
-  sm_kstuff_game_shutdown();
   publish_active_game(0, NULL);
   close(kq);
   log_debug("  [GAME] lifecycle watcher stopped");

@@ -14,7 +14,6 @@
 #include "sm_image.h"
 #include "sm_install.h"
 #include "sm_install_queue.h"
-#include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_l10n.h"
 #include "sm_log.h"
@@ -926,8 +925,6 @@ static bool apply_runtime_config_reload_effects(int kq,
   if (old_cfg->backport_fakelib_enabled &&
       fakelib_runtime_config_changed(old_cfg, new_cfg))
     sm_fakelib_game_shutdown();
-
-  sm_kstuff_on_config_reload();
 
   if (scan_topology_changed) {
     clear_scanner_watch_entries();

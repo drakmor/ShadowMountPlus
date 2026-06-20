@@ -23,19 +23,10 @@ typedef struct {
 } image_mode_rule_t;
 
 typedef struct {
-  char title_id[MAX_TITLE_ID];
-  uint32_t delay_seconds;
-  bool valid;
-} kstuff_delay_rule_t;
-
-typedef struct {
   runtime_config_t cfg;
   char scan_path_storage[MAX_SCAN_PATHS][MAX_PATH];
   int scan_path_count;
   image_mode_rule_t image_mode_rules[MAX_IMAGE_MODE_RULES];
-  char kstuff_no_pause_title_ids[MAX_KSTUFF_TITLE_RULES][MAX_TITLE_ID];
-  int kstuff_no_pause_title_count;
-  kstuff_delay_rule_t kstuff_delay_rules[MAX_KSTUFF_TITLE_RULES];
 } runtime_config_state_t;
 
 typedef struct {
@@ -70,8 +61,6 @@ static bool normalize_title_id_value(const char *value,
 static config_load_status_t load_runtime_config_state(runtime_config_state_t *state);
 static bool parse_u32_ini(const char *value, uint32_t *out);
 static bool is_valid_sector_size(uint32_t size);
-static bool set_kstuff_pause_delay_override_rule(runtime_config_state_t *state,
-                                                 const char *value);
 static bool add_global_fakelib_exclude_rule(runtime_config_state_t *state,
                                             const char *value);
 static bool normalize_image_filename_value(const char *value,
@@ -87,18 +76,6 @@ static bool lookup_image_sector_override_in_file(const char *path,
 static bool upsert_image_sector_override_in_file(const char *path,
                                                  const char *filename,
                                                  uint32_t sector_size);
-static bool parse_kstuff_delay_rule_value(const char *value,
-                                          char title_id_out[MAX_TITLE_ID],
-                                          uint32_t *delay_seconds_out);
-static bool parse_kstuff_delay_rule_line(const char *key, const char *value,
-                                         char title_id_out[MAX_TITLE_ID],
-                                         uint32_t *delay_seconds_out);
-static bool lookup_kstuff_delay_override_in_file(const char *path,
-                                                 const char *title_id,
-                                                 uint32_t *delay_seconds_out);
-static bool upsert_kstuff_delay_override_in_file(const char *path,
-                                                 const char *title_id,
-                                                 uint32_t delay_seconds);
 static void apply_firmware_runtime_overrides(runtime_config_state_t *state);
 
 static char *trim_ascii(char *s) {
@@ -237,13 +214,6 @@ static void init_runtime_scan_paths_defaults(runtime_config_state_t *state) {
   add_runtime_managed_scan_paths(state);
 }
 
-static void clear_kstuff_title_rules(runtime_config_state_t *state) {
-  state->kstuff_no_pause_title_count = 0;
-  memset(state->kstuff_no_pause_title_ids, 0,
-         sizeof(state->kstuff_no_pause_title_ids));
-  memset(state->kstuff_delay_rules, 0, sizeof(state->kstuff_delay_rules));
-}
-
 static void init_runtime_config_defaults(runtime_config_state_t *state) {
   memset(state, 0, sizeof(*state));
   state->cfg.debug_enabled = true;
@@ -255,18 +225,12 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.backport_fakelib_enabled = true;
   state->cfg.global_fakelib_enabled = true;
   state->cfg.global_fakelib_mount_first = true;
-  state->cfg.kstuff_game_auto_toggle = true;
-  state->cfg.kstuff_crash_detection_enabled = true;
   state->cfg.legacy_recursive_scan_forced = false;
   (void)strlcpy(state->cfg.global_fakelib_path, DEFAULT_GLOBAL_FAKELIB_PATH,
                 sizeof(state->cfg.global_fakelib_path));
   state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
   state->cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
   state->cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
-  state->cfg.kstuff_pause_delay_image_seconds =
-      DEFAULT_KSTUFF_PAUSE_DELAY_IMAGE_SECONDS;
-  state->cfg.kstuff_pause_delay_direct_seconds =
-      DEFAULT_KSTUFF_PAUSE_DELAY_DIRECT_SECONDS;
   state->cfg.language_id = SM_LANGUAGE_AUTO;
   state->cfg.exfat_backend = default_exfat_backend();
   state->cfg.ufs_backend = default_ufs_backend();
@@ -276,7 +240,6 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.md_sector_exfat = MD_SECTOR_SIZE_EXFAT;
   state->cfg.md_sector_ufs = MD_SECTOR_SIZE_UFS;
   memset(state->image_mode_rules, 0, sizeof(state->image_mode_rules));
-  clear_kstuff_title_rules(state);
   init_runtime_scan_paths_defaults(state);
   apply_firmware_runtime_overrides(state);
 }
@@ -315,11 +278,6 @@ static void apply_reloadable_runtime_fields(runtime_config_state_t *dst,
          sizeof(dst->scan_path_storage));
   memcpy(dst->image_mode_rules, src->image_mode_rules,
          sizeof(dst->image_mode_rules));
-  memcpy(dst->kstuff_no_pause_title_ids, src->kstuff_no_pause_title_ids,
-         sizeof(dst->kstuff_no_pause_title_ids));
-  dst->kstuff_no_pause_title_count = src->kstuff_no_pause_title_count;
-  memcpy(dst->kstuff_delay_rules, src->kstuff_delay_rules,
-         sizeof(dst->kstuff_delay_rules));
 }
 
 static bool runtime_config_states_equal(const runtime_config_state_t *a,
@@ -423,22 +381,6 @@ bool get_image_sector_size_override(const char *filename,
   return false;
 }
 
-bool is_kstuff_pause_disabled_for_title(const char *title_id) {
-  ensure_runtime_config_ready();
-  const runtime_config_state_t *state = active_runtime_state();
-
-  char normalized[MAX_TITLE_ID];
-  if (!normalize_title_id_value(title_id, normalized))
-    return false;
-
-  for (int i = 0; i < state->kstuff_no_pause_title_count; ++i) {
-    if (strcmp(state->kstuff_no_pause_title_ids[i], normalized) == 0)
-      return true;
-  }
-
-  return false;
-}
-
 bool is_global_fakelib_excluded_for_title(const char *title_id) {
   ensure_runtime_config_ready();
 
@@ -453,59 +395,6 @@ bool is_global_fakelib_excluded_for_title(const char *title_id) {
   }
 
   return false;
-}
-
-bool get_kstuff_pause_delay_override_for_title(const char *title_id,
-                                               uint32_t *delay_seconds_out) {
-  ensure_runtime_config_ready();
-  if (!delay_seconds_out)
-    return false;
-
-  const runtime_config_state_t *state = active_runtime_state();
-  char normalized[MAX_TITLE_ID];
-  if (!normalize_title_id_value(title_id, normalized))
-    return false;
-
-  for (int i = 0; i < MAX_KSTUFF_TITLE_RULES; ++i) {
-    if (!state->kstuff_delay_rules[i].valid)
-      continue;
-    if (strcmp(state->kstuff_delay_rules[i].title_id, normalized) != 0)
-      continue;
-    *delay_seconds_out = state->kstuff_delay_rules[i].delay_seconds;
-    return true;
-  }
-
-  return false;
-}
-
-bool get_kstuff_autotune_pause_delay_for_title(const char *title_id,
-                                               uint32_t *delay_seconds_out) {
-  return lookup_kstuff_delay_override_in_file(AUTOTUNE_FILE, title_id,
-                                              delay_seconds_out);
-}
-
-bool upsert_kstuff_autotune_pause_delay(const char *title_id,
-                                        uint32_t current_delay_seconds,
-                                        uint32_t *delay_seconds_out) {
-  if (delay_seconds_out)
-    *delay_seconds_out = 0;
-
-  char normalized[MAX_TITLE_ID];
-  if (!normalize_title_id_value(title_id, normalized))
-    return false;
-
-  uint64_t tuned_delay_seconds = (uint64_t)current_delay_seconds * 2ull;
-  if (tuned_delay_seconds == 0)
-    tuned_delay_seconds = 1;
-  if (tuned_delay_seconds > MAX_KSTUFF_PAUSE_DELAY_SECONDS)
-    tuned_delay_seconds = MAX_KSTUFF_PAUSE_DELAY_SECONDS;
-  if (!upsert_kstuff_delay_override_in_file(AUTOTUNE_FILE, normalized,
-                                            (uint32_t)tuned_delay_seconds)) {
-    return false;
-  }
-  if (delay_seconds_out)
-    *delay_seconds_out = (uint32_t)tuned_delay_seconds;
-  return true;
 }
 
 bool upsert_image_sector_size_autotune(const char *filename,
@@ -590,33 +479,6 @@ static bool parse_bool_ini(const char *value, bool *out) {
   return false;
 }
 
-static bool parse_kstuff_delay_rule_value(const char *value,
-                                          char title_id_out[MAX_TITLE_ID],
-                                          uint32_t *delay_seconds_out) {
-  if (!value || !title_id_out || !delay_seconds_out)
-    return false;
-
-  char local[128];
-  if (strlcpy(local, value, sizeof(local)) >= sizeof(local))
-    return false;
-
-  char *sep = strchr(local, ':');
-  if (!sep)
-    return false;
-  *sep = '\0';
-
-  char *title_id = trim_ascii(local);
-  char *delay_value = trim_ascii(sep + 1);
-  if (!normalize_title_id_value(title_id, title_id_out))
-    return false;
-  if (!parse_u32_ini(delay_value, delay_seconds_out) ||
-      *delay_seconds_out > MAX_KSTUFF_PAUSE_DELAY_SECONDS) {
-    return false;
-  }
-
-  return true;
-}
-
 static bool parse_image_sector_rule_value(const char *value,
                                           char filename_out[MAX_PATH],
                                           uint32_t *sector_size_out) {
@@ -642,64 +504,6 @@ static bool parse_image_sector_rule_value(const char *value,
   }
 
   return true;
-}
-
-static bool parse_kstuff_delay_rule_line(const char *key, const char *value,
-                                         char title_id_out[MAX_TITLE_ID],
-                                         uint32_t *delay_seconds_out) {
-  if (!key || !value || !title_id_out || !delay_seconds_out)
-    return false;
-
-  if (strcasecmp(key, "kstuff_delay") == 0)
-    return parse_kstuff_delay_rule_value(value, title_id_out, delay_seconds_out);
-
-  if (!normalize_title_id_value(key, title_id_out))
-    return false;
-  if (!parse_u32_ini(value, delay_seconds_out) ||
-      *delay_seconds_out > MAX_KSTUFF_PAUSE_DELAY_SECONDS) {
-    return false;
-  }
-
-  return true;
-}
-
-static bool lookup_kstuff_delay_override_in_file(const char *path,
-                                                 const char *title_id,
-                                                 uint32_t *delay_seconds_out) {
-  if (!path || !title_id || !delay_seconds_out)
-    return false;
-
-  char normalized_title_id[MAX_TITLE_ID];
-  if (!normalize_title_id_value(title_id, normalized_title_id))
-    return false;
-
-  FILE *f = fopen(path, "r");
-  if (!f)
-    return false;
-
-  char line[512];
-  while (fgets(line, sizeof(line), f)) {
-    char *key = NULL;
-    char *value = NULL;
-    if (!parse_ini_line(line, &key, &value))
-      continue;
-
-    uint32_t delay_seconds = 0;
-    char parsed_title_id[MAX_TITLE_ID];
-    if (!parse_kstuff_delay_rule_line(key, value, parsed_title_id,
-                                      &delay_seconds)) {
-      continue;
-    }
-    if (strcmp(parsed_title_id, normalized_title_id) != 0)
-      continue;
-
-    fclose(f);
-    *delay_seconds_out = delay_seconds;
-    return true;
-  }
-
-  fclose(f);
-  return false;
 }
 
 static bool lookup_image_sector_override_in_file(const char *path,
@@ -744,103 +548,6 @@ static bool lookup_image_sector_override_in_file(const char *path,
 
   *sector_size_out = last_sector_size;
   return true;
-}
-
-static bool upsert_kstuff_delay_override_in_file(const char *path,
-                                                 const char *title_id,
-                                                 uint32_t delay_seconds) {
-  if (!path || !title_id || delay_seconds > MAX_KSTUFF_PAUSE_DELAY_SECONDS)
-    return false;
-
-  char normalized_title_id[MAX_TITLE_ID];
-  if (!normalize_title_id_value(title_id, normalized_title_id))
-    return false;
-
-  char temp_path[MAX_PATH];
-  int written = snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
-  if (written <= 0 || (size_t)written >= sizeof(temp_path))
-    return false;
-
-  FILE *in = fopen(path, "r");
-  FILE *out = fopen(temp_path, "w");
-  if (!out) {
-    log_debug("  [CFG] autotune temp open failed: %s (%s)", temp_path,
-              strerror(errno));
-    if (in)
-      fclose(in);
-    return false;
-  }
-
-  bool found = false;
-  if (in) {
-    char line[512];
-    while (fgets(line, sizeof(line), in)) {
-      char original[sizeof(line)];
-      (void)strlcpy(original, line, sizeof(original));
-
-      char *key = NULL;
-      char *value = NULL;
-      if (!parse_ini_line(line, &key, &value)) {
-        if (fputs(original, out) == EOF)
-          goto write_failed;
-        continue;
-      }
-
-      uint32_t parsed_delay = 0;
-      char parsed_title_id[MAX_TITLE_ID];
-      if (!parse_kstuff_delay_rule_line(key, value, parsed_title_id,
-                                        &parsed_delay) ||
-          strcmp(parsed_title_id, normalized_title_id) != 0) {
-        if (fputs(original, out) == EOF)
-          goto write_failed;
-        continue;
-      }
-
-      if (!found) {
-        if (fprintf(out, "kstuff_delay=%s:%u\n", normalized_title_id,
-                    (unsigned)delay_seconds) < 0) {
-          goto write_failed;
-        }
-        found = true;
-      }
-    }
-
-    fclose(in);
-    in = NULL;
-  }
-
-  if (!found &&
-      fprintf(out, "kstuff_delay=%s:%u\n", normalized_title_id,
-              (unsigned)delay_seconds) < 0) {
-    goto write_failed;
-  }
-
-  if (fclose(out) != 0) {
-    out = NULL;
-    log_debug("  [CFG] autotune temp close failed: %s (%s)", temp_path,
-              strerror(errno));
-    unlink(temp_path);
-    return false;
-  }
-  out = NULL;
-
-  if (rename(temp_path, path) != 0) {
-    log_debug("  [CFG] autotune replace failed: %s -> %s (%s)", temp_path, path,
-              strerror(errno));
-    unlink(temp_path);
-    return false;
-  }
-
-  return true;
-
-write_failed:
-  log_debug("  [CFG] autotune temp write failed: %s (%s)", temp_path,
-            strerror(errno));
-  if (in)
-    fclose(in);
-  fclose(out);
-  unlink(temp_path);
-  return false;
 }
 
 static bool upsert_image_sector_override_in_file(const char *path,
@@ -1042,27 +749,6 @@ static bool set_image_sector_rule(runtime_config_state_t *state,
   return false;
 }
 
-static bool add_kstuff_no_pause_title_rule(runtime_config_state_t *state,
-                                           const char *value) {
-  char normalized[MAX_TITLE_ID];
-  if (!normalize_title_id_value(value, normalized))
-    return false;
-
-  for (int i = 0; i < state->kstuff_no_pause_title_count; ++i) {
-    if (strcmp(state->kstuff_no_pause_title_ids[i], normalized) == 0)
-      return true;
-  }
-
-  if (state->kstuff_no_pause_title_count >= MAX_KSTUFF_TITLE_RULES)
-    return false;
-
-  (void)strlcpy(state->kstuff_no_pause_title_ids[state->kstuff_no_pause_title_count],
-                normalized,
-                sizeof(state->kstuff_no_pause_title_ids[state->kstuff_no_pause_title_count]));
-  state->kstuff_no_pause_title_count++;
-  return true;
-}
-
 static bool add_global_fakelib_exclude_rule(runtime_config_state_t *state,
                                             const char *value) {
   char normalized[MAX_TITLE_ID];
@@ -1085,38 +771,6 @@ static bool add_global_fakelib_exclude_rule(runtime_config_state_t *state,
                 normalized,
                 sizeof(state->cfg.global_fakelib_exclude_title_ids[index]));
   return true;
-}
-
-static bool set_kstuff_pause_delay_override_rule(runtime_config_state_t *state,
-                                                 const char *value) {
-  if (!state || !value)
-    return false;
-
-  char normalized[MAX_TITLE_ID];
-  uint32_t delay_seconds = 0;
-  if (!parse_kstuff_delay_rule_value(value, normalized, &delay_seconds))
-    return false;
-
-  for (int i = 0; i < MAX_KSTUFF_TITLE_RULES; ++i) {
-    if (!state->kstuff_delay_rules[i].valid)
-      continue;
-    if (strcmp(state->kstuff_delay_rules[i].title_id, normalized) != 0)
-      continue;
-    state->kstuff_delay_rules[i].delay_seconds = delay_seconds;
-    return true;
-  }
-
-  for (int i = 0; i < MAX_KSTUFF_TITLE_RULES; ++i) {
-    if (state->kstuff_delay_rules[i].valid)
-      continue;
-    (void)strlcpy(state->kstuff_delay_rules[i].title_id, normalized,
-                  sizeof(state->kstuff_delay_rules[i].title_id));
-    state->kstuff_delay_rules[i].delay_seconds = delay_seconds;
-    state->kstuff_delay_rules[i].valid = true;
-    return true;
-  }
-
-  return false;
 }
 
 static config_load_status_t load_runtime_config_state(runtime_config_state_t *state) {
@@ -1323,42 +977,6 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
-    if (strcasecmp(key, "kstuff_game_auto_toggle") == 0) {
-      if (!parse_bool_ini(value, &bval)) {
-        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
-        continue;
-      }
-      state->cfg.kstuff_game_auto_toggle = bval;
-      continue;
-    }
-
-    if (strcasecmp(key, "kstuff_crash_detection") == 0) {
-      if (!parse_bool_ini(value, &bval)) {
-        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
-        continue;
-      }
-      state->cfg.kstuff_crash_detection_enabled = bval;
-      continue;
-    }
-
-    if (strcasecmp(key, "kstuff_no_pause") == 0) {
-      if (!add_kstuff_no_pause_title_rule(state, value)) {
-        log_debug("  [CFG] invalid kstuff no-pause title rule at line %d: "
-                  "%s=%s", line_no, key, value);
-      }
-      continue;
-    }
-
-    if (strcasecmp(key, "kstuff_delay") == 0) {
-      if (!set_kstuff_pause_delay_override_rule(state, value)) {
-        log_debug("  [CFG] invalid kstuff pause override at line %d: %s=%s "
-                  "(format: TITLEID:SECONDS, max: %u)",
-                  line_no, key, value,
-                  (unsigned)MAX_KSTUFF_PAUSE_DELAY_SECONDS);
-      }
-      continue;
-    }
-
     if (strcasecmp(key, "scan_interval_seconds") == 0 ||
         strcasecmp(key, "scan_interval_sec") == 0) {
       if (!parse_u32_ini(value, &u32) || u32 < MIN_SCAN_INTERVAL_SECONDS ||
@@ -1380,30 +998,6 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
         continue;
       }
       state->cfg.stability_wait_seconds = u32;
-      continue;
-    }
-
-    if (strcasecmp(key, "kstuff_pause_delay_image_seconds") == 0 ||
-        strcasecmp(key, "kstuff_pause_delay_image_sec") == 0) {
-      if (!parse_u32_ini(value, &u32) || u32 > MAX_KSTUFF_PAUSE_DELAY_SECONDS) {
-        log_debug("  [CFG] invalid image kstuff pause delay at line %d: %s=%s "
-                  "(max: %u)", line_no, key, value,
-                  (unsigned)MAX_KSTUFF_PAUSE_DELAY_SECONDS);
-        continue;
-      }
-      state->cfg.kstuff_pause_delay_image_seconds = u32;
-      continue;
-    }
-
-    if (strcasecmp(key, "kstuff_pause_delay_direct_seconds") == 0 ||
-        strcasecmp(key, "kstuff_pause_delay_direct_sec") == 0) {
-      if (!parse_u32_ini(value, &u32) || u32 > MAX_KSTUFF_PAUSE_DELAY_SECONDS) {
-        log_debug("  [CFG] invalid direct kstuff pause delay at line %d: %s=%s "
-                  "(max: %u)", line_no, key, value,
-                  (unsigned)MAX_KSTUFF_PAUSE_DELAY_SECONDS);
-        continue;
-      }
-      state->cfg.kstuff_pause_delay_direct_seconds = u32;
       continue;
     }
 
@@ -1492,23 +1086,14 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       image_rule_count++;
   }
 
-  int kstuff_delay_rule_count = 0;
-  for (int k = 0; k < MAX_KSTUFF_TITLE_RULES; k++) {
-    if (state->kstuff_delay_rules[k].valid)
-      kstuff_delay_rule_count++;
-  }
-
   log_debug("  [CFG] loaded: debug=%d quiet=%d ro=%d force=%d "
             "language=%s app_install_all=%d app_install_all_forced=%d scan_depth=%u "
             "legacy_recursive_scan_forced=%d backport_fakelib=%d "
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
-            "kstuff_game_auto_toggle=%d kstuff_crash_detection=%d "
-            "kstuff_pause_delay_image_s=%u kstuff_pause_delay_direct_s=%u "
             "exfat_backend=%s ufs_backend=%s "
             "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u) "
-            "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d "
-            "kstuff_no_pause=%d kstuff_delay_rules=%d",
+            "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d",
             state->cfg.debug_enabled ? 1 : 0, state->cfg.quiet_mode ? 1 : 0,
             state->cfg.mount_read_only ? 1 : 0,
             state->cfg.force_mount ? 1 : 0,
@@ -1521,18 +1106,13 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.global_fakelib_mount_first ? "game" : "global",
             state->cfg.global_fakelib_path,
             state->cfg.global_fakelib_exclude_title_count,
-            state->cfg.kstuff_game_auto_toggle ? 1 : 0,
-            state->cfg.kstuff_crash_detection_enabled ? 1 : 0,
-            state->cfg.kstuff_pause_delay_image_seconds,
-            state->cfg.kstuff_pause_delay_direct_seconds,
             attach_backend_name(state->cfg.exfat_backend),
             attach_backend_name(state->cfg.ufs_backend),
             state->cfg.lvd_sector_exfat, state->cfg.lvd_sector_ufs,
             state->cfg.lvd_sector_pfs, state->cfg.md_sector_exfat,
             state->cfg.md_sector_ufs, state->cfg.scan_interval_us / 1000000u,
             state->cfg.stability_wait_seconds, state->scan_path_count,
-            image_rule_count, state->kstuff_no_pause_title_count,
-            kstuff_delay_rule_count);
+            image_rule_count);
 
   return CONFIG_LOAD_OK;
 }

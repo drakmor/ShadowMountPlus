@@ -2,8 +2,6 @@
 
 #include <pthread.h>
 
-#include "sm_game_lifecycle.h"
-#include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_runtime.h"
@@ -43,7 +41,9 @@ static const shellcore_flag_bit_desc_t g_lnc_util_system_status_bits[] = {
 };
 
 static shellcore_flag_monitor_t g_shellcore_flags[] = {
+#if 0
     {.name = "SceShellCoreUtilAppFocus", .handle = -1, .required = true},
+#endif
     {.name = "SceSystemStateMgrInfo", .handle = -1, .required = true},
     {.name = "SceLncUtilSystemStatus", .handle = -1, .required = false},
     {.name = "SceSystemStateMgrStatus", .handle = -1},
@@ -344,9 +344,11 @@ static void format_shellcore_flag_known_masks(const shellcore_flag_monitor_t *fl
     append_shellcore_flag_token(dst, dst_size, token);
   }
 
+#if 0
   if (strcmp(flag->name, "SceShellCoreUtilAppFocus") == 0) {
     append_shellcore_flag_token(dst, dst_size, "APP_ID");
   }
+#endif
 }
 
 static bool format_shellcore_flag_special_value(const shellcore_flag_monitor_t *flag,
@@ -422,6 +424,7 @@ static bool format_shellcore_flag_special_value(const shellcore_flag_monitor_t *
     return true;
   }
 
+#if 0
   if (strcmp(flag->name, "SceShellCoreUtilAppFocus") == 0) {
     unsigned low32 = (unsigned)(pattern & 0xFFFFFFFFu);
     unsigned high32 = (unsigned)(pattern >> 32);
@@ -439,6 +442,7 @@ static bool format_shellcore_flag_special_value(const shellcore_flag_monitor_t *
       (void)snprintf(dst, dst_size, "0");
     return true;
   }
+#endif
 
 #if 0
   if (strcmp(flag->name, "SceShellCoreUtilUIStatus") == 0) {
@@ -482,12 +486,14 @@ static void format_shellcore_flag_set_bits(const shellcore_flag_monitor_t *flag,
     append_shellcore_flag_token(dst, dst_size, token);
   }
 
+#if 0
   if (strcmp(flag->name, "SceShellCoreUtilAppFocus") == 0 &&
       (pattern >> 32) == 0 && pattern != 0) {
     char token[64];
     (void)snprintf(token, sizeof(token), "APP_ID=0x%08X", (unsigned)pattern);
     append_shellcore_flag_token(dst, dst_size, token);
   }
+#endif
 
   if ((pattern & ~known_mask) != 0) {
     char token[64];
@@ -620,7 +626,9 @@ static bool open_shellcore_flags(size_t *opened_count_out) {
 static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
   uint64_t result_pattern = 0;
   int rc;
+#if 0
   bool changed = false;
+#endif
   bool entered_shutdown_on_going = false;
   bool entered_main_on_standby = false;
   bool entered_suspend_on_going = false;
@@ -648,7 +656,9 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
   if (!flag->has_last_rc || flag->last_rc != 0 || !flag->has_last_pattern ||
       flag->last_pattern != result_pattern) {
     log_shellcore_flag_pattern(flag, result_pattern);
+#if 0
     changed = flag->has_last_pattern && flag->last_pattern != result_pattern;
+#endif
   }
 
   is_system_state_mgr_info = strcmp(flag->name, "SceSystemStateMgrInfo") == 0;
@@ -687,10 +697,12 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
   flag->last_rc = 0;
   flag->has_last_rc = true;
 
+#if 0
   if (changed && strcmp(flag->name, "SceShellCoreUtilAppFocus") == 0) {
     sm_kstuff_note_app_focus((uint32_t)result_pattern);
     wake_game_lifecycle_watcher();
   }
+#endif
   if (entered_shutdown_on_going) {
     request_shutdown_stop("SceSystemStateMgrInfo=SHUTDOWN_ON_GOING");
   }

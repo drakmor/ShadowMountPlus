@@ -96,26 +96,6 @@
 ## Exclude specific title IDs from the global fakelib overlay (repeatable):
 ## global_fakelib_exclude=PPSA12345
 
-# Auto-manage kstuff around game launches:
-# 1/true/yes/on  -> pause kstuff after game launch, resume immediately on stop
-# 0/false/no/off -> leave kstuff state untouched
-# Default: 1
-# kstuff_game_auto_toggle=1
-
-# Detect crash-candidate state and autotune pause delay:
-# 1/true/yes/on  -> enable crash monitoring and autotune updates
-# 0/false/no/off -> disable crash detection/autotune logic
-# Default: 1
-# kstuff_crash_detection=1
-
-# Delay before pausing kstuff for image-backed titles.
-# Default: 25
-# kstuff_pause_delay_image_seconds=25
-
-# Delay before pausing kstuff for direct/non-image launches.
-# Default: 15
-# kstuff_pause_delay_direct_seconds=15
-
 # Backend-specific sector size overrides:
 # Defaults: lvd_exfat=512, lvd_ufs=4096, lvd_pfs=32768, md_exfat=512, md_ufs=512
 # lvd_exfat_sector_size=512
@@ -139,13 +119,6 @@
 ## image_ro=PPSA12345.ffpfs
 ## image_rw=My Game Dump.exfat
 ## image_sector=My Game Dump.exfat:65536
-
-## Keep kstuff enabled for specific title IDs (repeatable):
-## kstuff_no_pause=PPSA12345
-
-## Override pause delay for specific title IDs (repeatable):
-## Format: TITLEID:SECONDS
-## kstuff_delay=PPSA12345:30
 
 ## More custom scan root examples:
 ## scanpath=/data/homebrew

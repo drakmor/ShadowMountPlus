@@ -25,18 +25,6 @@ bool get_image_mode_override(const char *filename, bool *mount_read_only_out);
 // Resolve a per-image sector-size override from autotune.ini or config.ini.
 bool get_image_sector_size_override(const char *filename,
                                     uint32_t *sector_size_out);
-// Return true when kstuff auto-pause is disabled for the given title ID.
-bool is_kstuff_pause_disabled_for_title(const char *title_id);
-// Resolve a per-title kstuff pause-delay override in seconds.
-bool get_kstuff_pause_delay_override_for_title(const char *title_id,
-                                               uint32_t *delay_seconds_out);
-// Resolve a per-title autotuned kstuff pause-delay override in seconds.
-bool get_kstuff_autotune_pause_delay_for_title(const char *title_id,
-                                               uint32_t *delay_seconds_out);
-// Upsert an autotuned pause-delay override for the title.
-bool upsert_kstuff_autotune_pause_delay(const char *title_id,
-                                        uint32_t current_delay_seconds,
-                                        uint32_t *delay_seconds_out);
 // Upsert an autotuned per-image sector-size override.
 bool upsert_image_sector_size_autotune(const char *filename,
                                        uint32_t sector_size,

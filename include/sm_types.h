@@ -113,8 +113,6 @@ typedef struct runtime_config {
   bool backport_fakelib_enabled;
   bool global_fakelib_enabled;
   bool global_fakelib_mount_first;
-  bool kstuff_game_auto_toggle;
-  bool kstuff_crash_detection_enabled;
   bool legacy_recursive_scan_forced;
   char global_fakelib_path[MAX_PATH];
   uint32_t global_fakelib_exclude_title_count;
@@ -122,8 +120,6 @@ typedef struct runtime_config {
   uint32_t scan_depth;
   uint32_t scan_interval_us;
   uint32_t stability_wait_seconds;
-  uint32_t kstuff_pause_delay_image_seconds;
-  uint32_t kstuff_pause_delay_direct_seconds;
   int32_t language_id;
   attach_backend_t exfat_backend;
   attach_backend_t ufs_backend;

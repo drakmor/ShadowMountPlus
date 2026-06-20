@@ -29,10 +29,6 @@ static const char *const g_es_mx[SM_L10N_COUNT] = {
         "Falló el registro: %s (%s)\ncódigo=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Instalando: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff activo otra vez",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "KStuff pausado mientras el juego está corriendo",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Instalado: %s",
     /* English: Image mount failed: 0x%08X (%s)\n%s */
@@ -59,24 +55,6 @@ static const char *const g_es_mx[SM_L10N_COUNT] = {
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] =
         "Falló la instalación por lotes para %d app(s).\ncódigo=0x%08X",
-    /* English: App crashed before KStuff pause: %s. KStuff is not to blame. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] =
-        "La app falló antes de la pausa de KStuff: %s. KStuff no es la causa.",
-    /* English: App crashed after KStuff pause: %s. Autotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] =
-        "La app falló después de la pausa de KStuff: %s. Ajuste automático omitido.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] =
-        "No se puede cargar el módulo después de la pausa de KStuff",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] =
-        "%s: %s. Retardo aumentado a %u s.\nInicia el juego de nuevo.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] =
-        "Crash detectado después de la pausa de KStuff: el retardo de pausa de %s aumentó a %u s. Inicia el juego de nuevo.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] =
-        "Crash detectado después de la pausa de KStuff: %s. No se pudo actualizar el retardo automático.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json faltante o no válido:\n%s",
     /* English: Found %d new games. Executing... */
