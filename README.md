@@ -54,6 +54,7 @@ This file is optional. If it does not exist, ShadowMountPlus creates it from the
 Supported keys (all optional):
 - `debug=1|0` (`1` enables `log_debug` output to console + `/data/shadowmount/debug.log`; default is `1`)
 - `quiet_mode=1|0` (`1` suppresses plain informational popups but keeps rich toasts; default is `0`)
+- `language=auto|<locale>` (notification language; `auto` uses the console system language, e.g. `en-US`, `ru-RU`; default: `auto`)
 - `mount_read_only=1|0` (default: `1`)
 - `force_mount=1|0` (mounting even damaged file systems; default: `0`)
 - `app_install_all=1|0` (`1` stages new titles and submits them through `sceAppInstUtilAppInstallAll`; default: `0` on FW below `12.00`, forced `1` on FW `12.00+`)

@@ -16,6 +16,7 @@
 #include "sm_install_queue.h"
 #include "sm_kstuff.h"
 #include "sm_limits.h"
+#include "sm_l10n.h"
 #include "sm_log.h"
 #include "sm_path_utils.h"
 #include "sm_paths.h"
@@ -1492,6 +1493,7 @@ void sm_scanner_run_loop(void) {
           request_scanner_shutdown("scanner stale event drain after config reload failed");
           return;
         }
+        sm_l10n_init();
         notify_system_l10n(SM_L10N_CONFIG_RELOADED);
         log_debug("  [CFG] runtime config reloaded");
         now_us = monotonic_time_us();

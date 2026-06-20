@@ -21,6 +21,12 @@
 # Default: 0
 # quiet_mode=0
 
+# Notification language:
+# auto -> use the console system language
+# Or set a supported locale, for example: en-US, ru-RU, de-DE, fr-FR, es-ES
+# Default: auto
+# language=auto
+
 # Global mount mode:
 # 1/true/yes/on/ro  -> read-only mounts
 # 0/false/no/off/rw -> read-write mounts

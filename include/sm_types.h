@@ -124,6 +124,7 @@ typedef struct runtime_config {
   uint32_t stability_wait_seconds;
   uint32_t kstuff_pause_delay_image_seconds;
   uint32_t kstuff_pause_delay_direct_seconds;
+  int32_t language_id;
   attach_backend_t exfat_backend;
   attach_backend_t ufs_backend;
   uint32_t lvd_sector_exfat;

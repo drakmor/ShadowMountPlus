@@ -61,11 +61,34 @@ static const sm_region_t g_regions[] = {
 #include "lang/zh_cn.inc"
 #include "lang/zh_tw.inc"
 
-static int g_system_lang = 1;
+static int g_active_lang = 1;
 static bool g_l10n_initialized = false;
 
+static size_t region_count(void) {
+  return sizeof(g_regions) / sizeof(g_regions[0]);
+}
+
+static bool is_valid_language_id(int32_t language_id) {
+  return language_id >= 0 && language_id < (int32_t)region_count();
+}
+
+static bool language_code_matches(const char *value, const char *code) {
+  char normalized[16];
+  size_t len = strlen(code);
+  if (len >= sizeof(normalized))
+    return false;
+
+  for (size_t i = 0; i < len; ++i) {
+    char ch = code[i];
+    normalized[i] = (ch == '-') ? '_' : ch;
+  }
+  normalized[len] = '\0';
+
+  return strcasecmp(value, code) == 0 || strcasecmp(value, normalized) == 0;
+}
+
 static const char *const *active_catalog(void) {
-  switch (g_system_lang) {
+  switch (g_active_lang) {
   case 0:
     return g_ja_jp;
   case 2:
@@ -129,21 +152,67 @@ static const char *const *active_catalog(void) {
   }
 }
 
-void sm_l10n_init(void) {
-  int32_t sys_lang = -1;
-  if (sceSystemServiceParamGetInt(SCE_SYSTEM_SERVICE_PARAM_ID_LANG,
-                                  &sys_lang) == 0 &&
-      sys_lang >= 0 &&
-      sys_lang < (int32_t)(sizeof(g_regions) / sizeof(g_regions[0]))) {
-    g_system_lang = sys_lang;
-  } else {
-    g_system_lang = 1;
+bool sm_l10n_parse_language_id(const char *value, int32_t *language_id_out) {
+  if (!value || !language_id_out)
+    return false;
+
+  if (strcasecmp(value, "auto") == 0 || strcasecmp(value, "system") == 0 ||
+      strcasecmp(value, "default") == 0) {
+    *language_id_out = SM_LANGUAGE_AUTO;
+    return true;
   }
 
-  if (!g_l10n_initialized || runtime_config()->debug_enabled) {
-    const sm_region_t *region = &g_regions[g_system_lang];
-    log_debug("  [L10N] system language=%d country=%s lang=%s locale=%s",
-              g_system_lang, region->country, region->lang, region->locale);
+  for (size_t i = 0; i < region_count(); ++i) {
+    const sm_region_t *region = &g_regions[i];
+    if (language_code_matches(value, region->locale) ||
+        strcasecmp(value, region->country) == 0 ||
+        strcasecmp(value, region->lang) == 0) {
+      *language_id_out = (int32_t)i;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+const char *sm_l10n_language_name(int32_t language_id) {
+  if (language_id == SM_LANGUAGE_AUTO)
+    return "auto";
+  if (!is_valid_language_id(language_id))
+    return "invalid";
+  return g_regions[language_id].locale;
+}
+
+void sm_l10n_init(void) {
+  int32_t sys_lang = -1;
+  const runtime_config_t *cfg = runtime_config();
+  int32_t active_lang = cfg->language_id;
+  bool auto_language = (active_lang == SM_LANGUAGE_AUTO);
+
+  if (auto_language &&
+      sceSystemServiceParamGetInt(SCE_SYSTEM_SERVICE_PARAM_ID_LANG,
+                                  &sys_lang) == 0 &&
+      is_valid_language_id(sys_lang)) {
+    active_lang = sys_lang;
+  } else if (auto_language) {
+    active_lang = 1;
+  }
+
+  if (!is_valid_language_id(active_lang))
+    active_lang = 1;
+
+  bool changed = !g_l10n_initialized || g_active_lang != active_lang;
+  g_active_lang = active_lang;
+
+  if (changed || cfg->debug_enabled) {
+    const sm_region_t *region = &g_regions[g_active_lang];
+    if (auto_language) {
+      log_debug("  [L10N] language=auto active=%d country=%s lang=%s locale=%s",
+                g_active_lang, region->country, region->lang, region->locale);
+    } else {
+      log_debug("  [L10N] language=config active=%d country=%s lang=%s locale=%s",
+                g_active_lang, region->country, region->lang, region->locale);
+    }
   }
   g_l10n_initialized = true;
 }
@@ -163,11 +232,11 @@ const char *sm_l10n_get(sm_l10n_key_t key) {
 const char *sm_l10n_lang(void) {
   if (!g_l10n_initialized)
     sm_l10n_init();
-  return g_regions[g_system_lang].lang;
+  return g_regions[g_active_lang].lang;
 }
 
 const char *sm_l10n_locale(void) {
   if (!g_l10n_initialized)
     sm_l10n_init();
-  return g_regions[g_system_lang].locale;
+  return g_regions[g_active_lang].locale;
 }
