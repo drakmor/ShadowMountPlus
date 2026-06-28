@@ -594,6 +594,58 @@ static bool unmount_controlled_mount_stack(const char *path) {
   return !get_top_mount(path, &mount_st);
 }
 
+static void unmount_mount_point_for_recovery(const char *path) {
+  if (!unmount_controlled_mount_stack(path)) {
+    log_debug("  [LINK] failed to reset mount stack for recovery: %s", path);
+  }
+
+  if (unmount(path, 0) == 0) {
+    log_debug("  [LINK] extra unmount for recovery: %s", path);
+    return;
+  }
+  if (errno == ENOENT || errno == EINVAL)
+    return;
+
+  if (unmount(path, MNT_FORCE) == 0) {
+    log_debug("  [LINK] extra forced unmount for recovery: %s", path);
+    return;
+  }
+  if (errno == ENOENT || errno == EINVAL)
+    return;
+
+  log_debug("  [LINK] extra unmount for recovery did not complete for %s: %s",
+            path, strerror(errno));
+}
+
+static bool recover_mount_directory_after_stat_failure(
+    const char *path, struct stat *st_out) {
+  log_debug("  [LINK] resetting mount stack after stat failure: %s", path);
+  unmount_mount_point_for_recovery(path);
+
+  if (stat(path, st_out) == 0)
+    return true;
+
+  int stat_errno = errno;
+  if (stat_errno != ENOENT) {
+    log_debug("  [LINK] mount directory stat failed after reset for %s: %s",
+              path, strerror(stat_errno));
+    return false;
+  }
+
+  if (mkdir(path, 0755) != 0 && errno != EEXIST) {
+    log_debug("  [LINK] failed to recreate mount directory %s: %s", path,
+              strerror(errno));
+    return false;
+  }
+
+  if (stat(path, st_out) == 0)
+    return true;
+
+  log_debug("  [LINK] mount directory stat failed after recreate for %s: %s",
+            path, strerror(errno));
+  return false;
+}
+
 static bool cleanup_duplicate_title_mounts_entry(const char *title_id,
                                                  const title_link_paths_t *paths,
                                                  void *ctx) {
@@ -845,9 +897,11 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
     }
     struct stat dst_st;
     if (stat(dst, &dst_st) != 0) {
+      int stat_errno = errno;
       log_debug("  [LINK] mount directory exists but stat failed for %s: %s",
-                dst, strerror(errno));
-      return false;
+                dst, strerror(stat_errno));
+      if (!recover_mount_directory_after_stat_failure(dst, &dst_st))
+        return false;
     }
     if (!S_ISDIR(dst_st.st_mode)) {
       log_debug("  [LINK] mount target is not a directory: %s mode=0%o", dst,
