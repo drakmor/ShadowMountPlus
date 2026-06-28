@@ -24,6 +24,13 @@
          -Label "DATA" `
          -ForceOverwrite
 
+    2b) Custom temp directory (large copies / slow system drive):
+       powershell.exe -ExecutionPolicy Bypass -File .\New-OsfExfatImage.ps1 `
+         -ImagePath "D:\images\data.img" `
+         -SourceDir "C:\payload" `
+         -TempDir "D:\temp" `
+         -ForceOverwrite
+
     3) Create empty image and keep mounted (manual format/copy):
        powershell.exe -ExecutionPolicy Bypass -File .\New-OsfExfatImage.ps1 `
          -ImagePath "C:\images\data.exfat" `
@@ -38,6 +45,8 @@
     -Size            Optional. If omitted, an optimal size is computed to fit all files.
                      Suffixes: K/M/G/T (1024), k/m/g/t (1000), b (512-byte blocks), or bytes.
     -Label           Volume label.
+    -TempDir         Optional. Directory for temporary files (format.com logs, etc.).
+                     Aliases: -t. When omitted, Windows default temp is used.
     -ForceOverwrite  Recreate image if it already exists.
     -CreateEmptyAndMount
                      Create and mount image only. Skip format/copy and leave mounted.
@@ -63,6 +72,9 @@ param(
   [string]$Size,
 
   [string]$Label = "OSFIMG",
+
+  [Alias("t")]
+  [string]$TempDir,
 
   [switch]$ForceOverwrite,
 
@@ -121,6 +133,36 @@ function Parse-SizeToBytes([string]$s) {
     }
   }
   throw "Failed to parse size string: '$s'"
+}
+
+$script:ScriptTempDir = $null
+
+function Initialize-ScriptTempDir([string]$dir) {
+  if ([string]::IsNullOrWhiteSpace($dir)) { return }
+  $resolved = $dir.Trim()
+  if (-not (Test-Path -LiteralPath $resolved -PathType Container)) {
+    throw "Temp directory not found: $resolved"
+  }
+  $resolvedPath = (Resolve-Path -LiteralPath $resolved).Path
+  $probe = Join-Path $resolvedPath ([System.IO.Path]::GetRandomFileName())
+  try {
+    Set-Content -LiteralPath $probe -Value "" -NoNewline
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+  } catch {
+    throw "Temp directory is not writable: $resolvedPath"
+  }
+  $script:ScriptTempDir = $resolvedPath
+  $env:TEMP = $script:ScriptTempDir
+  $env:TMP = $script:ScriptTempDir
+  Write-Host "[Info] Temp directory: $script:ScriptTempDir"
+}
+
+function New-ScriptTempFile {
+  if ($script:ScriptTempDir) {
+    $name = [System.IO.Path]::GetRandomFileName()
+    return (Join-Path $script:ScriptTempDir $name)
+  }
+  return [System.IO.Path]::GetTempFileName()
 }
 
 function Format-Bytes([Int64]$bytes) {
@@ -255,8 +297,8 @@ function Invoke-FormatVolume([string]$driveLetter, [int]$clusterSize, [string]$l
   $lastFormatExitCode = -1
   foreach ($attempt in $attempts) {
     Write-Host "[Info] format attempt: $($attempt.Name)"
-    $stdoutPath = [System.IO.Path]::GetTempFileName()
-    $stderrPath = [System.IO.Path]::GetTempFileName()
+    $stdoutPath = New-ScriptTempFile
+    $stderrPath = New-ScriptTempFile
     try {
       $proc = Start-Process -FilePath "format.com" -ArgumentList $attempt.Args -Wait -PassThru -NoNewWindow `
         -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
@@ -294,6 +336,8 @@ function Invoke-FormatVolume([string]$driveLetter, [int]$clusterSize, [string]$l
 if (-not (Test-Admin)) { throw "Please run PowerShell as Administrator." }
 if (-not (Test-Path $SourceDir -PathType Container)) { throw "Source directory not found: $SourceDir" }
 if (-not (Test-Path (Join-Path $SourceDir "eboot.bin") -PathType Leaf)) { throw "eboot.bin not found in source directory: $SourceDir" }
+
+Initialize-ScriptTempDir -dir $TempDir
 
 # Ensure output directory exists
 $outDir = Split-Path -Parent $ImagePath
