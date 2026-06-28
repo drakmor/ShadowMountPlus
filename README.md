@@ -4,12 +4,9 @@
 
 **Discord:** https://discord.gg/x2Ppvzwjhm
 
-
 **Warning! Mounting images can cause shutdown problems and data corruption on internal drives! This depends on many factors, but is more common with older firmware versions. Please take this into account when testing.**
 
-
 **ShadowMountPlus** is a fully automated, background "Auto-Mounter" payload for Jailbroken PlayStation 5 consoles. It streamlines the game mounting process by eliminating the need for manual configuration or external tools (such as DumpRunner or Itemzflow). ShadowMountPlus automatically detects, mounts, and installs game dumps from both **internal and external storage**.
-
 
 **Compatibility:** Supports all Jailbroken PS5 firmwares running **[Kstuff-lite v1.07+](https://github.com/EchoStretch/kstuff-lite)**.
 
@@ -21,8 +18,6 @@
  - USDT (ERC-20):  **`0x313dD245dBA957A5560618eA882d08e66aaFb430`**
  - USDC (Solana):  **`5kv7j2RbUGaSP1kU1cZWj9jHH7d6rfvxmK6YXTYbH4um`**
 
-
-
 ## Current image support
 
 `PFS support is experimental.`
@@ -31,8 +26,8 @@
 | --- | --- | --- | --- |
 | `.ffpkg` | `ufs` | `LVD` or `MD` (configurable) | Recommended |
 | `.exfat` | `exfatfs` | `LVD` or `MD` (configurable) | Compatibility / external-drive-only titles |
-| `.ffpfs` | `pfs` | `LVD` | Experimental |
-| `.ffpfsc` | `pfs` container | `LVD` | Experimental container for nested images |
+| `.ffpfs` | `pfs` (direct) | `LVD` | Experimental direct game layout |
+| `.ffpfsc` | `pfs` container | `LVD` | Experimental nested-image container |
 
 Notes:
 - Backend, read-only mode, and sector size can be configured via `/data/shadowmount/config.ini`.
@@ -46,6 +41,7 @@ Notes:
 - Prefer **UFS (`.ffpkg`)** in most cases: this is the recommended default image format for ShadowMountPlus.
 - Use **exFAT (`.exfat`)** only for games that do not work correctly unless they are handled like external-drive content.
 - If you create an **exFAT (`.exfat`)** image manually, use a **`64 KB` cluster size**. Smaller clusters can cause a noticeable performance loss.
+- Use **compressed PFS containers (`.ffpfsc`)** if you want to experiment with compressed formats; prefer the recommended `.ffpfsc` container layout with a nested exFAT image.
 
 ## Runtime config (`/data/shadowmount/config.ini`)
 
@@ -174,10 +170,10 @@ Image layout requirement (`.ffpkg`, `.exfat`, `.ffpfs`):
 PFSC container layout requirement (`.ffpfsc`):
 - Do not place game files directly in the container root.
 - Place supported nested image files inside the container; ShadowMountPlus mounts those nested images and scans them for the game.
-- A nested `pfs_image.dat` file inside a PFSC container is treated as a PFS image.
+- A nested `pfs_image.dat` file is treated as a PFS image only when it is located inside a mounted PFSC container.
 - `.ffpfsc` uses the nested outer PFS profile (`img_type=0x02`); `.ffpfs` and `pfs_image.dat` files mounted from inside it use the nested inner profile (`img_type=0x82`). Signature verification and GDDR5 cache setup are kept in code but currently disabled.
 
-## Compressed PFS containers (`.ffpfsc`)
+## Compressed PFS Containers (`.ffpfsc`)
 
 Compressed PFS mode is intended only for nested images. During packing, data is
 zero-padded to a `64 KB` sector boundary, so the compressed PFS should be used
@@ -197,33 +193,10 @@ amounts of data or stream textures continuously may stutter.
 Use the official [PSBrew/MkPFS](https://github.com/PSBrew/MkPFS) tool to pack
 PFS images.
 
-### Packing an uncompressed PFS image into compressed PFS
 
-First create an uncompressed nested PFS image:
+### Packing an exFAT image into a Compressed PFS _(exfat->ffpfsc)_ (Recommended)
 
-```bash
-mkpfs pack folder --verify --no-compress --no-adjust-output-file-extension --version PS5 --inode-bits 32 \
-  './PPSA07923/PPSA07923-app' \
-  './pfs_image.dat'
-```
-
-Then pack the nested image (**pfs_image.dat**) into a compressed PFS container:
-
-```bash
-mkpfs pack file --verify --version PS5 --inode-bits 32 \
-  './pfs_image.dat' \
-  './PPSA12345.ffpfsc'
-```
-
-After successful packing, the temporary nested image can be removed:
-
-```bash
-rm './pfs_image.dat'
-```
-
-### Packing an exFAT image into compressed PFS
-
-First create a normal exFAT image using one of the methods from
+First create an exFAT image using one of the methods from
 `Creating an exFAT image`. The nested exFAT image name must keep the `.exfat`
 extension, for example `PPSA12345.exfat`.
 
@@ -243,19 +216,59 @@ make_image.bat "C:\images\PPSA12345.exfat" "C:\payload\PPSA12345-app"
 The exFAT image must contain the game files at the image root, without an extra
 top-level folder.
 
-Then pack the exFAT image into a compressed PFS container:
+Then pack the exFAT image into a compressed PFS container (.ffpfsc):
 
 ```bash
-mkpfs pack file --verify --version PS5 --inode-bits 32 \
-  './PPSA12345.exfat' \
-  './PPSA12345.ffpfsc'
-```
+# Install/Update mkpfs using pip
+python -m pip install -U "mkpfs"
 
-After successful packing, the temporary exFAT image can be removed:
+# Convert the .exfat image into a .ffpfsc compressed PFS container. 
+python -m mkpfs pack file --verify './PPSA12345.exfat' './PPSA12345.ffpfsc'
 
-```bash
+# OPTIONAL: After successful packing, the temporary exFAT image can be removed
 rm './PPSA12345.exfat'
 ```
+
+
+### Packing an uncompressed PFS image into compressed PFS _(folder->dat->ffpfsc)_
+
+First create an uncompressed nested PFS image and then compress it on a second layer.
+
+```bash
+# Install/Update mkpfs using pip
+python -m pip install -U "mkpfs"
+
+# Create an uncompressed PFS image with the nested image name `pfs_image.dat`.
+python -m mkpfs pack folder --verify --no-compress --no-adjust-output-file-extension './BREW1234-app' './pfs_image.dat'
+
+# Pack the pfs_image.dat into a compressed PFS container with the desired output name.
+# IMPORTANT: The internal file name MUST be exactly `pfs_image.dat`.
+python -m mkpfs pack file --verify './pfs_image.dat' './BREW1234.ffpfsc'
+
+# Remove the temporary inner file.
+rm './pfs_image.dat'
+```
+
+## Direct Compressed PFS images (`.ffpfs`)
+
+Using a direct compressed PFS image, without the nested container layer, is
+still experimental and might not work for several games.
+
+Unlike `.ffpfsc`, this format mounts as a normal image and expects the game
+files at the image root. It does not act as a container for nested images.
+
+There are limits related to file size and count. If you want a more stable
+compressed format, prefer the recommended `.ffpfsc` container layout with a
+nested exFAT image.
+
+```bash
+# Install/Update mkpfs using pip
+python -m pip install -U "mkpfs"
+
+# Create a direct .ffpfs image from a game folder (single-pass, experimental)
+python -m mkpfs pack folder --verify './BREW1234-app/' './BREW1234.ffpfs'
+```
+
 
 ## Scan paths
 
