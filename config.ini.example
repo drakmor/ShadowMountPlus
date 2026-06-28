@@ -67,7 +67,7 @@
 # ufs_backend=lvd
 
 # Sandbox fakelib backport watcher:
-# 1/true/yes/on  -> mount /mnt/sandbox/<TITLE_ID>_XXX/app0/fakelib into common/lib
+# 1/true/yes/on  -> mount app0/fakelib2 when present, otherwise app0/fakelib, into common/lib
 # 0/false/no/off -> disable fakelib watcher
 # Default: 1
 # backport_fakelib=1

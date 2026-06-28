@@ -124,7 +124,7 @@ Backport overlay behavior:
 - The `backports` folder is ignored during normal game scanning.
 - A backport is applied automatically to the matching mounted game from any configured scan path.
 - If multiple scan paths provide the same title backport, the game's own scan path wins; otherwise scan path order is used.
-- If `/mnt/sandbox/<TITLE_ID>_XXX/app0/fakelib` exists while the game is running, ShadowMount+ mounts it into that game's sandbox `common/lib`.
+- If `/mnt/sandbox/<TITLE_ID>_XXX/app0/fakelib2` exists while the game is running, ShadowMount+ mounts it into that game's sandbox `common/lib`; otherwise it falls back to `app0/fakelib`.
 - If `global_fakelib=1` and `global_fakelib_path` exists as a directory, ShadowMount+ also mounts that folder into the same sandbox `common/lib`.
 - When both global and per-game fakelib exist, the default gives the game's own `fakelib` priority by mounting `/data/shadowmount/fakelib` first and then the game-specific fakelib.
 - `global_fakelib_priority=global` reverses that priority.

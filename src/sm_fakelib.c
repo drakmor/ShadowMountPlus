@@ -125,11 +125,17 @@ static bool resolve_sandbox_context(const char *title_id,
     return false;
 
   char source_path[MAX_PATH];
-  snprintf(source_path, sizeof(source_path), "/mnt/sandbox/%s/app0/fakelib",
+  snprintf(source_path, sizeof(source_path), "/mnt/sandbox/%s/app0/fakelib2",
            sandbox_id);
   struct stat st;
-  if (stat(source_path, &st) == 0 && S_ISDIR(st.st_mode))
+  if (stat(source_path, &st) == 0 && S_ISDIR(st.st_mode)) {
     (void)strlcpy(game_source_path, source_path, MAX_PATH);
+  } else {
+    snprintf(source_path, sizeof(source_path), "/mnt/sandbox/%s/app0/fakelib",
+             sandbox_id);
+    if (stat(source_path, &st) == 0 && S_ISDIR(st.st_mode))
+      (void)strlcpy(game_source_path, source_path, MAX_PATH);
+  }
 
   char sandbox_root[MAX_PATH];
   snprintf(sandbox_root, sizeof(sandbox_root), "/mnt/sandbox/%s", sandbox_id);
