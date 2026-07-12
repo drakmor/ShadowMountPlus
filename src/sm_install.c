@@ -14,6 +14,7 @@
 #include "sm_image_cache.h"
 #include "sm_paths.h"
 #include "sm_manual.h"
+#include "sm_shellcore_hooks.h"
 
 #include <dlfcn.h>
 
@@ -59,29 +60,6 @@ static app_install_title_dir_fn_t resolve_app_install_title_dir(void) {
             k_app_install_title_dir_symbol, k_app_inst_util_sprx_path,
             error ? error : "unknown");
   return NULL;
-}
-
-static bool write_link_file(const char *path, const char *value) {
-  FILE *f = fopen(path, "w");
-  if (!f) {
-    log_debug("  [LINK] open failed for %s: %s", path, strerror(errno));
-    return false;
-  }
-
-  int saved_errno = 0;
-  if (fprintf(f, "%s", value) < 0)
-    saved_errno = errno;
-  if (fflush(f) != 0 && saved_errno == 0)
-    saved_errno = errno;
-  if (fclose(f) != 0 && saved_errno == 0)
-    saved_errno = errno;
-
-  if (saved_errno != 0) {
-    errno = saved_errno;
-    log_debug("  [LINK] write failed for %s: %s", path, strerror(errno));
-    return false;
-  }
-  return true;
 }
 
 static bool is_appmeta_file(const char *name) {
@@ -139,11 +117,11 @@ static bool copy_optional_trophy_metadata_file(const char *src_sce_sys,
   char dst_path[MAX_PATH];
 
   snprintf(src_path, sizeof(src_path), "%s/%s", src_sce_sys, relative_path);
-  if (access(src_path, F_OK) != 0)
+  if (!path_exists(src_path))
     return true;
 
   snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_base, relative_path);
-  if (access(dst_path, F_OK) == 0)
+  if (path_exists(dst_path))
     return true;
 
   if (copy_file(src_path, dst_path) == 0)
@@ -193,7 +171,8 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   char user_sce_sys[MAX_PATH];
   char src_sce_sys[MAX_PATH];
   char src_snd0[MAX_PATH];
-  char image_source_path[MAX_PATH];
+  char image_source_chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH];
+  size_t image_source_count = 0;
   bool has_image_source = false;
   bool appmeta_missing = false;
   bool metadata_restaged = false;
@@ -206,8 +185,9 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   snprintf(user_app_dir, sizeof(user_app_dir), "%s/%s", APP_BASE, title_id);
 
   if (is_under_image_mount_base(src_path)) {
-    has_image_source = resolve_image_source_from_mount_cache(
-        src_path, image_source_path, sizeof(image_source_path));
+    image_source_count = resolve_image_source_chain_from_mount_cache(
+        src_path, image_source_chain);
+    has_image_source = image_source_count > 0;
     if (!has_image_source) {
       log_debug("  [LINK] image source lookup failed for %s: %s", title_id,
                 src_path);
@@ -289,7 +269,8 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   mkdir(APP_BASE, 0777);
   mkdir(user_app_dir, 0777);
   snprintf(lnk_path, sizeof(lnk_path), "%s/mount.lnk", user_app_dir);
-  if (!write_link_file(lnk_path, src_path)) {
+  if (!write_mount_link(title_id, src_path)) {
+    log_debug("  [LINK] write failed for %s: %s", lnk_path, strerror(errno));
     (void)rollback_title_nullfs_mount(title_id, src_path);
     runtime_mount_state_unlock();
     return false;
@@ -301,17 +282,18 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   snprintf(img_lnk_path, sizeof(img_lnk_path), "%s/mount_img.lnk",
            user_app_dir);
   if (has_image_source) {
-    if (!write_link_file(img_lnk_path, image_source_path)) {
+    if (!write_mount_image_chain(title_id, image_source_chain,
+                                 image_source_count)) {
       (void)unlink(lnk_path);
       (void)rollback_title_nullfs_mount(title_id, src_path);
       runtime_mount_state_unlock();
       return false;
     }
-    log_debug("  [LINK] mount_img.lnk created: %s -> %s", img_lnk_path,
-              image_source_path);
-    if (!cache_image_source_mapping(image_source_path, src_path)) {
+    log_debug("  [LINK] mount_img.lnk created: %s -> %s layers=%zu",
+              img_lnk_path, image_source_chain[0], image_source_count);
+    if (!cache_image_source_mapping(image_source_chain[0], src_path)) {
       log_debug("  [LINK] image source cache update failed: %s -> %s",
-                src_path, image_source_path);
+                image_source_chain[0], src_path);
     }
   } else if (unlink(img_lnk_path) != 0 && errno != ENOENT) {
     log_debug("  [LINK] remove failed for %s: %s", img_lnk_path,
@@ -342,17 +324,27 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   }
 
   // REGISTER
-  app_install_title_dir_fn_t app_install_title_dir_fn =
-      resolve_app_install_title_dir();
-  if (!app_install_title_dir_fn) {
-    log_debug("  [REG] sceAppInstUtilAppInstallTitleDir unavailable");
-    notify_system("Register failed: %s (%s)\nAppInstallTitleDir unavailable",
-                  title_name, title_id);
-    return false;
+  int res = 0;
+  if (sm_shellcore_install_bridge_enabled()) {
+    if (!sm_shellcore_install_title_dir(title_id, APP_BASE "/", &res)) {
+      log_debug("  [REG] internal AppInstallTitleDir bridge unavailable");
+      notify_system("Register failed: %s (%s)\nTitleDir bridge unavailable",
+                    title_name, title_id);
+      return false;
+    }
+    mark_register_attempted(title_id);
+  } else {
+    app_install_title_dir_fn_t app_install_title_dir_fn =
+        resolve_app_install_title_dir();
+    if (!app_install_title_dir_fn) {
+      log_debug("  [REG] sceAppInstUtilAppInstallTitleDir unavailable");
+      notify_system("Register failed: %s (%s)\nAppInstallTitleDir unavailable",
+                    title_name, title_id);
+      return false;
+    }
+    mark_register_attempted(title_id);
+    res = app_install_title_dir_fn(title_id, APP_BASE "/", NULL);
   }
-
-  mark_register_attempted(title_id);
-  int res = app_install_title_dir_fn(title_id, APP_BASE "/", 0);
   sceKernelUsleep(200000);
 
   if (res == 0) {

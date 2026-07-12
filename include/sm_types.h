@@ -109,7 +109,6 @@ typedef struct runtime_config {
   bool mount_read_only;
   bool force_mount;
   bool app_install_all_enabled;
-  bool app_install_all_forced;
   bool backport_fakelib_enabled;
   bool global_fakelib_enabled;
   bool global_fakelib_mount_first;
