@@ -236,6 +236,16 @@ static void notify_duplicate_scan_candidate(const char *title_id,
   notify_duplicate_title_once(title_id, ignored_path, existing_path);
 }
 
+static bool defer_full_candidate_batch(int candidate_count,
+                                       int max_candidates,
+                                       bool *incomplete_found_out) {
+  if (candidate_count < max_candidates)
+    return false;
+  if (incomplete_found_out)
+    *incomplete_found_out = true;
+  return true;
+}
+
 static existing_directory_result_t handle_existing_directory_candidate(
     const char *full_path, const scan_app_db_context_t *app_db,
     const directory_candidate_info_t *info,
@@ -332,9 +342,10 @@ static bool enqueue_directory_candidate(
     return true;
   }
 
-  if (*candidate_count >= max_candidates) {
-    log_debug("  [SKIP] candidate queue full (%d): %s (%s)", max_candidates,
-              info->title_name, info->title_id);
+  if (defer_full_candidate_batch(*candidate_count, max_candidates,
+                                 unstable_found_out)) {
+    log_debug("  [SKIP] candidate queue full (%d), deferring: %s (%s)",
+              max_candidates, info->title_name, info->title_id);
     return true;
   }
 
@@ -370,7 +381,10 @@ static bool try_collect_candidate_for_directory(
   if (probe_result == DIRECTORY_CANDIDATE_DESCEND)
     return false;
 
-  sm_image_index_record_game(full_path, info.title_id);
+  if (!sm_image_index_record_game(full_path, info.title_id) &&
+      unstable_found_out) {
+    *unstable_found_out = true;
+  }
 
   int duplicate_candidate_index = find_scan_candidate_index_by_title_id(
       candidates, *candidate_count, info.title_id);
@@ -456,6 +470,10 @@ static sm_scan_tree_dir_visit_t collect_candidate_directory_visit(
     return SM_SCAN_TREE_DIR_DESCEND;
 
   collect_candidates_walk_ctx_t *ctx = (collect_candidates_walk_ctx_t *)ctx_ptr;
+  if (defer_full_candidate_batch(*ctx->candidate_count, ctx->max_candidates,
+                                 ctx->unstable_found_out)) {
+    return SM_SCAN_TREE_DIR_ABORT;
+  }
   if (try_collect_candidate_for_directory(
           dir_path, ctx->candidates, ctx->max_candidates, ctx->candidate_count,
           ctx->app_db, ctx->discovered_param_roots,
@@ -474,6 +492,10 @@ static bool collect_candidate_image_visit(const char *image_path,
   (void)depth_from_root;
 
   collect_candidates_walk_ctx_t *ctx = (collect_candidates_walk_ctx_t *)ctx_ptr;
+  if (defer_full_candidate_batch(*ctx->candidate_count, ctx->max_candidates,
+                                 ctx->unstable_found_out)) {
+    return false;
+  }
   struct stat image_st;
   if (stat(image_path, &image_st) != 0)
     return true;
@@ -560,6 +582,10 @@ static void collect_scan_candidates_from_manual_path(
     int *discovered_param_root_count, bool *unstable_found_out) {
   if (should_stop_requested() || runtime_sleep_mode_active())
     return;
+  if (defer_full_candidate_batch(*candidate_count, max_candidates,
+                                 unstable_found_out)) {
+    return;
+  }
 
   struct stat st;
   if (stat(manual_path, &st) != 0) {

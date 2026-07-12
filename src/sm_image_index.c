@@ -39,7 +39,7 @@ typedef struct {
 } image_index_header_t;
 
 static image_index_entry_t g_image_index[MAX_IMAGE_MOUNTS];
-static image_index_title_t g_image_titles[MAX_PENDING];
+static image_index_title_t g_image_titles[MAX_IMAGE_TITLES];
 static bool g_image_index_loaded;
 static bool g_image_index_dirty;
 
@@ -59,7 +59,7 @@ static int find_entry(const char *path) {
 }
 
 static void clear_entry_titles(int entry_index) {
-  for (int i = 0; i < MAX_PENDING; ++i) {
+  for (int i = 0; i < MAX_IMAGE_TITLES; ++i) {
     if (g_image_titles[i].valid &&
         g_image_titles[i].image_index == (uint16_t)entry_index) {
       memset(&g_image_titles[i], 0, sizeof(g_image_titles[i]));
@@ -84,7 +84,7 @@ static bool save_index(void) {
       .magic = IMAGE_INDEX_MAGIC,
       .version = IMAGE_INDEX_VERSION,
       .entry_capacity = MAX_IMAGE_MOUNTS,
-      .title_capacity = MAX_PENDING,
+      .title_capacity = MAX_IMAGE_TITLES,
   };
   bool ok = fwrite(&header, sizeof(header), 1, file) == 1 &&
             fwrite(g_image_index, sizeof(g_image_index), 1, file) == 1 &&
@@ -116,7 +116,7 @@ static bool loaded_index_is_valid(void) {
       return false;
     }
   }
-  for (int i = 0; i < MAX_PENDING; ++i) {
+  for (int i = 0; i < MAX_IMAGE_TITLES; ++i) {
     const image_index_title_t *title = &g_image_titles[i];
     if (!title->valid)
       continue;
@@ -143,7 +143,7 @@ static void load_index(void) {
             header.magic == IMAGE_INDEX_MAGIC &&
             header.version == IMAGE_INDEX_VERSION &&
             header.entry_capacity == MAX_IMAGE_MOUNTS &&
-            header.title_capacity == MAX_PENDING &&
+            header.title_capacity == MAX_IMAGE_TITLES &&
             fread(g_image_index, sizeof(g_image_index), 1, file) == 1 &&
             fread(g_image_titles, sizeof(g_image_titles), 1, file) == 1;
   (void)fclose(file);
@@ -175,7 +175,7 @@ static bool cached_titles_ready(int entry_index,
                                 const struct AppDbTitleList *app_db_titles,
                                 bool app_db_titles_ready) {
   const char *image_path = g_image_index[entry_index].path;
-  for (int i = 0; i < MAX_PENDING; ++i) {
+  for (int i = 0; i < MAX_IMAGE_TITLES; ++i) {
     if (!g_image_titles[i].valid ||
         g_image_titles[i].image_index != (uint16_t)entry_index) {
       continue;
@@ -228,22 +228,22 @@ void sm_image_index_begin_scan(const char *path, const struct stat *st) {
   g_image_index_dirty = true;
 }
 
-void sm_image_index_record_game(const char *game_path, const char *title_id) {
+bool sm_image_index_record_game(const char *game_path, const char *title_id) {
   load_index();
   char image_path[MAX_PATH];
   if (!resolve_outermost_image_source_from_mount_cache(
           game_path, image_path, sizeof(image_path))) {
-    return;
+    return true;
   }
   int entry_index = find_entry(image_path);
   if (entry_index < 0) {
     struct stat st;
     if (stat(image_path, &st) != 0)
-      return;
+      return false;
     sm_image_index_begin_scan(image_path, &st);
     entry_index = find_entry(image_path);
     if (entry_index < 0)
-      return;
+      return false;
   }
   char tracked_path[MAX_PATH];
   char linked_image[MAX_PATH];
@@ -256,14 +256,14 @@ void sm_image_index_record_game(const char *game_path, const char *title_id) {
     log_debug("  [IMGIDX] failed to repair image link: %s -> %s", title_id,
               image_path);
   }
-  for (int i = 0; i < MAX_PENDING; ++i) {
+  for (int i = 0; i < MAX_IMAGE_TITLES; ++i) {
     if (g_image_titles[i].valid &&
         g_image_titles[i].image_index == (uint16_t)entry_index &&
         strcmp(g_image_titles[i].title_id, title_id) == 0) {
-      return;
+      return true;
     }
   }
-  for (int i = 0; i < MAX_PENDING; ++i) {
+  for (int i = 0; i < MAX_IMAGE_TITLES; ++i) {
     if (g_image_titles[i].valid)
       continue;
     g_image_titles[i].valid = 1;
@@ -271,9 +271,10 @@ void sm_image_index_record_game(const char *game_path, const char *title_id) {
     (void)strlcpy(g_image_titles[i].title_id, title_id,
                   sizeof(g_image_titles[i].title_id));
     g_image_index_dirty = true;
-    return;
+    return true;
   }
   log_debug("  [IMGIDX] title cache full: %s", title_id);
+  return false;
 }
 
 void sm_image_index_complete_scan(const char *path) {
