@@ -1,6 +1,5 @@
 #include "sm_platform.h"
 
-#include <fcntl.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <sys/event.h>
@@ -8,13 +7,17 @@
 
 #include "sm_appdb.h"
 #include "sm_fakelib.h"
+#include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
 #include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_mdbg.h"
+#include "sm_path_utils.h"
 #include "sm_runtime.h"
+#include "sm_scan.h"
 #include "sm_scanner.h"
+#include "sm_shellcore_service.h"
 #include "sm_time.h"
 
 #define MAX_PENDING_GAME_EXEC_CANDIDATES 32
@@ -39,10 +42,12 @@ static pthread_cond_t g_game_lifecycle_start_cond = PTHREAD_COND_INITIALIZER;
 static bool g_game_lifecycle_start_ready = false;
 static bool g_game_lifecycle_start_success = false;
 static _Atomic pid_t g_active_game_pid = 0;
-static pthread_mutex_t g_active_game_mutex = PTHREAD_MUTEX_INITIALIZER;
+// Title storage is owned exclusively by the lifecycle thread. Other threads
+// consume only the atomically published pid through the public state helper.
 static char g_active_game_title_id[MAX_TITLE_ID];
 
 static bool register_game_exit_watch(int kq, pid_t pid);
+static void handle_game_exit(pid_t pid);
 
 static void publish_active_game_pid(pid_t pid) {
   pid_t previous_pid = atomic_exchange(&g_active_game_pid, pid);
@@ -52,29 +57,40 @@ static void publish_active_game_pid(pid_t pid) {
 }
 
 static void publish_active_game(pid_t pid, const char *title_id) {
-  pthread_mutex_lock(&g_active_game_mutex);
   if (pid > 0 && title_id && title_id[0] != '\0')
     (void)strlcpy(g_active_game_title_id, title_id,
                   sizeof(g_active_game_title_id));
   else
     g_active_game_title_id[0] = '\0';
-  pthread_mutex_unlock(&g_active_game_mutex);
   publish_active_game_pid(pid);
 }
 
 static bool consume_active_game_title(pid_t pid,
                                       char title_id_out[MAX_TITLE_ID]) {
-  bool matched = false;
-  pthread_mutex_lock(&g_active_game_mutex);
-  if (pid > 0 && atomic_load(&g_active_game_pid) == pid &&
-      g_active_game_title_id[0] != '\0') {
-    (void)strlcpy(title_id_out, g_active_game_title_id, MAX_TITLE_ID);
-    matched = true;
+  if (pid <= 0 || atomic_load(&g_active_game_pid) != pid ||
+      g_active_game_title_id[0] == '\0')
+    return false;
+  (void)strlcpy(title_id_out, g_active_game_title_id, MAX_TITLE_ID);
+  g_active_game_title_id[0] = '\0';
+  return true;
+}
+
+static bool snapshot_active_game(pid_t pid, char title_id[MAX_TITLE_ID]) {
+  title_id[0] = '\0';
+  if (pid <= 0 || g_active_game_title_id[0] == '\0')
+    return false;
+  (void)strlcpy(title_id, g_active_game_title_id, MAX_TITLE_ID);
+  return true;
+}
+
+static bool title_is_usb_backed(const char *title_id, const char *source_path,
+                                bool has_mount_link) {
+  char image_path[MAX_PATH];
+  if (read_mount_image_link(title_id, image_path, sizeof(image_path)) &&
+      is_usb_storage_path(image_path)) {
+    return true;
   }
-  if (matched)
-    g_active_game_title_id[0] = '\0';
-  pthread_mutex_unlock(&g_active_game_mutex);
-  return matched;
+  return has_mount_link && is_usb_storage_path(source_path);
 }
 
 static bool is_supported_title_id(const char *title_id) {
@@ -166,6 +182,11 @@ static bool is_process_alive(pid_t pid) {
 
 static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
                                  const char *title_id, uint32_t app_id) {
+  if (!is_data_mounted(title_id) &&
+      !sm_shellcore_ensure_title_runtime(title_id)) {
+    return false;
+  }
+
   if (!register_game_exit_watch(kq, pid)) {
     log_debug("  [GAME] skipping launch tracking for %s pid=%ld without exit watch",
               title_id, (long)pid);
@@ -205,7 +226,7 @@ static void drain_game_lifecycle_wake_pipe(void) {
   }
 }
 
-static bool discard_game_lifecycle_events_nowait(int kq) {
+static bool drain_game_lifecycle_events_nowait(int kq) {
   struct kevent events[16];
   struct timespec timeout;
   memset(&timeout, 0, sizeof(timeout));
@@ -221,15 +242,13 @@ static bool discard_game_lifecycle_events_nowait(int kq) {
     }
     if (nev == 0)
       return true;
+    for (int i = 0; i < nev; ++i) {
+      if (events[i].filter == EVFILT_PROC &&
+          (events[i].fflags & NOTE_EXIT) != 0) {
+        handle_game_exit((pid_t)events[i].ident);
+      }
+    }
   }
-}
-
-static bool set_fd_nonblocking(int fd) {
-  int flags = fcntl(fd, F_GETFL, 0);
-  if (flags < 0)
-    return false;
-
-  return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
 static void set_game_lifecycle_start_result(bool success) {
@@ -426,11 +445,13 @@ static void handle_game_exit(pid_t pid) {
   pending_game_launch_t *entry = find_pending_game_launch(pid);
   if (entry)
     clear_pending_game_launch(entry);
-  if (atomic_load(&g_active_game_pid) == pid)
+  if (had_active_title)
     publish_active_game_pid(0);
   sm_fakelib_game_on_exit(pid);
   sm_kstuff_game_on_exit(pid);
   if (had_active_title) {
+    if (!sm_shellcore_release_title_runtime(title_id))
+      log_debug("  [SHELLCORE] runtime release deferred/failed: %s", title_id);
     int snd0_updates = normalize_snd0info_for_title(title_id);
     if (snd0_updates >= 0)
       log_debug("  [DB] snd0info normalized after game exit rows=%d title=%s",
@@ -438,21 +459,57 @@ static void handle_game_exit(pid_t pid) {
   }
 }
 
-static void restore_suspended_game_if_alive(int kq, pid_t pid) {
-  if (pid <= 0 || !is_process_alive(pid))
-    return;
-
-  char title_id[MAX_TITLE_ID];
-  uint32_t app_id = 0;
-  if (!resolve_game_title_id(pid, title_id, &app_id))
-    return;
-  if (!is_supported_title_id(title_id))
-    return;
+static bool terminate_usb_game_for_sleep(int kq, pid_t pid,
+                                         const char *title_id) {
+  if (kill(pid, SIGKILL) != 0 && errno != ESRCH) {
+    log_debug("  [SLEEP] failed to kill USB game: %s pid=%ld: %s", title_id,
+              (long)pid, strerror(errno));
+    return false;
+  }
+  log_debug("  [SLEEP] killing USB game before suspend: %s pid=%ld", title_id,
+            (long)pid);
 
   uint64_t now_us = monotonic_time_us();
-  log_debug("  [GAME] resumed: %s pid=%ld app_id=0x%08X", title_id,
-            (long)pid, app_id);
-  (void)dispatch_game_launch(kq, pid, now_us, title_id, app_id);
+  uint64_t deadline_us =
+      now_us == 0 ? 0 : now_us + GAME_SLEEP_EXIT_TIMEOUT_US;
+  while (!g_game_lifecycle_stop_requested && !should_stop_requested()) {
+    struct kevent event;
+    struct timespec timeout = {
+        .tv_sec = 0,
+        .tv_nsec = (long)GAME_LIFECYCLE_POLL_INTERVAL_US * 1000L,
+    };
+    int nev = kevent(kq, NULL, 0, &event, 1, &timeout);
+    if (nev < 0) {
+      if (errno == EINTR)
+        continue;
+      log_debug("  [SLEEP] NOTE_EXIT wait failed for %s pid=%ld: %s",
+                title_id, (long)pid, strerror(errno));
+      return false;
+    }
+    if (nev > 0) {
+      if (event.filter == EVFILT_READ &&
+          event.ident == (uintptr_t)g_game_lifecycle_wake_pipe[0]) {
+        drain_game_lifecycle_wake_pipe();
+      } else if (event.filter == EVFILT_PROC &&
+                 (event.fflags & NOTE_EXIT) != 0) {
+        pid_t exited_pid = (pid_t)event.ident;
+        handle_game_exit(exited_pid);
+        if (exited_pid == pid) {
+          log_debug("  [SLEEP] USB game stopped: %s pid=%ld", title_id,
+                    (long)pid);
+          return true;
+        }
+      }
+    }
+
+    now_us = monotonic_time_us();
+    if (deadline_us != 0 && now_us != 0 && now_us >= deadline_us) {
+      log_debug("  [SLEEP] timed out waiting NOTE_EXIT: %s pid=%ld", title_id,
+                (long)pid);
+      return false;
+    }
+  }
+  return false;
 }
 
 static void *game_lifecycle_watcher_main(void *arg) {
@@ -501,10 +558,36 @@ static void *game_lifecycle_watcher_main(void *arg) {
     if (runtime_sleep_mode_active()) {
       if (!sleep_cleanup_done) {
         suspended_game_pid = atomic_load(&g_active_game_pid);
+        char usb_game_title_id[MAX_TITLE_ID];
+        bool active_game = snapshot_active_game(suspended_game_pid,
+                                                usb_game_title_id);
+        char source_path[MAX_PATH];
+        bool has_mount_link =
+            active_game && read_mount_link(usb_game_title_id, source_path,
+                                           sizeof(source_path));
+        bool usb_game =
+            active_game && title_is_usb_backed(
+                               usb_game_title_id, source_path, has_mount_link);
         clear_all_pending_game_launches();
         sm_fakelib_game_shutdown();
         sm_kstuff_sleep_enter();
-        publish_active_game(0, NULL);
+        bool usb_cleanup_allowed = true;
+        if (usb_game) {
+          usb_cleanup_allowed = terminate_usb_game_for_sleep(
+              kq, suspended_game_pid, usb_game_title_id);
+          if (usb_cleanup_allowed) {
+            suspended_game_pid = 0;
+          }
+        }
+        if (usb_cleanup_allowed) {
+          runtime_mount_state_lock();
+          unmount_usb_sources_for_suspend();
+          runtime_mount_state_unlock();
+        } else {
+          log_debug("[SLEEP] USB cleanup skipped while game process remains");
+        }
+        // Keep a live non-USB game published while it is suspended so scanner
+        // work cannot race its unchanged runtime mount.
         sleep_cleanup_done = true;
       }
 
@@ -523,10 +606,13 @@ static void *game_lifecycle_watcher_main(void *arg) {
       continue;
     }
     if (sleep_cleanup_done) {
-      if (!discard_game_lifecycle_events_nowait(kq))
+      if (!drain_game_lifecycle_events_nowait(kq))
         break;
       sleep_cleanup_done = false;
-      restore_suspended_game_if_alive(kq, suspended_game_pid);
+      if (runtime_sleep_mode_active())
+        continue;
+      if (suspended_game_pid > 0 && is_process_alive(suspended_game_pid))
+        handle_game_exec(kq, suspended_game_pid);
       sm_kstuff_sleep_leave();
       suspended_game_pid = 0;
     }
@@ -578,8 +664,8 @@ bool start_game_lifecycle_watcher(void) {
     log_debug("  [GAME] wake pipe creation failed: %s", strerror(errno));
     return false;
   }
-  if (!set_fd_nonblocking(g_game_lifecycle_wake_pipe[0]) ||
-      !set_fd_nonblocking(g_game_lifecycle_wake_pipe[1])) {
+  if (!sm_set_fd_nonblocking(g_game_lifecycle_wake_pipe[0]) ||
+      !sm_set_fd_nonblocking(g_game_lifecycle_wake_pipe[1])) {
     log_debug("  [GAME] wake pipe nonblocking setup failed: %s",
               strerror(errno));
     close_game_lifecycle_wake_pipe();

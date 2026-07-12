@@ -7,7 +7,6 @@
 #include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_runtime.h"
-#include "sm_scan.h"
 #include "sm_shellcore_flags.h"
 
 #define SHELLCORE_FLAG_WAITMODE_OR 2u
@@ -509,11 +508,7 @@ static void set_shellcore_flag_start_result(bool success) {
 }
 
 static void enter_sleep_mode_and_cleanup(const char *reason) {
-  if (request_runtime_sleep_mode(true, reason)) {
-    runtime_mount_state_lock();
-    unmount_usb_sources_for_suspend();
-    runtime_mount_state_unlock();
-  }
+  (void)request_runtime_sleep_mode(true, reason);
 }
 
 static void reset_shellcore_flag_state(shellcore_flag_monitor_t *flag) {

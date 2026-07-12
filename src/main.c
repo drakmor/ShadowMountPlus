@@ -8,6 +8,8 @@
 #include "sm_types.h"
 #include "sm_log.h"
 #include "sm_shellcore_flags.h"
+#include "sm_shellcore_hooks.h"
+#include "sm_shellcore_service.h"
 #include "sm_config_mount.h"
 #include "sm_game_lifecycle.h"
 #include "sm_kstuff.h"
@@ -473,6 +475,13 @@ int main(void) {
     log_debug("  [SHELLFLAG] monitor unavailable");
   sm_mdbg_init();
   sm_kstuff_init();
+  if (!sm_shellcore_service_start())
+    log_debug("  [SHELLCORE] Unix socket service unavailable: %s",
+              strerror(errno));
+  else {
+    if (!sm_shellcore_hooks_start())
+      log_debug("  [SHELLCORE] lifecycle hooks unavailable; stock behavior kept");
+  }
   if (!refresh_game_lifecycle_watcher())
     log_debug("  [GAME] lifecycle watcher unavailable");
 
@@ -514,6 +523,8 @@ int main(void) {
   sm_scanner_run_loop();
 
 shutdown:
+  sm_shellcore_hooks_stop();
+  sm_shellcore_service_stop();
   sm_shellcore_flags_stop();
   stop_game_lifecycle_watcher();
   sm_scanner_shutdown();
