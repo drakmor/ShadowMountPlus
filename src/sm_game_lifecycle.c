@@ -556,7 +556,7 @@ static void *game_lifecycle_watcher_main(void *arg) {
   pid_t suspended_game_pid = 0;
   while (!g_game_lifecycle_stop_requested && !should_stop_requested()) {
     if (runtime_sleep_mode_active()) {
-      if (!sleep_cleanup_done) {
+      if (!sleep_cleanup_done && sm_scanner_usb_watches_suspended()) {
         suspended_game_pid = atomic_load(&g_active_game_pid);
         char usb_game_title_id[MAX_TITLE_ID];
         bool active_game = snapshot_active_game(suspended_game_pid,

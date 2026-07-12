@@ -1,5 +1,6 @@
 #include "sm_platform.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <sys/event.h>
 #include <sys/select.h>
@@ -9,6 +10,7 @@
 #include "sm_fakelib.h"
 #include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
+#include "sm_gameinfo.h"
 #include "sm_hash.h"
 #include "sm_image.h"
 #include "sm_install.h"
@@ -37,9 +39,7 @@
 typedef enum {
   SCANNER_WATCH_SCAN_ROOT = 0,
   SCANNER_WATCH_SCAN_ROOT_PARENT,
-  SCANNER_WATCH_SCAN_BACKPORT_ROOT,
   SCANNER_WATCH_SCAN_SUBDIR,
-  SCANNER_WATCH_SCAN_IMAGE_FILE,
 } scanner_watch_kind_t;
 
 typedef struct {
@@ -66,6 +66,7 @@ typedef struct {
 } scanner_root_state_t;
 
 static int g_scanner_wake_pipe[2] = {-1, -1};
+static atomic_bool g_usb_watches_suspended = ATOMIC_VAR_INIT(true);
 static int g_scanner_config_fd = -1;
 static int g_scanner_manual_fd = -1;
 static volatile sig_atomic_t g_scanner_wake_write_fd = -1;
@@ -356,11 +357,7 @@ static bool register_scanner_watch_entry(int kq, int scan_root_index,
                                          const char *path,
                                          scanner_watch_kind_t kind,
                                          uint8_t depth) {
-  int open_flags = O_RDONLY;
-  if (kind != SCANNER_WATCH_SCAN_IMAGE_FILE)
-    open_flags |= O_DIRECTORY;
-
-  int fd = open(path, open_flags);
+  int fd = open(path, O_RDONLY | O_DIRECTORY);
   if (fd < 0) {
     if (errno != ENOENT && errno != ENOTDIR) {
       log_debug("  [SCAN] watcher open failed for %s: %s", path,
@@ -549,7 +546,6 @@ static bool resolve_watch_tree_rebuild_target(const scanner_watch_entry_t *entry
                                               scanner_watch_kind_t *kind_out) {
   switch (entry->kind) {
   case SCANNER_WATCH_SCAN_ROOT:
-  case SCANNER_WATCH_SCAN_BACKPORT_ROOT:
   case SCANNER_WATCH_SCAN_SUBDIR:
     (void)strlcpy(rebuild_path, entry->path, MAX_PATH);
     *rebuild_depth_out = entry->depth;
@@ -561,13 +557,6 @@ static bool resolve_watch_tree_rebuild_target(const scanner_watch_entry_t *entry
     *rebuild_depth_out = 0;
     *kind_out = SCANNER_WATCH_SCAN_ROOT;
     return true;
-  case SCANNER_WATCH_SCAN_IMAGE_FILE:
-    if (!build_parent_directory_path(entry->path, rebuild_path))
-      return false;
-    *rebuild_depth_out = (entry->depth > 0u) ? (uint8_t)(entry->depth - 1u) : 0u;
-    *kind_out =
-        (entry->depth <= 1u) ? SCANNER_WATCH_SCAN_ROOT : SCANNER_WATCH_SCAN_SUBDIR;
-    return true;
   default:
     return false;
   }
@@ -576,11 +565,19 @@ static bool resolve_watch_tree_rebuild_target(const scanner_watch_entry_t *entry
 typedef struct {
   int kq;
   int scan_root_index;
+  unsigned int scan_depth;
 } register_watch_tree_ctx_t;
 
 static sm_scan_tree_dir_visit_t register_watch_directory_visit(
     const char *dir_path, unsigned int depth_from_root, void *ctx_ptr) {
   register_watch_tree_ctx_t *ctx = (register_watch_tree_ctx_t *)ctx_ptr;
+  if (depth_from_root > 0u) {
+    if (depth_from_root >= ctx->scan_depth ||
+        directory_has_param_json(dir_path, NULL)) {
+      return SM_SCAN_TREE_DIR_SKIP_DESCEND;
+    }
+  }
+
   scanner_watch_kind_t kind =
       (depth_from_root == 0u) ? SCANNER_WATCH_SCAN_ROOT
                               : SCANNER_WATCH_SCAN_SUBDIR;
@@ -590,18 +587,6 @@ static sm_scan_tree_dir_visit_t register_watch_directory_visit(
   }
 
   return SM_SCAN_TREE_DIR_DESCEND;
-}
-
-static bool register_watch_image_visit(const char *image_path,
-                                       const char *image_name,
-                                       unsigned int depth_from_root,
-                                       void *ctx_ptr) {
-  (void)image_name;
-
-  register_watch_tree_ctx_t *ctx = (register_watch_tree_ctx_t *)ctx_ptr;
-  return register_scanner_watch_entry(ctx->kq, ctx->scan_root_index, image_path,
-                                      SCANNER_WATCH_SCAN_IMAGE_FILE,
-                                      (uint8_t)depth_from_root);
 }
 
 static bool register_scan_root_parent_watch(int kq, int scan_root_index,
@@ -634,22 +619,15 @@ static bool rebuild_scan_root_watch_tree(int kq, int scan_root_index) {
   register_watch_tree_ctx_t walk_ctx = {
       .kq = kq,
       .scan_root_index = scan_root_index,
+      .scan_depth = scan_depth,
   };
   sm_scan_tree_callbacks_t callbacks = {
       .on_directory = register_watch_directory_visit,
-      .on_image_file = register_watch_image_visit,
+      .on_image_file = NULL,
   };
   if (!sm_scan_tree_walk(scan_root, scan_root, 0u, scan_depth, &callbacks,
                          &walk_ctx)) {
     return false;
-  }
-
-  char backport_root[MAX_PATH];
-  if (build_backports_root_path(scan_root, backport_root)) {
-    if (!register_scanner_watch_entry(kq, scan_root_index, backport_root,
-                                      SCANNER_WATCH_SCAN_BACKPORT_ROOT, 1u)) {
-      return false;
-    }
   }
 
   if (!register_scan_root_parent_watch(kq, scan_root_index, scan_root))
@@ -670,18 +648,6 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
     return rebuild_scan_root_watch_tree(kq, scan_root_index);
   }
 
-  if (rebuild_kind == SCANNER_WATCH_SCAN_BACKPORT_ROOT) {
-    if (!remove_scan_root_watch_entries_for_path(scan_root_index, rebuild_path))
-      return false;
-    if (!register_scanner_watch_entry(kq, scan_root_index, rebuild_path,
-                                      SCANNER_WATCH_SCAN_BACKPORT_ROOT,
-                                      rebuild_depth)) {
-      return false;
-    }
-    clear_scan_root_watch_tree_state(scan_root_index);
-    return true;
-  }
-
   unsigned int scan_depth = get_scan_depth_for_root(scan_root);
 
   if (!remove_scan_root_watch_entries_for_path(scan_root_index, rebuild_path))
@@ -694,10 +660,11 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
   register_watch_tree_ctx_t walk_ctx = {
       .kq = kq,
       .scan_root_index = scan_root_index,
+      .scan_depth = scan_depth,
   };
   sm_scan_tree_callbacks_t callbacks = {
       .on_directory = register_watch_directory_visit,
-      .on_image_file = register_watch_image_visit,
+      .on_image_file = NULL,
   };
   if (!sm_scan_tree_walk(scan_root, rebuild_path, rebuild_depth,
                          scan_depth - rebuild_depth, &callbacks, &walk_ctx)) {
@@ -710,6 +677,30 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
 
 static bool rebuild_all_scan_root_watch_trees(int kq) {
   for (int i = 0; i < get_scan_path_count(); i++) {
+    if (!rebuild_scan_root_watch_tree(kq, i))
+      return false;
+  }
+  return true;
+}
+
+static bool suspend_usb_scan_root_watch_trees(void) {
+  bool removed_any = false;
+  for (int i = 0; i < get_scan_path_count(); i++) {
+    if (!is_usb_storage_path(get_scan_path(i)))
+      continue;
+    while (g_scanner_root_watch_heads[i] != SCANNER_WATCH_INDEX_NONE) {
+      remove_scanner_watch_entry_at(g_scanner_root_watch_heads[i]);
+      removed_any = true;
+    }
+  }
+
+  return !removed_any || rebuild_scanner_watch_fd_index();
+}
+
+static bool resume_usb_scan_root_watch_trees(int kq) {
+  for (int i = 0; i < get_scan_path_count(); i++) {
+    if (!is_usb_storage_path(get_scan_path(i)))
+      continue;
     if (!rebuild_scan_root_watch_tree(kq, i))
       return false;
   }
@@ -751,11 +742,7 @@ static void schedule_scan_root_dirty(int scan_root_index, uint64_t now_us,
     state->ready_after_us = ready_after_us;
 }
 
-static bool scanner_event_requires_consistency_cleanup(
-    const scanner_watch_entry_t *entry, uint32_t fflags) {
-  if (entry->kind == SCANNER_WATCH_SCAN_BACKPORT_ROOT)
-    return false;
-
+static bool scanner_event_requires_consistency_cleanup(uint32_t fflags) {
   return (fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0;
 }
 
@@ -767,14 +754,10 @@ static bool scanner_event_requires_watch_tree_refresh(
   switch (entry->kind) {
   case SCANNER_WATCH_SCAN_ROOT:
     return (fflags & tree_change_flags) != 0;
-  case SCANNER_WATCH_SCAN_BACKPORT_ROOT:
-    return (fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0;
   case SCANNER_WATCH_SCAN_SUBDIR:
     return entry->depth <
                get_scan_depth_for_root(get_scan_path(entry->scan_root_index)) &&
            (fflags & tree_change_flags) != 0;
-  case SCANNER_WATCH_SCAN_IMAGE_FILE:
-    return (fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0;
   default:
     return false;
   }
@@ -803,9 +786,7 @@ static void schedule_scan_root_watch_tree_rebuild(
   if (strcmp(state->watch_tree_rebuild_path, rebuild_path) == 0) {
     if (rebuild_depth < state->watch_tree_rebuild_depth)
       state->watch_tree_rebuild_depth = rebuild_depth;
-    if (rebuild_kind == SCANNER_WATCH_SCAN_ROOT ||
-        (rebuild_kind == SCANNER_WATCH_SCAN_BACKPORT_ROOT &&
-         state->watch_tree_rebuild_kind != SCANNER_WATCH_SCAN_ROOT)) {
+    if (rebuild_kind == SCANNER_WATCH_SCAN_ROOT) {
       state->watch_tree_rebuild_kind = rebuild_kind;
     }
     return;
@@ -1215,7 +1196,7 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
 
     bool immediate =
         (event->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0;
-    if (scanner_event_requires_consistency_cleanup(watch_entry, event->fflags))
+    if (scanner_event_requires_consistency_cleanup(event->fflags))
       schedule_scan_root_cleanup(watch_entry->scan_root_index);
     schedule_scan_root_dirty(watch_entry->scan_root_index, now_us, immediate);
 
@@ -1278,6 +1259,8 @@ bool sm_scanner_init(void) {
   reset_scanner_root_states();
   clear_scanner_config_reload_state();
   clear_scanner_manual_scan_state();
+  atomic_store_explicit(&g_usb_watches_suspended, true,
+                        memory_order_release);
 
   if (pipe(g_scanner_wake_pipe) != 0) {
     log_debug("  [SCAN] wake pipe creation failed: %s", strerror(errno));
@@ -1315,6 +1298,10 @@ void sm_scanner_wake(void) {
 
   static const char token = 'S';
   (void)write((int)wake_fd, &token, sizeof(token));
+}
+
+bool sm_scanner_usb_watches_suspended(void) {
+  return atomic_load_explicit(&g_usb_watches_suspended, memory_order_acquire);
 }
 
 bool sm_scanner_run_startup_sync(void) {
@@ -1362,9 +1349,13 @@ void sm_scanner_run_loop(void) {
 
   register_config_file_watch(kq, monotonic_time_us());
   register_manual_file_watch(kq, monotonic_time_us());
+  atomic_store_explicit(&g_usb_watches_suspended, false,
+                        memory_order_release);
   if (!rebuild_all_scan_root_watch_trees(kq)) {
     close(kq);
     clear_scanner_watch_entries();
+    atomic_store_explicit(&g_usb_watches_suspended, true,
+                          memory_order_release);
     close_scanner_config_file();
     close_scanner_manual_file();
     request_scanner_shutdown("scanner watcher initialization failed");
@@ -1383,7 +1374,19 @@ void sm_scanner_run_loop(void) {
     }
 
     if (runtime_sleep_mode_active()) {
-      was_sleeping = true;
+      if (!was_sleeping) {
+        if (!suspend_usb_scan_root_watch_trees()) {
+          close(kq);
+          clear_scanner_watch_entries();
+          request_scanner_shutdown("USB watcher suspend failed");
+          return;
+        }
+        atomic_store_explicit(&g_usb_watches_suspended, true,
+                              memory_order_release);
+        wake_game_lifecycle_watcher();
+        was_sleeping = true;
+        log_debug("[SLEEP] USB scanner watches suspended");
+      }
       fd_set readfds;
       FD_ZERO(&readfds);
       FD_SET(g_scanner_wake_pipe[0], &readfds);
@@ -1401,13 +1404,22 @@ void sm_scanner_run_loop(void) {
       continue;
     }
     if (was_sleeping) {
-      was_sleeping = false;
       if (!discard_scanner_events_nowait(kq)) {
         close(kq);
         clear_scanner_watch_entries();
         request_scanner_shutdown("scanner stale event drain failed");
         return;
       }
+      if (!resume_usb_scan_root_watch_trees(kq)) {
+        close(kq);
+        clear_scanner_watch_entries();
+        request_scanner_shutdown("USB watcher resume failed");
+        return;
+      }
+      atomic_store_explicit(&g_usb_watches_suspended, false,
+                            memory_order_release);
+      was_sleeping = false;
+      log_debug("[SLEEP] USB scanner watches resumed");
     }
 
     bool game_mount_busy = sm_game_lifecycle_has_active_game() ||
@@ -1672,4 +1684,6 @@ void sm_scanner_shutdown(void) {
   reset_scanner_root_states();
   clear_scanner_config_reload_state();
   clear_scanner_manual_scan_state();
+  atomic_store_explicit(&g_usb_watches_suspended, true,
+                        memory_order_release);
 }
