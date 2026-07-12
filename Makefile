@@ -18,7 +18,8 @@ KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUBS_DIR)/libkernel_sys.c src/libkernel_sys_e
 
 ASSET_SRCS := src/notify_icon_asset.c src/config_ini_example_asset.c
 SRCS := src/main.c $(wildcard src/sm_*.c) $(ASSET_SRCS)
-OBJS := $(SRCS:.c=.o)
+ASM_SRCS := src/sm_shellcore_bridge.S
+OBJS := $(SRCS:.c=.o) $(ASM_SRCS:.S=.o)
 HEADERS := $(wildcard include/*.h)
 
 # Targets
@@ -41,6 +42,9 @@ src/config_ini_example_asset.c: config.ini.example
 	xxd -i $< > $@
 
 src/%.o: src/%.c $(HEADERS)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+src/%.o: src/%.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:

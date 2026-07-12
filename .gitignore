@@ -1,5 +1,8 @@
 *.o
 *.elf
+*.so
+*.pyc
+__pycache__/
 daemon.lock
 debug.log
 notify.txt

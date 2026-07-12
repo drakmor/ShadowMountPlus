@@ -18,6 +18,18 @@ struct GameCache {
 
 static struct GameCache g_game_cache[MAX_PENDING];
 
+static bool game_cache_source_exists(const struct GameCache *entry) {
+  if (path_exists(entry->path))
+    return true;
+  if (!is_under_image_mount_base(entry->path))
+    return false;
+
+  char image_path[MAX_PATH];
+  return read_mount_image_link(entry->title_id, image_path,
+                               sizeof(image_path)) &&
+         path_exists(image_path);
+}
+
 static bool resolve_game_cache_owning_scan_root(const char *path,
                                                 char owning_scan_root[MAX_PATH]) {
   char resolved_source_path[MAX_PATH];
@@ -114,7 +126,7 @@ void prune_game_cache(void) {
   for (int k = 0; k < MAX_PENDING; k++) {
     if (!g_game_cache[k].valid)
       continue;
-    if (path_exists(g_game_cache[k].path))
+    if (game_cache_source_exists(&g_game_cache[k]))
       continue;
     clear_game_cache_slot(k, "source removed");
   }
@@ -135,7 +147,7 @@ void prune_game_cache_for_root(const char *root) {
             : g_game_cache[k].path;
     if (!path_matches_root_or_child(entry_root, root))
       continue;
-    if (path_exists(g_game_cache[k].path))
+    if (game_cache_source_exists(&g_game_cache[k]))
       continue;
     clear_game_cache_slot(k, "source removed");
   }

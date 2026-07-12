@@ -1,0 +1,26 @@
+#ifndef SM_SHELLCORE_REMOTE_H
+#define SM_SHELLCORE_REMOTE_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/types.h>
+
+#include "sm_shellcore_offsets.h"
+
+typedef struct {
+  pid_t pid;
+  uintptr_t image_base;
+  uintptr_t targets[SM_SHELLCORE_TARGET_COUNT];
+  const sm_shellcore_firmware_offsets_t *offsets;
+} sm_shellcore_remote_t;
+
+// Resolve and validate every lifecycle target in a running SceShellCore.
+bool sm_shellcore_remote_resolve(pid_t pid, sm_shellcore_remote_t *remote_out);
+// Read or write another process while handling post-8.20 write restrictions.
+bool sm_remote_process_read(pid_t pid, uintptr_t address, void *buffer,
+                            size_t size);
+bool sm_remote_process_write(pid_t pid, uintptr_t address, const void *buffer,
+                             size_t size);
+
+#endif

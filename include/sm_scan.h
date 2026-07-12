@@ -21,7 +21,12 @@ int collect_scan_candidates_for_scan_root(const char *scan_root,
                                           int max_candidates,
                                           int *total_found_out,
                                           bool *unstable_found_out);
-// Mount stable backport overlays for already mounted titles.
-void mount_backport_overlays(bool *unstable_found_out);
+// Mount the stable backport overlay, when present, for one runtime title.
+bool mount_backport_overlay_for_title(const char *source_path,
+                                      const char *title_id,
+                                      const char *owning_scan_root,
+                                      bool *unstable_found_out);
+// Remove discovery title/image mounts while preserving persistent metadata.
+bool release_scan_runtime_mounts(void);
 
 #endif

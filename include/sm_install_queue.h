@@ -24,5 +24,7 @@ bool sm_install_queue_candidate(const scan_candidate_t *candidate,
 bool sm_install_submit_queued(void);
 // Record retry state for every queued title after a batch submit failure.
 void sm_install_note_submit_failure(void);
+// Return true while an install still needs its staged mounts.
+bool sm_install_has_pending_work(void);
 
 #endif

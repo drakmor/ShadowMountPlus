@@ -1,6 +1,5 @@
 #include "sm_platform.h"
 
-#include <fcntl.h>
 #include <stdlib.h>
 #include <sys/event.h>
 #include <sys/select.h>
@@ -23,6 +22,7 @@
 #include "sm_scan.h"
 #include "sm_scan_tree.h"
 #include "sm_scanner.h"
+#include "sm_shellcore_service.h"
 #include "sm_time.h"
 #include "sm_types.h"
 
@@ -107,14 +107,6 @@ static void schedule_manual_scan(uint64_t now_us) {
 
 static void schedule_manual_probe(uint64_t now_us) {
   g_scanner_manual_probe_due_us = now_us + SCANNER_MANUAL_PROBE_INTERVAL_US;
-}
-
-static bool set_fd_nonblocking(int fd) {
-  int flags = fcntl(fd, F_GETFL, 0);
-  if (flags < 0)
-    return false;
-
-  return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
 static void reset_scanner_root_states(void) {
@@ -985,9 +977,8 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
   if (should_abort_scan_cycle())
     return false;
 
-  mount_backport_overlays(&unstable_found);
-  if (should_abort_scan_cycle())
-    return false;
+  if (!sm_install_has_pending_work() && !release_scan_runtime_mounts())
+    log_debug("  [IMG] some discovery mounts remain busy");
 
   if (unstable_found_out)
     *unstable_found_out = unstable_found;
@@ -1024,9 +1015,8 @@ static bool run_targeted_scan_cycle(int scan_root_index,
   if (should_abort_scan_cycle())
     return false;
 
-  mount_backport_overlays(&unstable_found);
-  if (should_abort_scan_cycle())
-    return false;
+  if (!sm_install_has_pending_work() && !release_scan_runtime_mounts())
+    log_debug("  [IMG] some discovery mounts remain busy");
 
   if (unstable_found_out)
     *unstable_found_out = unstable_found;
@@ -1073,7 +1063,8 @@ static int find_due_dirty_scan_root(uint64_t now_us) {
 }
 
 static uint64_t compute_next_scan_deadline_us(uint64_t now_us,
-                                              uint64_t full_resync_due_us) {
+                                              uint64_t full_resync_due_us,
+                                              bool include_scan_work) {
   uint64_t next_deadline = full_resync_due_us;
   uint64_t install_wake_us = sm_install_next_wake_us(now_us);
 
@@ -1093,7 +1084,7 @@ static uint64_t compute_next_scan_deadline_us(uint64_t now_us,
     next_deadline = g_scanner_config_probe_due_us;
   }
 
-  if (g_scanner_manual_scan_due_us != 0 &&
+  if (include_scan_work && g_scanner_manual_scan_due_us != 0 &&
       (next_deadline == 0 || g_scanner_manual_scan_due_us < next_deadline)) {
     next_deadline = g_scanner_manual_scan_due_us;
   }
@@ -1103,12 +1094,14 @@ static uint64_t compute_next_scan_deadline_us(uint64_t now_us,
     next_deadline = g_scanner_manual_probe_due_us;
   }
 
-  for (int i = 0; i < get_scan_path_count(); i++) {
-    const scanner_root_state_t *state = &g_scanner_root_states[i];
-    if (!state->dirty)
-      continue;
-    if (next_deadline == 0 || state->ready_after_us < next_deadline)
-      next_deadline = state->ready_after_us;
+  if (include_scan_work) {
+    for (int i = 0; i < get_scan_path_count(); i++) {
+      const scanner_root_state_t *state = &g_scanner_root_states[i];
+      if (!state->dirty)
+        continue;
+      if (next_deadline == 0 || state->ready_after_us < next_deadline)
+        next_deadline = state->ready_after_us;
+    }
   }
 
   return next_deadline;
@@ -1291,8 +1284,8 @@ bool sm_scanner_init(void) {
     close_scanner_wake_pipe();
     return false;
   }
-  if (!set_fd_nonblocking(g_scanner_wake_pipe[0]) ||
-      !set_fd_nonblocking(g_scanner_wake_pipe[1])) {
+  if (!sm_set_fd_nonblocking(g_scanner_wake_pipe[0]) ||
+      !sm_set_fd_nonblocking(g_scanner_wake_pipe[1])) {
     log_debug("  [SCAN] wake pipe nonblocking setup failed: %s",
               strerror(errno));
     close_scanner_wake_pipe();
@@ -1381,6 +1374,7 @@ void sm_scanner_run_loop(void) {
   uint64_t next_full_resync_us =
       monotonic_time_us() + scanner_full_resync_interval_us();
   bool was_sleeping = false;
+  bool scan_work_blocked = false;
 
   while (true) {
     if (should_stop_requested()) {
@@ -1416,8 +1410,11 @@ void sm_scanner_run_loop(void) {
       }
     }
 
+    bool game_mount_busy = sm_game_lifecycle_has_active_game() ||
+                           sm_shellcore_service_has_prepared_mount();
     char scan_reason[128];
-    if (consume_scan_now_request(scan_reason, sizeof(scan_reason))) {
+    if (!game_mount_busy &&
+        consume_scan_now_request(scan_reason, sizeof(scan_reason))) {
       bool unstable_found = false;
       if (!run_full_scan_cycle(false, scan_reason, &unstable_found)) {
         if (runtime_sleep_mode_active())
@@ -1444,10 +1441,14 @@ void sm_scanner_run_loop(void) {
     }
 
     uint64_t now_us = monotonic_time_us();
-    if (sm_game_lifecycle_has_active_game()) {
+    game_mount_busy = sm_game_lifecycle_has_active_game() ||
+                      sm_shellcore_service_has_prepared_mount();
+    if (game_mount_busy) {
       next_full_resync_us = 0;
-    } else if (next_full_resync_us == 0) {
-      next_full_resync_us = now_us;
+      scan_work_blocked = true;
+    } else if (scan_work_blocked) {
+      scan_work_blocked = false;
+      next_full_resync_us = now_us + scanner_full_resync_interval_us();
     }
 
     if (config_probe_due(now_us)) {
@@ -1503,7 +1504,7 @@ void sm_scanner_run_loop(void) {
       continue;
     }
 
-    if (g_scanner_manual_scan_due_us != 0 &&
+    if (!game_mount_busy && g_scanner_manual_scan_due_us != 0 &&
         now_us >= g_scanner_manual_scan_due_us) {
       g_scanner_manual_scan_due_us = 0;
       invalidate_app_db_title_cache();
@@ -1539,7 +1540,8 @@ void sm_scanner_run_loop(void) {
       continue;
     }
 
-    if (next_full_resync_us != 0 && now_us >= next_full_resync_us) {
+    if (!game_mount_busy && next_full_resync_us != 0 &&
+        now_us >= next_full_resync_us) {
       bool unstable_found = false;
       if (!run_full_scan_cycle(false, NULL, &unstable_found)) {
         if (runtime_sleep_mode_active())
@@ -1565,14 +1567,16 @@ void sm_scanner_run_loop(void) {
       continue;
     }
 
-    int cleanup_root_index = find_pending_cleanup_scan_root();
+    int cleanup_root_index =
+        game_mount_busy ? -1 : find_pending_cleanup_scan_root();
     if (cleanup_root_index >= 0) {
       g_scanner_root_states[cleanup_root_index].cleanup_pending = false;
       cleanup_lost_sources_for_scan_root(get_scan_path(cleanup_root_index));
       continue;
     }
 
-    int dirty_root_index = find_due_dirty_scan_root(now_us);
+    int dirty_root_index =
+        game_mount_busy ? -1 : find_due_dirty_scan_root(now_us);
     if (dirty_root_index >= 0) {
       bool cleanup_pending =
           g_scanner_root_states[dirty_root_index].cleanup_pending;
@@ -1635,8 +1639,8 @@ void sm_scanner_run_loop(void) {
       continue;
     }
 
-    uint64_t deadline_us =
-        compute_next_scan_deadline_us(now_us, next_full_resync_us);
+    uint64_t deadline_us = compute_next_scan_deadline_us(
+        now_us, next_full_resync_us, !game_mount_busy);
     struct timespec timeout;
     const struct timespec *timeout_ptr =
         build_wait_timeout(&timeout, now_us, deadline_us);

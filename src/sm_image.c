@@ -515,15 +515,20 @@ static const image_backend_ops_t *get_image_backend_ops(attach_backend_t backend
   return NULL;
 }
 
-static bool is_cached_image_path(const char *file_path) {
-  for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
-    image_cache_entry_t cached_entry;
-    if (get_image_cache_entry(k, &cached_entry) &&
-        strcmp(cached_entry.path, file_path) == 0) {
-      return true;
-    }
+static bool get_cached_image_mount(const char *file_path,
+                                   image_cache_entry_t *entry_out,
+                                   int *index_out) {
+  image_cache_entry_t entry;
+  int index = -1;
+  if (!find_image_cache_entry(file_path, &entry, &index) ||
+      entry.backend == ATTACH_BACKEND_NONE || entry.unit_id < 0) {
+    return false;
   }
-  return false;
+  if (entry_out)
+    *entry_out = entry;
+  if (index_out)
+    *index_out = index;
+  return true;
 }
 
 static bool directory_has_visible_entries(const char *path) {
@@ -567,7 +572,7 @@ static bool reject_mounted_image_io(const char *file_path,
   log_debug("  [IMG][%s] unreadable or damaged mount (%s -> %s, %s): %s",
             attach_backend_name(attach_backend), devname, mount_point, stage,
             strerror(io_err));
-  (void)unmount_image(file_path, unit_id, attach_backend);
+  (void)unmount_runtime_image(file_path, unit_id, attach_backend);
   errno = io_err;
   return false;
 }
@@ -586,7 +591,8 @@ static bool prepare_image_mount_retry(const image_cache_entry_t *cached_entry,
     log_debug("  [IMG][%s] mount unreadable, retrying: %s -> %s: %s",
               attach_backend_name(cached_entry->backend), source_path,
               mount_point, strerror(root_err));
-    if (!unmount_image(source_path, cached_entry->unit_id, cached_entry->backend))
+    if (!unmount_runtime_image(source_path, cached_entry->unit_id,
+                               cached_entry->backend))
       return false;
   } else {
     log_debug("  [IMG][%s] mount lost, retrying: %s -> %s",
@@ -617,7 +623,8 @@ static bool reuse_existing_image_mount(const char *file_path,
       log_debug("  [IMG][%s] Existing mount unreadable, reattaching: %s -> %s: %s",
                 attach_backend_name(existing_backend), file_path, mount_point,
                 strerror(root_err));
-      if (!unmount_image(file_path, existing_unit, existing_backend)) {
+      if (!unmount_runtime_image(file_path, existing_unit,
+                                 existing_backend)) {
         if (cache_failed_out)
           *cache_failed_out = true;
         return false;
@@ -657,10 +664,26 @@ static bool handle_cached_or_existing_image_mount_locked(
   if (runtime_sleep_mode_active())
     return true;
 
-  if (is_cached_image_path(file_path)) {
-    if (success_out)
-      *success_out = true;
-    return true;
+  image_cache_entry_t cached_entry;
+  int cached_index = -1;
+  if (get_cached_image_mount(file_path, &cached_entry, &cached_index)) {
+    int root_err = 0;
+    if (is_active_image_mount_point(mount_point) &&
+        is_image_mount_root_accessible(mount_point, &root_err)) {
+      if (success_out)
+        *success_out = true;
+      return true;
+    }
+
+    log_debug("  [IMG][%s] cached mount is not active, reattaching: %s -> "
+              "%s",
+              attach_backend_name(cached_entry.backend), file_path,
+              mount_point);
+    if (!unmount_runtime_image(cached_entry.path, cached_entry.unit_id,
+                               cached_entry.backend)) {
+      return true;
+    }
+    invalidate_image_cache_entry(cached_index);
   }
 
   bool cache_failed = false;
@@ -914,7 +937,7 @@ static bool validate_mounted_image(const char *file_path, image_fs_type_t fs_typ
                     min_device_sector);
     }
     sm_error_mark_notified();
-    (void)unmount_image(file_path, unit_id, attach_backend);
+    (void)unmount_runtime_image(file_path, unit_id, attach_backend);
     errno = EINVAL;
     return false;
   }
@@ -1008,7 +1031,7 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
     return false;
   }
   if (runtime_sleep_mode_active()) {
-    (void)unmount_image(file_path, unit_id, attach_backend);
+    (void)unmount_runtime_image(file_path, unit_id, attach_backend);
     runtime_mount_state_unlock();
     return false;
   }
@@ -1030,7 +1053,7 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
                  (unsigned)MAX_IMAGE_MOUNTS);
     log_debug("  [IMG] image cache full, rolling back mount: %s -> %s",
               file_path, mount_point);
-    (void)unmount_image(file_path, unit_id, attach_backend);
+    (void)unmount_runtime_image(file_path, unit_id, attach_backend);
     errno = ENOSPC;
     runtime_mount_state_unlock();
     return false;
@@ -1039,20 +1062,31 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   return true;
 }
 
-static bool unmount_child_image_mounts_for_container(const char *mount_point) {
+static bool unmount_child_image_mounts_for_container(
+    const char *mount_point, bool cleanup_source_state) {
   bool all_unmounted = true;
 
   for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
     image_cache_entry_t cached_entry;
     if (!get_image_cache_entry(k, &cached_entry))
       continue;
+    if (cached_entry.backend == ATTACH_BACKEND_NONE ||
+        cached_entry.unit_id < 0) {
+      continue;
+    }
     if (!path_matches_root_or_child(cached_entry.path, mount_point))
       continue;
 
     log_debug("  [IMG] container child unmount: %s source=%s",
               mount_point, cached_entry.path);
-    if (unmount_image(cached_entry.path, cached_entry.unit_id,
-                      cached_entry.backend)) {
+    bool unmounted = cleanup_source_state
+                         ? unmount_image(cached_entry.path,
+                                         cached_entry.unit_id,
+                                         cached_entry.backend)
+                         : unmount_runtime_image(cached_entry.path,
+                                                 cached_entry.unit_id,
+                                                 cached_entry.backend);
+    if (unmounted) {
       invalidate_image_cache_entry(k);
       continue;
     }
@@ -1065,7 +1099,9 @@ static bool unmount_child_image_mounts_for_container(const char *mount_point) {
   return all_unmounted;
 }
 
-bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend) {
+static bool unmount_image_impl(const char *file_path, int unit_id,
+                               attach_backend_t backend,
+                               bool cleanup_source_state) {
   char mount_point[MAX_PATH];
   image_fs_type_t fs_type = detect_image_fs_type_for_path(file_path, NULL);
   build_image_mount_point_for_fs(file_path, fs_type, mount_point);
@@ -1085,14 +1121,16 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
             resolved_unit);
 
   if (fs_type == IMAGE_FS_PFSC_CONTAINER &&
-      !unmount_child_image_mounts_for_container(mount_point)) {
+      !unmount_child_image_mounts_for_container(mount_point,
+                                                cleanup_source_state)) {
     return false;
   }
 
-  // Remove mount.lnk and unmount /system_ex/app/<titleid> that point to this
-  // source before unmounting the virtual disk itself.
-  cleanup_mount_links_for_source_unmount(mount_point);
-  clear_cached_game(mount_point);
+  if (cleanup_source_state) {
+    // Permanent source cleanup removes title links before releasing the image.
+    cleanup_mount_links_for_source_unmount(mount_point);
+    clear_cached_game(mount_point);
+  }
 
   // Unmount stacked layers (unionfs over image fs).
   for (int i = 0; i < MAX_LAYERED_UNMOUNT_ATTEMPTS; i++) {
@@ -1152,8 +1190,70 @@ bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend)
   return detach_ok;
 }
 
+bool unmount_image(const char *file_path, int unit_id,
+                   attach_backend_t backend) {
+  return unmount_image_impl(file_path, unit_id, backend, true);
+}
+
+bool unmount_runtime_image(const char *file_path, int unit_id,
+                           attach_backend_t backend) {
+  return unmount_image_impl(file_path, unit_id, backend, false);
+}
+
+bool release_runtime_image_mount(const char *file_path) {
+  image_cache_entry_t entry;
+  int index = -1;
+  if (!find_image_cache_entry(file_path, &entry, &index) ||
+      entry.backend == ATTACH_BACKEND_NONE || entry.unit_id < 0) {
+    return true;
+  }
+  if (!unmount_runtime_image(entry.path, entry.unit_id, entry.backend))
+    return false;
+  invalidate_image_cache_entry(index);
+  return true;
+}
+
+bool release_runtime_image_mounts(void) {
+  bool all_released = true;
+  for (int pass = 0; pass < MAX_LAYERED_UNMOUNT_ATTEMPTS; ++pass) {
+    bool any_remaining = false;
+    bool progress = false;
+    for (int k = 0; k < MAX_IMAGE_MOUNTS; ++k) {
+      image_cache_entry_t entry;
+      if (!get_image_cache_entry(k, &entry))
+        continue;
+      if (entry.backend == ATTACH_BACKEND_NONE || entry.unit_id < 0)
+        continue;
+      if (unmount_runtime_image(entry.path, entry.unit_id, entry.backend)) {
+        invalidate_image_cache_entry(k);
+        progress = true;
+      } else {
+        any_remaining = true;
+        all_released = false;
+      }
+    }
+    if (!any_remaining)
+      return true;
+    if (!progress)
+      break;
+  }
+  return all_released;
+}
+
 void cleanup_stale_image_mounts(void) {
   if (should_stop_requested())
+    return;
+
+  bool has_cached_mount = false;
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; ++k) {
+    image_cache_entry_t entry;
+    if (get_image_cache_entry(k, &entry) &&
+        entry.backend != ATTACH_BACKEND_NONE && entry.unit_id >= 0) {
+      has_cached_mount = true;
+      break;
+    }
+  }
+  if (!has_cached_mount)
     return;
 
   log_debug("  [IMG] stale image cleanup begin");
@@ -1163,6 +1263,10 @@ void cleanup_stale_image_mounts(void) {
       return;
     if (!get_image_cache_entry(k, &cached_entry))
       continue;
+    if (cached_entry.backend == ATTACH_BACKEND_NONE ||
+        cached_entry.unit_id < 0) {
+      continue;
+    }
 
     log_debug("  [IMG][%s] stale cleanup check: slot=%d source=%s mount=%s",
               attach_backend_name(cached_entry.backend), k, cached_entry.path,
@@ -1213,6 +1317,10 @@ void cleanup_stale_image_mounts_for_root(const char *root) {
       return;
     if (!get_image_cache_entry(k, &cached_entry))
       continue;
+    if (cached_entry.backend == ATTACH_BACKEND_NONE ||
+        cached_entry.unit_id < 0) {
+      continue;
+    }
     if (!path_matches_root_or_child(cached_entry.path, root) &&
         !path_matches_root_or_child(cached_entry.mount_point, root)) {
       continue;
@@ -1254,13 +1362,17 @@ bool unmount_usb_image_mounts_for_suspend(void) {
     image_cache_entry_t cached_entry;
     if (!get_image_cache_entry(k, &cached_entry))
       continue;
+    if (cached_entry.backend == ATTACH_BACKEND_NONE ||
+        cached_entry.unit_id < 0) {
+      continue;
+    }
     if (!is_usb_storage_path(cached_entry.path))
       continue;
 
     log_debug("  [IMG][%s] USB suspend unmount: %s",
               attach_backend_name(cached_entry.backend), cached_entry.path);
-    if (unmount_image(cached_entry.path, cached_entry.unit_id,
-                      cached_entry.backend)) {
+    if (unmount_runtime_image(cached_entry.path, cached_entry.unit_id,
+                              cached_entry.backend)) {
       log_debug("  [IMG][%s] USB suspend unmounted: %s",
                 attach_backend_name(cached_entry.backend), cached_entry.path);
       invalidate_image_cache_entry(k);
@@ -1359,9 +1471,13 @@ bool shutdown_image_mounts(void) {
       image_cache_entry_t cached_entry;
       if (!get_image_cache_entry(k, &cached_entry))
         continue;
+      if (cached_entry.backend == ATTACH_BACKEND_NONE ||
+          cached_entry.unit_id < 0) {
+        continue;
+      }
 
-      if (unmount_image(cached_entry.path, cached_entry.unit_id,
-                        cached_entry.backend)) {
+      if (unmount_runtime_image(cached_entry.path, cached_entry.unit_id,
+                                cached_entry.backend)) {
         invalidate_image_cache_entry(k);
         progress = true;
         continue;

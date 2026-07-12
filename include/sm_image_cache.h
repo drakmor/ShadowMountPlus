@@ -20,6 +20,9 @@ bool cache_image_mount(const char *path, const char *mount_point,
 bool cache_image_source_mapping(const char *path, const char *mount_point);
 // Return a cached image mount entry by index.
 bool get_image_cache_entry(int index, image_cache_entry_t *entry_out);
+// Find a cached source path with one cache lock acquisition.
+bool find_image_cache_entry(const char *path, image_cache_entry_t *entry_out,
+                            int *index_out);
 // Mark a cached image mount entry as invalid.
 void invalidate_image_cache_entry(int index);
 // Resolve a device mapping from the in-memory mount cache.
@@ -30,5 +33,16 @@ bool resolve_device_from_mount_cache(const char *mount_point,
 bool resolve_image_source_from_mount_cache(const char *mount_point,
                                            char *path_out,
                                            size_t path_out_size);
+// Resolve the image whose mount point owns a mounted child path.
+bool resolve_owning_image_source_from_mount_cache(const char *path,
+                                                  char *path_out,
+                                                  size_t path_out_size);
+// Resolve every owning image from the outermost source to the innermost one.
+size_t resolve_image_source_chain_from_mount_cache(
+    const char *path,
+    char chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH]);
+// Resolve only the outermost owning image source.
+bool resolve_outermost_image_source_from_mount_cache(
+    const char *path, char *path_out, size_t path_out_size);
 
 #endif

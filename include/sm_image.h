@@ -11,6 +11,13 @@ void log_fs_stats(const char *tag, const char *path, const char *type_hint);
 bool mount_image(const char *file_path, image_fs_type_t fs_type);
 // Unmount an image mount point and detach its backing device.
 bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend);
+// Unmount a runtime image without deleting persistent title metadata links.
+bool unmount_runtime_image(const char *file_path, int unit_id,
+                           attach_backend_t backend);
+// Release one cached runtime image mount. An absent live mount is harmless.
+bool release_runtime_image_mount(const char *file_path);
+// Release all discovery/runtime image mounts without deleting title metadata.
+bool release_runtime_image_mounts(void);
 // Reconcile cached image mounts with current sources and remount if needed.
 void cleanup_stale_image_mounts(void);
 // Reconcile cached image mounts that belong to a specific scan root.

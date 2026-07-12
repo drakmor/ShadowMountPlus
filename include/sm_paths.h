@@ -13,6 +13,7 @@
 #define AUTOTUNE_FILE "/data/shadowmount/autotune.ini"
 #define MANUAL_LIST_FILE "/data/shadowmount/manual.lst"
 #define MANUAL_STATUS_FILE "/data/shadowmount/manual.status"
+#define IMAGE_INDEX_FILE_PATH "/data/shadowmount/image_index.bin"
 #define APPMETA_BASE "/user/appmeta"
 #define APP_BASE "/user/app"
 #define KSTUFF_NOAUTOMOUNT_FILE "/data/.kstuff_noautomount"

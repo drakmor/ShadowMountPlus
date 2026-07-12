@@ -41,9 +41,16 @@ static inline uint32_t sm_firmware_major_version(void) {
   return ((major_bcd >> 4) & 0xFu) * 10u + (major_bcd & 0xFu);
 }
 
+static inline bool sm_set_fd_nonblocking(int fd) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0)
+    return false;
+  return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
 // --- SDK Imports ---
 int sceAppInstUtilInitialize(void);
-int sceAppInstUtilAppInstallAll(void);
+int sceAppInstUtilAppInstallAll(void *reserved);
 int sceAppInstUtilAppUnInstall(const char *title_id);
 int sceKernelGetAppInfo(pid_t pid, app_info_t *info);
 int sceKernelUsleep(unsigned int microseconds);

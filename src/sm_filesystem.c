@@ -9,6 +9,8 @@
 #include "sm_path_utils.h"
 #include "sm_paths.h"
 
+static bool unmount_controlled_mount_stack(const char *path);
+
 // --- FILESYSTEM ---
 bool is_installed(const char *title_id) {
   char path[MAX_PATH];
@@ -124,6 +126,131 @@ bool read_mount_link(const char *title_id, char *out, size_t out_size) {
   return read_mount_link_file(paths.mount_link, out, out_size);
 }
 
+static bool write_link_lines_atomic(const char *path,
+                                    const char *const *lines,
+                                    size_t count) {
+  char temp_path[MAX_PATH];
+  int written = snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
+  if (written < 0 || (size_t)written >= sizeof(temp_path))
+    return false;
+
+  FILE *file = fopen(temp_path, "w");
+  if (!file)
+    return false;
+
+  bool ok = true;
+  for (size_t i = 0; i < count; ++i) {
+    if (!lines[i] || lines[i][0] == '\0' ||
+        fprintf(file, "%s%s", lines[i], i + 1u < count ? "\n" : "") < 0) {
+      ok = false;
+      break;
+    }
+  }
+  if (ok && fflush(file) != 0)
+    ok = false;
+  if (ok && fsync(fileno(file)) != 0)
+    ok = false;
+  if (fclose(file) != 0)
+    ok = false;
+  if (ok && rename(temp_path, path) == 0)
+    return true;
+
+  int saved_errno = errno != 0 ? errno : EIO;
+  (void)unlink(temp_path);
+  errno = saved_errno;
+  return false;
+}
+
+bool write_mount_link(const char *title_id, const char *source_path) {
+  if (!title_id || title_id[0] == '\0' || !source_path ||
+      source_path[0] == '\0') {
+    return false;
+  }
+
+  title_link_paths_t paths;
+  build_title_link_paths(title_id, &paths);
+  const char *lines[] = {source_path};
+  return write_link_lines_atomic(paths.mount_link, lines, 1);
+}
+
+bool read_mount_image_link(const char *title_id, char *out, size_t out_size) {
+  if (!title_id || !out || out_size == 0)
+    return false;
+  out[0] = '\0';
+
+  title_link_paths_t paths;
+  build_title_link_paths(title_id, &paths);
+  return read_mount_link_file(paths.mount_image_link, out, out_size);
+}
+
+bool write_mount_image_link(const char *title_id, const char *image_path) {
+  if (!title_id || title_id[0] == '\0' || !image_path ||
+      image_path[0] == '\0') {
+    return false;
+  }
+  char chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH] = {{0}};
+  (void)strlcpy(chain[0], image_path, sizeof(chain[0]));
+  return write_mount_image_chain(title_id, chain, 1);
+}
+
+bool read_mount_image_chain(
+    const char *title_id,
+    char paths[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH], size_t *count_out) {
+  if (!title_id || !paths || !count_out)
+    return false;
+  *count_out = 0;
+
+  title_link_paths_t link_paths;
+  build_title_link_paths(title_id, &link_paths);
+  FILE *file = fopen(link_paths.mount_image_link, "r");
+  if (!file)
+    return false;
+
+  bool ok = true;
+  while (*count_out < MAX_IMAGE_CHAIN_DEPTH &&
+         fgets(paths[*count_out], MAX_PATH, file)) {
+    size_t len = strcspn(paths[*count_out], "\r\n");
+    if (paths[*count_out][len] == '\0' && len + 1u >= MAX_PATH) {
+      int next = fgetc(file);
+      if (next != EOF && next != '\n' && next != '\r') {
+        ok = false;
+        break;
+      }
+    }
+    paths[*count_out][len] = '\0';
+    if (len == 0) {
+      ok = false;
+      break;
+    }
+    (*count_out)++;
+  }
+  if (ok && *count_out == MAX_IMAGE_CHAIN_DEPTH && fgetc(file) != EOF)
+    ok = false;
+  if (ferror(file))
+    ok = false;
+  if (fclose(file) != 0)
+    ok = false;
+  if (!ok)
+    *count_out = 0;
+  return ok && *count_out > 0;
+}
+
+bool write_mount_image_chain(
+    const char *title_id,
+    const char paths[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH], size_t count) {
+  if (!title_id || title_id[0] == '\0' || !paths || count == 0 ||
+      count > MAX_IMAGE_CHAIN_DEPTH) {
+    return false;
+  }
+
+  title_link_paths_t link_paths;
+  build_title_link_paths(title_id, &link_paths);
+  const char *lines[MAX_IMAGE_CHAIN_DEPTH];
+  for (size_t i = 0; i < count; ++i)
+    lines[i] = paths[i];
+  return write_link_lines_atomic(link_paths.mount_image_link, lines, count);
+}
+
 bool resolve_title_app_dir(const struct dirent *entry, char *app_dir,
                            size_t app_dir_size) {
   if (!entry)
@@ -165,8 +292,13 @@ static bool source_path_needs_cleanup(const char *source_path,
     char image_source_path[MAX_PATH];
     bool has_image_source = resolve_image_source_from_mount_cache(
         source_path, image_source_path, sizeof(image_source_path));
-    if (has_image_source && !path_exists(image_source_path))
-      return true;
+    if (has_image_source) {
+      if (!path_exists(image_source_path))
+        return true;
+      // The image mount point is intentionally absent outside install/launch.
+      if (!path_exists(source_path))
+        return false;
+    }
   }
 
   if (!path_exists(source_path))
@@ -499,6 +631,43 @@ bool rollback_title_nullfs_mount(const char *title_id, const char *src_path) {
   log_debug("  [LINK] rolled back unpublished nullfs mount: %s -> %s",
             src_path, state.system_ex_path);
   return true;
+}
+
+bool unmount_title_runtime_layers(const char *title_id) {
+  if (!title_id || title_id[0] == '\0')
+    return false;
+
+  char path[MAX_PATH];
+  int written = snprintf(path, sizeof(path), "/system_ex/app/%s", title_id);
+  if (written < 0 || (size_t)written >= sizeof(path))
+    return false;
+
+  if (!unmount_controlled_mount_stack(path))
+    return false;
+  log_debug("  [LINK] runtime layers released: %s", title_id);
+  return true;
+}
+
+static bool unmount_managed_title_entry(
+    const char *title_id, const title_link_paths_t *paths, void *ctx) {
+  (void)ctx;
+  char source_path[MAX_PATH];
+  if (!read_mount_link_file(paths->mount_link, source_path,
+                            sizeof(source_path))) {
+    return true;
+  }
+  title_mount_state_t state;
+  if (!inspect_title_stack(title_id, source_path, NULL, &state) ||
+      !state.has_our_nullfs) {
+    return true;
+  }
+  (void)unmount_title_runtime_layers(title_id);
+  return true;
+}
+
+void unmount_all_title_runtime_layers(void) {
+  for_each_title_app_dir(" during runtime mount cleanup", false,
+                         unmount_managed_title_entry, NULL);
 }
 
 bool reconcile_title_backport_mount(const char *title_id, const char *src_path,
@@ -971,6 +1140,7 @@ typedef struct {
   bool tried_image_recovery;
   bool force_remove_matching_source;
   bool match_usb_sources;
+  bool preserve_mount_links;
 } cleanup_mount_links_ctx_t;
 
 static bool cleanup_mount_links_entry(const char *title_id,
@@ -1042,17 +1212,19 @@ static bool cleanup_mount_links_entry(const char *title_id,
       stack_matches_link = state.has_nullfs_from_root;
     }
 
-    if (inspected && stack_matches_link && !top_is_ours) {
+    if (stack_matches_link && !top_is_ours) {
       keep_mount_link = true;
       log_debug("  [LINK] keeping mount link for %s: stack still active but "
                 "top layer is not ours", state.system_ex_path);
-    } else if (inspected && top_is_ours && stack_matches_link) {
-      if (rename(paths->mount_link, paths->staged_mount_link) != 0) {
-        log_debug("  [LINK] stage failed for %s: %s", paths->mount_link,
-                  strerror(errno));
-        return true;
+    } else if (top_is_ours && stack_matches_link) {
+      if (!ctx->preserve_mount_links) {
+        if (rename(paths->mount_link, paths->staged_mount_link) != 0) {
+          log_debug("  [LINK] stage failed for %s: %s", paths->mount_link,
+                    strerror(errno));
+          return true;
+        }
+        mount_link_staged = true;
       }
-      mount_link_staged = true;
       if (!unmount_controlled_mount_stack(state.system_ex_path)) {
         keep_mount_link = true;
         log_debug("  [LINK] failed to unmount mount stack for %s",
@@ -1065,6 +1237,9 @@ static bool cleanup_mount_links_entry(const char *title_id,
       }
     }
   }
+
+  if (ctx->preserve_mount_links)
+    keep_mount_link = true;
 
   if (!keep_mount_link) {
     int unlink_res = mount_link_staged ? unlink(paths->staged_mount_link)
@@ -1084,8 +1259,7 @@ static bool cleanup_mount_links_entry(const char *title_id,
   }
 
   if (mount_link_staged && rename(paths->staged_mount_link, paths->mount_link) == 0) {
-    log_debug("  [LINK] restored mount link after failed cleanup: %s",
-              paths->mount_link);
+    log_debug("  [LINK] restored staged mount link: %s", paths->mount_link);
   } else if (mount_link_staged) {
     log_debug("  [LINK] restore failed for %s: %s", paths->mount_link,
               strerror(errno));
@@ -1101,6 +1275,7 @@ void cleanup_mount_links(const char *removed_source_root,
       .tried_image_recovery = false,
       .force_remove_matching_source = false,
       .match_usb_sources = false,
+      .preserve_mount_links = false,
   };
   for_each_title_app_dir("", !unmount_system_ex_bind, cleanup_mount_links_entry,
                          &ctx);
@@ -1116,6 +1291,7 @@ void cleanup_mount_links_for_source_unmount(const char *source_root) {
       .tried_image_recovery = false,
       .force_remove_matching_source = true,
       .match_usb_sources = false,
+      .preserve_mount_links = false,
   };
   for_each_title_app_dir(" during source unmount cleanup", false,
                          cleanup_mount_links_entry, &ctx);
@@ -1128,6 +1304,7 @@ void cleanup_usb_mount_links_for_suspend(void) {
       .tried_image_recovery = false,
       .force_remove_matching_source = false,
       .match_usb_sources = true,
+      .preserve_mount_links = true,
   };
   for_each_title_app_dir(" during USB suspend cleanup", false,
                          cleanup_mount_links_entry, &ctx);

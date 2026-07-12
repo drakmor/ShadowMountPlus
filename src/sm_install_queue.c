@@ -9,6 +9,7 @@
 #include "sm_log.h"
 #include "sm_manual.h"
 #include "sm_runtime.h"
+#include "sm_scan.h"
 #include "sm_time.h"
 #include "sm_title_state.h"
 
@@ -47,6 +48,10 @@ static void drop_queued_install_entry(pending_install_entry_t *entry);
 
 static bool install_queue_active(void) {
   return runtime_config()->app_install_all_enabled || g_tracked_install_count > 0;
+}
+
+bool sm_install_has_pending_work(void) {
+  return g_tracked_install_count > 0;
 }
 
 static pending_install_entry_t *find_pending_install_entry(
@@ -280,6 +285,8 @@ static void poll_pending_installs(void) {
   if (g_submitted_install_count == 0)
     schedule_queued_install_submit(now_us);
   free_app_db_title_list(&app_db_titles);
+  if (!sm_install_has_pending_work() && !release_scan_runtime_mounts())
+    log_debug("  [IMG] deferred release after install completion");
 }
 
 uint64_t sm_install_next_wake_us(uint64_t now_us) {
@@ -425,7 +432,7 @@ bool sm_install_submit_queued(void) {
   log_queued_install_batch();
   notify_queued_install_batch();
 
-  int res = sceAppInstUtilAppInstallAll();
+  int res = sceAppInstUtilAppInstallAll(NULL);
   if (res != 0) {
     log_debug("  [REG] Batch install request failed: 0x%x", res);
     if (!g_queued_install_submit_failure_notified) {
