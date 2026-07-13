@@ -17,6 +17,7 @@ struct PathStateEntry {
   bool game_info_cached;
   bool game_info_valid;
   time_t game_info_mtime;
+  long game_info_mtime_nsec;
   off_t game_info_size;
   ino_t game_info_ino;
   char game_title_id[MAX_TITLE_ID];
@@ -129,6 +130,7 @@ bool load_cached_game_info(const char *path, const struct stat *param_st,
   struct PathStateEntry *entry = find_path_state(path);
   if (!entry || !entry->game_info_cached ||
       entry->game_info_mtime != param_st->st_mtime ||
+      entry->game_info_mtime_nsec != param_st->st_mtim.tv_nsec ||
       entry->game_info_size != param_st->st_size ||
       entry->game_info_ino != param_st->st_ino) {
     return false;
@@ -150,6 +152,7 @@ void store_cached_game_info(const char *path, const struct stat *param_st,
   entry->game_info_cached = true;
   entry->game_info_valid = valid;
   entry->game_info_mtime = param_st->st_mtime;
+  entry->game_info_mtime_nsec = param_st->st_mtim.tv_nsec;
   entry->game_info_size = param_st->st_size;
   entry->game_info_ino = param_st->st_ino;
   (void)strlcpy(entry->game_title_id, valid ? title_id : "", MAX_TITLE_ID);

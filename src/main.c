@@ -79,6 +79,8 @@ void install_signal_handlers(void) {
   sigaction(SIGHUP, &sa, NULL);
   sigaction(SIGQUIT, &sa, NULL);
   sigaction(SIGABRT, &sa, NULL);
+  sa.sa_handler = SIG_IGN;
+  sigaction(SIGPIPE, &sa, NULL);
 }
 
 bool should_stop_requested(void) {
@@ -252,12 +254,23 @@ pid_t find_pid_by_name(const char *name, bool exclude_self) {
   pid_t found_pid = 0;
   uint8_t *ptr = buf;
   uint8_t *end = buf + buf_size;
-  while (ptr < end) {
-    int ki_structsize = *(int *)ptr;
-    pid_t ki_pid = *(pid_t *)&ptr[KINFO_PID_OFFSET];
+  while ((size_t)(end - ptr) >= sizeof(int)) {
+    int ki_structsize = 0;
+    memcpy(&ki_structsize, ptr, sizeof(ki_structsize));
+    if (ki_structsize <= KINFO_TDNAME_OFFSET ||
+        (size_t)ki_structsize > (size_t)(end - ptr)) {
+      found_pid = -1;
+      break;
+    }
+
+    pid_t ki_pid = 0;
+    memcpy(&ki_pid, &ptr[KINFO_PID_OFFSET], sizeof(ki_pid));
     const char *ki_tdname = (const char *)&ptr[KINFO_TDNAME_OFFSET];
+    size_t tdname_size = (size_t)ki_structsize - KINFO_TDNAME_OFFSET;
     ptr += ki_structsize;
-    if ((!exclude_self || ki_pid != mypid) && strcmp(ki_tdname, name) == 0) {
+    if ((!exclude_self || ki_pid != mypid) &&
+        strnlen(ki_tdname, tdname_size) < tdname_size &&
+        strcmp(ki_tdname, name) == 0) {
       found_pid = ki_pid;
       break;
     }

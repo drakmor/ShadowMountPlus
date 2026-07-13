@@ -108,8 +108,10 @@ static bool resolve_sandbox_context(const char *title_id,
       continue;
 
     errno = 0;
-    long idx_long = strtol(suffix, NULL, 10);
-    if (errno == ERANGE || idx_long > INT_MAX)
+    char *suffix_end = NULL;
+    long idx_long = strtol(suffix, &suffix_end, 10);
+    if (errno == ERANGE || !suffix_end || *suffix_end != '\0' ||
+        idx_long > INT_MAX)
       continue;
     int idx = (int)idx_long;
     if (idx < best_index)

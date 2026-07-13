@@ -235,6 +235,7 @@ static bool install_hooks_for_pid(pid_t pid) {
     goto done;
   }
   if (object.mapbase != remote.image_base ||
+      object.mapbase > UINTPTR_MAX - object.mapsize ||
       object.eh_frame < object.mapbase ||
       object.eh_frame_size < bridge_capacity ||
       object.eh_frame > UINTPTR_MAX - bridge_capacity ||

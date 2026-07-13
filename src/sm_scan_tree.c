@@ -94,7 +94,10 @@ bool sm_scan_tree_walk(const char *scan_root, const char *dir_path,
     }
 
     char full_path[MAX_PATH];
-    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+    int written =
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+    if (written < 0 || (size_t)written >= sizeof(full_path))
+      continue;
 
     bool is_dir = false;
     bool is_regular = false;

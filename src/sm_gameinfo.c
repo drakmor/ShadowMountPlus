@@ -6,8 +6,13 @@
 // --- Game Metadata Parsing (param.json) ---
 static int extract_json_string(const char *json, const char *key, char *out,
                                size_t out_size) {
+  if (!json || !key || !out || out_size == 0)
+    return -1;
+
   char search[64];
-  snprintf(search, sizeof(search), "\"%s\"", key);
+  int written = snprintf(search, sizeof(search), "\"%s\"", key);
+  if (written < 0 || (size_t)written >= sizeof(search))
+    return -1;
   const char *p = strstr(json, search);
   if (!p)
     return -1;
@@ -27,7 +32,25 @@ static int extract_json_string(const char *json, const char *key, char *out,
     i++;
   }
   out[i] = '\0';
+  if (p[i] != '"') {
+    out[0] = '\0';
+    return -4;
+  }
   return 0;
+}
+
+bool is_supported_game_title_id(const char *title_id) {
+  if (!title_id || strlen(title_id) != 9u)
+    return false;
+  if (strncmp(title_id, "PPSA", 4u) != 0 &&
+      strncmp(title_id, "CUSA", 4u) != 0) {
+    return false;
+  }
+  for (size_t i = 4u; i < 9u; ++i) {
+    if (!isdigit((unsigned char)title_id[i]))
+      return false;
+  }
+  return true;
 }
 
 bool get_game_info(const char *base_path, const struct stat *param_st,
@@ -77,7 +100,7 @@ bool get_game_info(const char *base_path, const struct stat *param_st,
   int res = extract_json_string(buf, "titleId", out_id, MAX_TITLE_ID);
   if (res != 0)
     res = extract_json_string(buf, "title_id", out_id, MAX_TITLE_ID);
-  if (res == 0) {
+  if (res == 0 && is_supported_game_title_id(out_id)) {
     const char *en_ptr = strstr(buf, "\"en-US\"");
     const char *search_start = en_ptr ? en_ptr : buf;
     if (extract_json_string(search_start, "titleName", out_name,
@@ -86,6 +109,9 @@ bool get_game_info(const char *base_path, const struct stat *param_st,
     if (out_name[0] == '\0')
       (void)strlcpy(out_name, out_id, MAX_TITLE_NAME);
     valid = true;
+  } else {
+    out_id[0] = '\0';
+    out_name[0] = '\0';
   }
   free(buf);
 

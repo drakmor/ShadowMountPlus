@@ -30,6 +30,8 @@ bool path_matches_root_or_child(const char *path, const char *root) {
   size_t root_len = strlen(root);
   if (strncmp(path, root, root_len) != 0)
     return false;
+  if (root_len == 1u && root[0] == '/')
+    return path[0] == '/';
   return path[root_len] == '\0' || path[root_len] == '/';
 }
 
