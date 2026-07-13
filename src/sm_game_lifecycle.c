@@ -9,6 +9,7 @@
 #include "sm_fakelib.h"
 #include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
+#include "sm_gameinfo.h"
 #include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_log.h"
@@ -35,7 +36,7 @@ static pending_game_launch_t
     g_pending_game_launches[MAX_PENDING_GAME_EXEC_CANDIDATES];
 static pthread_t g_game_lifecycle_thread;
 static bool g_game_lifecycle_thread_started = false;
-static volatile sig_atomic_t g_game_lifecycle_stop_requested = 0;
+static atomic_bool g_game_lifecycle_stop_requested = false;
 static int g_game_lifecycle_wake_pipe[2] = {-1, -1};
 static pthread_mutex_t g_game_lifecycle_start_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_game_lifecycle_start_cond = PTHREAD_COND_INITIALIZER;
@@ -91,10 +92,6 @@ static bool title_is_usb_backed(const char *title_id, const char *source_path,
     return true;
   }
   return has_mount_link && is_usb_storage_path(source_path);
-}
-
-static bool is_supported_title_id(const char *title_id) {
-  return strncmp(title_id, "PPSA", 4) == 0 || strncmp(title_id, "CUSA", 4) == 0;
 }
 
 static uint64_t min_nonzero_u64(uint64_t a, uint64_t b) {
@@ -182,14 +179,18 @@ static bool is_process_alive(pid_t pid) {
 
 static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
                                  const char *title_id, uint32_t app_id) {
-  if (!is_data_mounted(title_id) &&
-      !sm_shellcore_ensure_title_runtime(title_id)) {
+  if (!sm_shellcore_ensure_title_runtime(title_id)) {
     return false;
   }
 
   if (!register_game_exit_watch(kq, pid)) {
     log_debug("  [GAME] skipping launch tracking for %s pid=%ld without exit watch",
               title_id, (long)pid);
+    if (sm_shellcore_service_title_is_prepared(title_id) &&
+        !sm_shellcore_release_title_runtime(title_id)) {
+      log_debug("  [SHELLCORE] failed to roll back untracked runtime: %s",
+                title_id);
+    }
     return false;
   }
 
@@ -315,6 +316,12 @@ static pending_game_launch_t *queue_pending_game_launch(pid_t pid,
 static void defer_confirmed_game_launch_retry(pid_t pid, uint64_t exec_time_us,
                                               uint64_t now_us,
                                               const char *title_id) {
+  if (now_us == 0) {
+    log_debug("  [GAME] cannot schedule launch retry without monotonic clock: "
+              "%s pid=%ld",
+              title_id, (long)pid);
+    return;
+  }
   clear_all_pending_game_launches();
   queue_pending_game_launch(pid, exec_time_us, now_us);
 
@@ -377,13 +384,28 @@ static void poll_game_modules(int kq) {
     if (resolve_game_title_id(entry->pid, title_id, &app_id)) {
       pid_t pid = entry->pid;
       uint64_t exec_time_us = entry->exec_time_us;
-      if (is_supported_title_id(title_id)) {
+      if (is_supported_game_title_id(title_id)) {
+        if (entry->deadline_us == 0 || now_us == 0 ||
+            now_us >= entry->deadline_us) {
+          log_debug("  [GAME] runtime preparation timed out for %s pid=%ld",
+                    title_id, (long)pid);
+          clear_pending_game_launch(entry);
+          break;
+        }
         if (dispatch_game_launch(kq, pid, exec_time_us, title_id, app_id)) {
           clear_pending_game_launch(entry);
           clear_all_pending_game_launches();
           break;
         }
-        defer_confirmed_game_launch_retry(pid, exec_time_us, now_us, title_id);
+        uint64_t retry_now_us = monotonic_time_us();
+        if (retry_now_us == 0 || retry_now_us >= entry->deadline_us) {
+          log_debug("  [GAME] runtime preparation timed out for %s pid=%ld",
+                    title_id, (long)pid);
+          clear_pending_game_launch(entry);
+        } else {
+          defer_confirmed_game_launch_retry(pid, exec_time_us, retry_now_us,
+                                            title_id);
+        }
         break;
       } else {
         clear_pending_game_launch(entry);
@@ -424,7 +446,7 @@ static void handle_game_exec(int kq, pid_t pid) {
   char title_id[MAX_TITLE_ID];
   uint32_t app_id = 0;
   if (resolve_game_title_id(pid, title_id, &app_id)) {
-    if (is_supported_title_id(title_id)) {
+    if (is_supported_game_title_id(title_id)) {
       if (dispatch_game_launch(kq, pid, now_us, title_id, app_id))
         clear_all_pending_game_launches();
       else
@@ -436,7 +458,8 @@ static void handle_game_exec(int kq, pid_t pid) {
   if (!is_process_alive(pid))
     return;
 
-  queue_pending_game_launch(pid, now_us, now_us);
+  if (now_us != 0)
+    queue_pending_game_launch(pid, now_us, now_us);
 }
 
 static void handle_game_exit(pid_t pid) {
@@ -461,7 +484,11 @@ static void handle_game_exit(pid_t pid) {
 
 static bool terminate_usb_game_for_sleep(int kq, pid_t pid,
                                          const char *title_id) {
-  if (kill(pid, SIGKILL) != 0 && errno != ESRCH) {
+  if (kill(pid, SIGKILL) != 0) {
+    if (errno == ESRCH) {
+      handle_game_exit(pid);
+      return true;
+    }
     log_debug("  [SLEEP] failed to kill USB game: %s pid=%ld: %s", title_id,
               (long)pid, strerror(errno));
     return false;
@@ -472,7 +499,9 @@ static bool terminate_usb_game_for_sleep(int kq, pid_t pid,
   uint64_t now_us = monotonic_time_us();
   uint64_t deadline_us =
       now_us == 0 ? 0 : now_us + GAME_SLEEP_EXIT_TIMEOUT_US;
-  while (!g_game_lifecycle_stop_requested && !should_stop_requested()) {
+  while (!atomic_load_explicit(&g_game_lifecycle_stop_requested,
+                               memory_order_relaxed) &&
+         !should_stop_requested()) {
     struct kevent event;
     struct timespec timeout = {
         .tv_sec = 0,
@@ -504,6 +533,12 @@ static bool terminate_usb_game_for_sleep(int kq, pid_t pid,
 
     now_us = monotonic_time_us();
     if (deadline_us != 0 && now_us != 0 && now_us >= deadline_us) {
+      if (!is_process_alive(pid)) {
+        handle_game_exit(pid);
+        log_debug("  [SLEEP] USB game exited without NOTE_EXIT: %s pid=%ld",
+                  title_id, (long)pid);
+        return true;
+      }
       log_debug("  [SLEEP] timed out waiting NOTE_EXIT: %s pid=%ld", title_id,
                 (long)pid);
       return false;
@@ -554,7 +589,9 @@ static void *game_lifecycle_watcher_main(void *arg) {
 
   bool sleep_cleanup_done = false;
   pid_t suspended_game_pid = 0;
-  while (!g_game_lifecycle_stop_requested && !should_stop_requested()) {
+  while (!atomic_load_explicit(&g_game_lifecycle_stop_requested,
+                               memory_order_relaxed) &&
+         !should_stop_requested()) {
     if (runtime_sleep_mode_active()) {
       if (!sleep_cleanup_done && sm_scanner_usb_watches_suspended()) {
         suspended_game_pid = atomic_load(&g_active_game_pid);
@@ -624,7 +661,8 @@ static void *game_lifecycle_watcher_main(void *arg) {
     if (nev < 0) {
       if (errno == EINTR)
         continue;
-      if (g_game_lifecycle_stop_requested)
+      if (atomic_load_explicit(&g_game_lifecycle_stop_requested,
+                               memory_order_relaxed))
         break;
       log_debug("  [GAME] kevent wait failed: %s", strerror(errno));
       break;
@@ -672,7 +710,8 @@ bool start_game_lifecycle_watcher(void) {
     return false;
   }
 
-  g_game_lifecycle_stop_requested = 0;
+  atomic_store_explicit(&g_game_lifecycle_stop_requested, false,
+                        memory_order_relaxed);
   pthread_mutex_lock(&g_game_lifecycle_start_mutex);
   g_game_lifecycle_start_ready = false;
   g_game_lifecycle_start_success = false;
@@ -718,12 +757,14 @@ void stop_game_lifecycle_watcher(void) {
   if (!g_game_lifecycle_thread_started)
     return;
 
-  g_game_lifecycle_stop_requested = 1;
+  atomic_store_explicit(&g_game_lifecycle_stop_requested, true,
+                        memory_order_relaxed);
   wake_game_lifecycle_watcher();
 
   (void)pthread_join(g_game_lifecycle_thread, NULL);
   g_game_lifecycle_thread_started = false;
-  g_game_lifecycle_stop_requested = 0;
+  atomic_store_explicit(&g_game_lifecycle_stop_requested, false,
+                        memory_order_relaxed);
   publish_active_game(0, NULL);
   close_game_lifecycle_wake_pipe();
 }

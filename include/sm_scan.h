@@ -21,7 +21,8 @@ int collect_scan_candidates_for_scan_root(const char *scan_root,
                                           int max_candidates,
                                           int *total_found_out,
                                           bool *unstable_found_out);
-// Mount the stable backport overlay, when present, for one runtime title.
+// Ensure a stable backport overlay is mounted when one is present.
+// Absence is harmless; an unusable or failed required overlay returns false.
 bool mount_backport_overlay_for_title(const char *source_path,
                                       const char *title_id,
                                       const char *owning_scan_root,

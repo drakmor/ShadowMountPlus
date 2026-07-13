@@ -731,12 +731,14 @@ bool mount_backport_overlay_for_title(const char *source_path,
     return true;
   }
   if (is_backport_mount_blocked(backport_path))
-    return true;
+    return false;
 
   bool overlay_active = false;
   if (!reconcile_title_backport_mount(title_id, source_path, backport_path,
-                                      &overlay_active) ||
-      overlay_active) {
+                                      &overlay_active)) {
+    return false;
+  }
+  if (overlay_active) {
     return true;
   }
   if (!wait_for_stability_fast(backport_path, "BKP")) {
@@ -746,8 +748,10 @@ bool mount_backport_overlay_for_title(const char *source_path,
   }
   overlay_active = false;
   if (!reconcile_title_backport_mount(title_id, source_path, backport_path,
-                                      &overlay_active) ||
-      overlay_active) {
+                                      &overlay_active)) {
+    return false;
+  }
+  if (overlay_active) {
     return true;
   }
 
@@ -756,7 +760,7 @@ bool mount_backport_overlay_for_title(const char *source_path,
            title_id);
   if (!mount_backport_overlay(system_ex_path, backport_path, title_id)) {
     note_backport_mount_failure(backport_path);
-    return true;
+    return false;
   }
   clear_backport_mount_failure(backport_path);
   return true;

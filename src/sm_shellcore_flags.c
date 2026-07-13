@@ -1,5 +1,7 @@
 #include "sm_platform.h"
 
+#include <stdatomic.h>
+
 #include <pthread.h>
 
 #include "sm_game_lifecycle.h"
@@ -63,7 +65,7 @@ static pthread_cond_t g_shellcore_flag_cond = PTHREAD_COND_INITIALIZER;
 static bool g_shellcore_flag_thread_started = false;
 static bool g_shellcore_flag_start_ready = false;
 static bool g_shellcore_flag_start_success = false;
-static volatile sig_atomic_t g_shellcore_flag_stop_requested = 0;
+static atomic_bool g_shellcore_flag_stop_requested = false;
 
 static const shellcore_flag_bit_desc_t g_system_state_mgr_status_bits[] = {
     {0x0000000000000001ULL, "CEC_ONE_TOUCH_PLAY_COMMAND"},
@@ -622,8 +624,6 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
   bool entered_resume_working = false;
   bool entered_shellui_shutdown_in_progress = false;
   bool is_system_state_mgr_info = false;
-  unsigned current_state = 0;
-  unsigned previous_state = 0;
 
   if (!flag || !flag->is_open)
     return;
@@ -648,8 +648,8 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
 
   is_system_state_mgr_info = strcmp(flag->name, "SceSystemStateMgrInfo") == 0;
   if (is_system_state_mgr_info) {
-    current_state = (unsigned)(result_pattern & 0xFFFFu);
-    previous_state =
+    unsigned current_state = (unsigned)(result_pattern & 0xFFFFu);
+    unsigned previous_state =
         flag->has_last_pattern ? (unsigned)(flag->last_pattern & 0xFFFFu) : 0;
 
     entered_shutdown_on_going =
@@ -725,7 +725,9 @@ static void *shellcore_flag_thread_main(void *arg) {
             sizeof(g_shellcore_flags) / sizeof(g_shellcore_flags[0]));
   set_shellcore_flag_start_result(true);
 
-  while (!g_shellcore_flag_stop_requested && !should_stop_requested()) {
+  while (!atomic_load_explicit(&g_shellcore_flag_stop_requested,
+                               memory_order_relaxed) &&
+         !should_stop_requested()) {
     for (size_t i = 0; i < sizeof(g_shellcore_flags) / sizeof(g_shellcore_flags[0]);
          ++i) {
       poll_shellcore_flag(&g_shellcore_flags[i]);
@@ -744,7 +746,8 @@ bool sm_shellcore_flags_start(void) {
   if (g_shellcore_flag_thread_started)
     return g_shellcore_flag_start_success;
 
-  g_shellcore_flag_stop_requested = 0;
+  atomic_store_explicit(&g_shellcore_flag_stop_requested, false,
+                        memory_order_relaxed);
   g_shellcore_flag_start_ready = false;
   g_shellcore_flag_start_success = false;
   close_shellcore_flags();
@@ -775,7 +778,8 @@ void sm_shellcore_flags_stop(void) {
   if (!g_shellcore_flag_thread_started)
     return;
 
-  g_shellcore_flag_stop_requested = 1;
+  atomic_store_explicit(&g_shellcore_flag_stop_requested, true,
+                        memory_order_relaxed);
   pthread_join(g_shellcore_flag_thread, NULL);
   g_shellcore_flag_thread_started = false;
   g_shellcore_flag_start_ready = false;

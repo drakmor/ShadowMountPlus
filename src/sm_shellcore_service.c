@@ -5,6 +5,7 @@
 #include <sys/un.h>
 
 #include "sm_filesystem.h"
+#include "sm_gameinfo.h"
 #include "sm_image.h"
 #include "sm_log.h"
 #include "sm_path_utils.h"
@@ -25,6 +26,7 @@ typedef struct {
   bool started;
   bool stop_requested;
   int listen_fd;
+  int client_fd;
   // Owner of the prepared runtime mount, not the lifecycle active-game state.
   char prepared_title_id[MAX_TITLE_ID];
 } shellcore_service_state_t;
@@ -32,6 +34,7 @@ typedef struct {
 static shellcore_service_state_t g_service = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .listen_fd = -1,
+    .client_fd = -1,
 };
 
 static void publish_prepared_title(const char *title_id) {
@@ -217,27 +220,34 @@ static bool prepare_title_runtime(const char *title_id,
   if (!prepare_image_source(title_id, source_path))
     return false;
   runtime_mount_state_lock();
-  bool ready = !runtime_sleep_mode_active() &&
-               mount_title_nullfs(title_id, source_path);
+  bool title_mounted = !runtime_sleep_mode_active() &&
+                       mount_title_nullfs(title_id, source_path);
+  bool ready = title_mounted;
   if (ready)
     ready = mount_backport_overlay_for_title(source_path, title_id, NULL, NULL);
+  if (title_mounted && !ready)
+    (void)unmount_title_runtime_layers(title_id);
   runtime_mount_state_unlock();
   return ready;
 }
 
 bool sm_shellcore_ensure_title_runtime(const char *title_id) {
-  if (!title_id || title_id[0] == '\0' || runtime_sleep_mode_active())
+  if (!is_supported_game_title_id(title_id) || runtime_sleep_mode_active())
     return false;
 
   char source_path[MAX_PATH];
   if (!read_mount_link(title_id, source_path, sizeof(source_path)))
     return true;
 
-  return prepare_title_runtime(title_id, source_path);
+  publish_prepared_title(title_id);
+  bool ready = prepare_title_runtime(title_id, source_path);
+  if (!ready)
+    clear_prepared_title(title_id);
+  return ready;
 }
 
 static int handle_launch_request(const char *title_id) {
-  if (!title_id || title_id[0] == '\0' || runtime_sleep_mode_active())
+  if (!is_supported_game_title_id(title_id) || runtime_sleep_mode_active())
     return EINVAL;
 
   char source_path[MAX_PATH];
@@ -286,6 +296,16 @@ bool sm_shellcore_service_has_prepared_mount(void) {
   return prepared;
 }
 
+bool sm_shellcore_service_title_is_prepared(const char *title_id) {
+  if (!title_id || title_id[0] == '\0')
+    return false;
+
+  pthread_mutex_lock(&g_service.mutex);
+  bool prepared = strcmp(g_service.prepared_title_id, title_id) == 0;
+  pthread_mutex_unlock(&g_service.mutex);
+  return prepared;
+}
+
 static int handle_launch_failed_request(const char *title_id) {
   if (!title_id || title_id[0] == '\0')
     return 0;
@@ -320,8 +340,9 @@ static void handle_client(int fd) {
 
 static void *service_thread_main(void *arg) {
   (void)arg;
+  int listen_fd = g_service.listen_fd;
   while (true) {
-    int client = accept(g_service.listen_fd, NULL, NULL);
+    int client = accept(listen_fd, NULL, NULL);
     if (client < 0) {
       if (errno == EINTR)
         continue;
@@ -332,7 +353,28 @@ static void *service_thread_main(void *arg) {
         log_debug("  [SHELLCORE] accept failed: %s", strerror(errno));
       break;
     }
+
+    struct timeval timeout = {.tv_sec = 2, .tv_usec = 0};
+    (void)setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                     sizeof(timeout));
+    (void)setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+                     sizeof(timeout));
+
+    pthread_mutex_lock(&g_service.mutex);
+    if (g_service.stop_requested) {
+      pthread_mutex_unlock(&g_service.mutex);
+      close(client);
+      break;
+    }
+    g_service.client_fd = client;
+    pthread_mutex_unlock(&g_service.mutex);
+
     handle_client(client);
+
+    pthread_mutex_lock(&g_service.mutex);
+    if (g_service.client_fd == client)
+      g_service.client_fd = -1;
+    pthread_mutex_unlock(&g_service.mutex);
     close(client);
   }
   return NULL;
@@ -361,6 +403,7 @@ bool sm_shellcore_service_start(void) {
   }
 
   g_service.listen_fd = fd;
+  g_service.client_fd = -1;
   g_service.stop_requested = false;
   g_service.prepared_title_id[0] = '\0';
   int rc = pthread_create(&g_service.thread, NULL, service_thread_main, NULL);
@@ -381,15 +424,21 @@ void sm_shellcore_service_stop(void) {
   pthread_mutex_lock(&g_service.mutex);
   g_service.stop_requested = true;
   int fd = g_service.listen_fd;
+  int client_fd = g_service.client_fd;
   g_service.listen_fd = -1;
   pthread_mutex_unlock(&g_service.mutex);
+  if (client_fd >= 0)
+    (void)shutdown(client_fd, SHUT_RDWR);
   if (fd >= 0)
     (void)shutdown(fd, SHUT_RDWR);
   if (fd >= 0)
     close(fd);
   pthread_join(g_service.thread, NULL);
+  pthread_mutex_lock(&g_service.mutex);
   g_service.started = false;
   g_service.stop_requested = false;
+  g_service.client_fd = -1;
   g_service.prepared_title_id[0] = '\0';
+  pthread_mutex_unlock(&g_service.mutex);
   (void)unlink(SM_SHELLCORE_SOCKET_PATH);
 }
