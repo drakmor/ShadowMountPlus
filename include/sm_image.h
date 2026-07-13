@@ -29,7 +29,7 @@ bool shutdown_image_mounts(void);
 // Remove empty directories left under the image mount root.
 void cleanup_mount_dirs(void);
 // Mount an image file if it is stable and not currently rate-limited.
-bool maybe_mount_image_file(const char *full_path, const char *name,
+bool maybe_mount_image_file(const char *full_path, const char *display_name,
                             bool *unstable_out);
 // Build the deterministic runtime mount point for an image source path.
 void get_image_mount_point_for_source(const char *file_path,

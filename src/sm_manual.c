@@ -292,8 +292,6 @@ static bool rewrite_manual_list_without_deleted_entries(int entry_count) {
       }
       if (remove_line) {
         changed = true;
-        if (truncated)
-          drain_manual_file_line(in);
         continue;
       }
     }
