@@ -336,20 +336,21 @@ static void log_non_empty_scan_paths(void) {
   }
 }
 
-static void ensure_kstuff_noautomount_file(void) {
+static bool ensure_kstuff_noautomount_file(void) {
   if (path_exists(KSTUFF_NOAUTOMOUNT_FILE))
-    return;
+    return true;
 
-  int fd = open(KSTUFF_NOAUTOMOUNT_FILE, O_RDONLY | O_CREAT, 0666);
-  if (fd >= 0) {
-    close(fd);
-    printf("[KSTUFF] Created startup sentinel: %s\n",
-           KSTUFF_NOAUTOMOUNT_FILE);
-    return;
+  int fd = open(KSTUFF_NOAUTOMOUNT_FILE, O_WRONLY | O_CREAT, 0666);
+  if (fd < 0) {
+    printf("[KSTUFF] Failed to create %s: %s\n", KSTUFF_NOAUTOMOUNT_FILE,
+           strerror(errno));
+    return false;
   }
+  (void)close(fd);
 
-  printf("[KSTUFF] Failed to create %s: %s\n", KSTUFF_NOAUTOMOUNT_FILE,
-         strerror(errno));
+  printf("[KSTUFF] Created automount sentinel: %s\n",
+         KSTUFF_NOAUTOMOUNT_FILE);
+  return true;
 }
 
 static bool write_buffer_to_fd(int fd, const unsigned char *buf, size_t size) {
@@ -396,7 +397,19 @@ static void ensure_runtime_config_file(void) {
   printf("[CFG] Created default config from template: %s\n", CONFIG_FILE);
 }
 
-static void cleanup_kstuff_noautomount_files(void) {
+static void cleanup_kstuff_noautomount_file(void) {
+  pid_t replacement_pid = find_pid_by_name(PAYLOAD_NAME, true);
+  if (replacement_pid > 0) {
+    log_debug("[KSTUFF] replacement instance pid=%ld; keeping %s",
+              (long)replacement_pid, KSTUFF_NOAUTOMOUNT_FILE);
+    return;
+  }
+  if (replacement_pid < 0) {
+    log_debug("[KSTUFF] process enumeration unavailable; keeping %s",
+              KSTUFF_NOAUTOMOUNT_FILE);
+    return;
+  }
+
   if (unlink(KSTUFF_NOAUTOMOUNT_FILE) == 0) {
     log_debug("[KSTUFF] removed shutdown sentinel: %s",
               KSTUFF_NOAUTOMOUNT_FILE);
@@ -443,20 +456,30 @@ int main(void) {
 
   mkdir(LOG_DIR, 0777);
   ensure_runtime_config_file();
-  ensure_kstuff_noautomount_file();
   existing_pid = find_pid_by_name(PAYLOAD_NAME, true);
   if (existing_pid < 0) {
     printf("[RESTART] Failed to enumerate running processes.\n");
     sceUserServiceTerminate();
     return 1;
   }
+  if (!ensure_kstuff_noautomount_file()) {
+    sceUserServiceTerminate();
+    return 1;
+  }
   if (existing_pid > 0) {
     printf("[RESTART] Another instance is already running.\n");
     if (!wait_for_existing_instance_exit(existing_pid)) {
+      printf("[KSTUFF] Keeping automount sentinel after failed handoff.\n");
       sceUserServiceTerminate();
       return 0;
     }
     restarted_previous_instance = true;
+  }
+  // Older builds removed the sentinel unconditionally during shutdown.
+  // Recreate it after handoff before starting any mount work.
+  if (!ensure_kstuff_noautomount_file()) {
+    sceUserServiceTerminate();
+    return 1;
   }
   syscall(SYS_thr_set_name, -1, PAYLOAD_NAME);
 
@@ -522,9 +545,11 @@ int main(void) {
   }
 
   log_debug("[STARTUP] cleanup_staged_mount_links begin");
+  runtime_mount_state_lock();
   cleanup_staged_mount_links();
   log_debug("[STARTUP] cleanup_duplicate_title_mounts begin");
   cleanup_duplicate_title_mounts();
+  runtime_mount_state_unlock();
   if (!app_db_run_startup_maintenance())
     log_debug("  [DB] startup snd0info maintenance unavailable");
   log_debug("[STARTUP] scanner startup sync begin");
@@ -543,10 +568,20 @@ shutdown:
   sm_scanner_shutdown();
   sm_kstuff_shutdown();
   sm_mdbg_shutdown();
-  cleanup_kstuff_noautomount_files();
-  shutdown_title_mounts();
-  if (!shutdown_image_mounts()) {
+  bool title_mounts_released = shutdown_title_mounts();
+  bool image_mounts_released = false;
+  if (title_mounts_released) {
+    image_mounts_released = shutdown_image_mounts();
+  } else {
+    log_debug("[SHUTDOWN] image teardown skipped while title layers remain");
+  }
+  if (!image_mounts_released) {
     log_debug("[SHUTDOWN] some image mounts or devices were not fully released");
+  }
+  if (title_mounts_released && image_mounts_released) {
+    cleanup_kstuff_noautomount_file();
+  } else {
+    log_debug("[KSTUFF] keeping automount disabled after incomplete teardown");
   }
   shutdown_app_db();
 
