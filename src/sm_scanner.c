@@ -572,6 +572,12 @@ static sm_scan_tree_dir_visit_t register_watch_directory_visit(
     const char *dir_path, unsigned int depth_from_root, void *ctx_ptr) {
   register_watch_tree_ctx_t *ctx = (register_watch_tree_ctx_t *)ctx_ptr;
   if (depth_from_root > 0u) {
+    // Runtime image descendants can be active PFS/PFSC mounts. Keeping a
+    // directory fd open there pins the mounted vnode and makes unmount return
+    // EBUSY. The managed mount-base watcher is sufficient: mounted images are
+    // read-only and every discovery pass rebuilds this tree.
+    if (is_under_image_mount_base(dir_path))
+      return SM_SCAN_TREE_DIR_SKIP_DESCEND;
     if (depth_from_root >= ctx->scan_depth ||
         directory_has_param_json(dir_path, NULL)) {
       return SM_SCAN_TREE_DIR_SKIP_DESCEND;

@@ -105,7 +105,18 @@ bool resolve_device_from_mount(const char *mount_point,
 
 static bool is_path_mountpoint(const char *path) {
   struct statfs sfs;
-  return (statfs(path, &sfs) == 0 && strcmp(sfs.f_mntonname, path) == 0);
+  if (statfs(path, &sfs) == 0 && strcmp(sfs.f_mntonname, path) == 0)
+    return true;
+
+  // An unreadable filesystem can make statfs(path) fail while it is still in
+  // the mount table. Treat it as active until unmount removes that entry.
+  struct statfs *mntbuf = NULL;
+  int mntcount = getmntinfo(&mntbuf, MNT_NOWAIT);
+  for (int i = 0; i < mntcount && mntbuf; ++i) {
+    if (strcmp(mntbuf[i].f_mntonname, path) == 0)
+      return true;
+  }
+  return false;
 }
 
 bool is_active_image_mount_point(const char *path) {

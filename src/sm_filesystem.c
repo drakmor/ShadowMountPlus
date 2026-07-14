@@ -4,6 +4,7 @@
 #include "sm_config_mount.h"
 #include "sm_limits.h"
 #include "sm_log.h"
+#include "sm_mount_diag.h"
 #include "sm_image_cache.h"
 #include "sm_image.h"
 #include "sm_path_utils.h"
@@ -89,7 +90,7 @@ typedef bool (*title_app_dir_iter_fn)(const char *title_id,
                                       const title_link_paths_t *paths,
                                       void *ctx);
 
-static void for_each_title_app_dir(const char *open_error_context,
+static bool for_each_title_app_dir(const char *open_error_context,
                                    bool stop_on_signal,
                                    title_app_dir_iter_fn fn, void *ctx) {
   DIR *d = opendir(APP_BASE);
@@ -97,23 +98,30 @@ static void for_each_title_app_dir(const char *open_error_context,
     if (errno != ENOENT)
       log_debug("  [LINK] open %s failed%s: %s", APP_BASE,
                 open_error_context ? open_error_context : "", strerror(errno));
-    return;
+    return errno == ENOENT;
   }
 
+  bool completed = true;
   struct dirent *entry;
   while ((entry = readdir(d)) != NULL) {
-    if (stop_on_signal && should_stop_requested())
+    if (stop_on_signal && should_stop_requested()) {
+      completed = false;
       break;
+    }
     if (!resolve_title_app_dir(entry, NULL, 0))
       continue;
 
     title_link_paths_t paths;
     build_title_link_paths(entry->d_name, &paths);
-    if (!fn(entry->d_name, &paths, ctx))
+    if (!fn(entry->d_name, &paths, ctx)) {
+      completed = false;
       break;
+    }
   }
 
-  closedir(d);
+  if (closedir(d) != 0)
+    completed = false;
+  return completed;
 }
 
 bool read_mount_link(const char *title_id, char *out, size_t out_size) {
@@ -286,8 +294,7 @@ bool resolve_title_app_dir(const struct dirent *entry, char *app_dir,
   return true;
 }
 
-static bool source_path_needs_cleanup(const char *source_path,
-                                      bool *tried_image_recovery) {
+static bool source_path_needs_cleanup(const char *source_path) {
   if (is_under_image_mount_base(source_path)) {
     char image_source_path[MAX_PATH];
     bool has_image_source = resolve_image_source_from_mount_cache(
@@ -313,11 +320,6 @@ static bool source_path_needs_cleanup(const char *source_path,
     return true;
   if (path_exists(eboot_path))
     return false;
-
-  if (!*tried_image_recovery && is_under_image_mount_base(source_path)) {
-    cleanup_stale_image_mounts();
-    *tried_image_recovery = true;
-  }
 
   return !path_exists(eboot_path);
 }
@@ -608,10 +610,13 @@ static bool unmount_top_controlled_layer(const char *path) {
 
   if (unmount(path, 0) == 0 || errno == ENOENT || errno == EINVAL)
     return true;
-  if (unmount(path, MNT_FORCE) == 0 || errno == ENOENT || errno == EINVAL)
-    return true;
+  int unmount_errno = errno;
+  if (unmount_errno == EBUSY)
+    sm_mount_diag_log_busy(path);
 
-  log_debug("  [LINK] unmount failed for %s: %s", path, strerror(errno));
+  log_debug("  [LINK] unmount deferred for %s: %s", path,
+            strerror(unmount_errno));
+  errno = unmount_errno;
   return false;
 }
 
@@ -650,24 +655,32 @@ bool unmount_title_runtime_layers(const char *title_id) {
 
 static bool unmount_managed_title_entry(
     const char *title_id, const title_link_paths_t *paths, void *ctx) {
-  (void)ctx;
+  bool *all_released = (bool *)ctx;
   char source_path[MAX_PATH];
   if (!read_mount_link_file(paths->mount_link, source_path,
                             sizeof(source_path))) {
     return true;
   }
   title_mount_state_t state;
-  if (!inspect_title_stack(title_id, source_path, NULL, &state) ||
-      !state.has_our_nullfs) {
+  if (!inspect_title_stack(title_id, source_path, NULL, &state)) {
+    *all_released = false;
     return true;
   }
-  (void)unmount_title_runtime_layers(title_id);
+  if (!state.has_our_nullfs) {
+    return true;
+  }
+  if (!unmount_title_runtime_layers(title_id))
+    *all_released = false;
   return true;
 }
 
-void unmount_all_title_runtime_layers(void) {
-  for_each_title_app_dir(" during runtime mount cleanup", false,
-                         unmount_managed_title_entry, NULL);
+bool unmount_all_title_runtime_layers(void) {
+  bool all_released = true;
+  if (!for_each_title_app_dir(" during runtime mount cleanup", false,
+                              unmount_managed_title_entry, &all_released)) {
+    all_released = false;
+  }
+  return all_released;
 }
 
 bool reconcile_title_backport_mount(const char *title_id, const char *src_path,
@@ -767,23 +780,6 @@ static void unmount_mount_point_for_recovery(const char *path) {
   if (!unmount_controlled_mount_stack(path)) {
     log_debug("  [LINK] failed to reset mount stack for recovery: %s", path);
   }
-
-  if (unmount(path, 0) == 0) {
-    log_debug("  [LINK] extra unmount for recovery: %s", path);
-    return;
-  }
-  if (errno == ENOENT || errno == EINVAL)
-    return;
-
-  if (unmount(path, MNT_FORCE) == 0) {
-    log_debug("  [LINK] extra forced unmount for recovery: %s", path);
-    return;
-  }
-  if (errno == ENOENT || errno == EINVAL)
-    return;
-
-  log_debug("  [LINK] extra unmount for recovery did not complete for %s: %s",
-            path, strerror(errno));
 }
 
 static bool recover_mount_directory_after_stat_failure(
@@ -1049,8 +1045,7 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
     return false;
   }
   if (!path_exists(src_eboot)) {
-    bool tried_image_recovery = false;
-    if (source_path_needs_cleanup(src_path, &tried_image_recovery)) {
+    if (source_path_needs_cleanup(src_path)) {
       log_debug("  [LINK] source eboot.bin missing for %s: %s", title_id,
                 src_eboot);
       return false;
@@ -1114,20 +1109,16 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
   }
 
   if (runtime_sleep_mode_active()) {
-    if (unmount(dst, 0) != 0 && errno != ENOENT && errno != EINVAL)
-      (void)unmount(dst, MNT_FORCE);
+    if (!unmount_top_controlled_layer(dst))
+      log_debug("  [LINK] nullfs rollback deferred during sleep: %s", dst);
     return false;
   }
 
   if (!path_exists(dst_eboot)) {
     log_debug("  [LINK] mounted nullfs but eboot.bin is missing at target: %s",
               dst_eboot);
-    if (unmount(dst, 0) != 0 && errno != ENOENT && errno != EINVAL) {
-      if (unmount(dst, MNT_FORCE) != 0 && errno != ENOENT && errno != EINVAL) {
-        log_debug("  [LINK] failed to rollback empty nullfs mount %s: %s", dst,
-                  strerror(errno));
-      }
-    }
+    if (!unmount_top_controlled_layer(dst))
+      log_debug("  [LINK] empty nullfs rollback deferred: %s", dst);
     return false;
   }
   log_debug("  [LINK] nullfs mounted: %s -> %s", src_path, dst);
@@ -1137,7 +1128,6 @@ bool mount_title_nullfs(const char *title_id, const char *src_path) {
 typedef struct {
   const char *removed_source_root;
   bool unmount_system_ex_bind;
-  bool tried_image_recovery;
   bool force_remove_matching_source;
   bool match_usb_sources;
   bool preserve_mount_links;
@@ -1184,12 +1174,10 @@ static bool cleanup_mount_links_entry(const char *title_id,
         return true;
       should_remove = ctx->force_remove_matching_source ||
                       (has_image_source && !path_exists(image_source_path)) ||
-                      source_path_needs_cleanup(source_path,
-                                                &ctx->tried_image_recovery);
+                      source_path_needs_cleanup(source_path);
     } else {
       should_remove = (has_image_source && !path_exists(image_source_path)) ||
-                      source_path_needs_cleanup(source_path,
-                                                &ctx->tried_image_recovery);
+                      source_path_needs_cleanup(source_path);
     }
   }
 
@@ -1272,7 +1260,6 @@ void cleanup_mount_links(const char *removed_source_root,
   cleanup_mount_links_ctx_t ctx = {
       .removed_source_root = removed_source_root,
       .unmount_system_ex_bind = unmount_system_ex_bind,
-      .tried_image_recovery = false,
       .force_remove_matching_source = false,
       .match_usb_sources = false,
       .preserve_mount_links = false,
@@ -1288,7 +1275,6 @@ void cleanup_mount_links_for_source_unmount(const char *source_root) {
   cleanup_mount_links_ctx_t ctx = {
       .removed_source_root = source_root,
       .unmount_system_ex_bind = true,
-      .tried_image_recovery = false,
       .force_remove_matching_source = true,
       .match_usb_sources = false,
       .preserve_mount_links = false,
@@ -1301,7 +1287,6 @@ void cleanup_usb_mount_links_for_suspend(void) {
   cleanup_mount_links_ctx_t ctx = {
       .removed_source_root = NULL,
       .unmount_system_ex_bind = true,
-      .tried_image_recovery = false,
       .force_remove_matching_source = false,
       .match_usb_sources = true,
       .preserve_mount_links = true,
@@ -1313,7 +1298,7 @@ void cleanup_usb_mount_links_for_suspend(void) {
 static bool shutdown_title_mounts_entry(const char *title_id,
                                         const title_link_paths_t *paths,
                                         void *ctx) {
-  (void)ctx;
+  bool *all_released = (bool *)ctx;
 
   char source_path[MAX_PATH];
   if (!read_mount_link_file(paths->mount_link, source_path, sizeof(source_path))) {
@@ -1321,20 +1306,32 @@ static bool shutdown_title_mounts_entry(const char *title_id,
   }
 
   title_mount_state_t state;
-  if (!inspect_title_stack(title_id, source_path, NULL, &state) ||
-      !state.has_our_nullfs ||
-      !title_stack_top_is_managed(&state)) {
+  if (!inspect_title_stack(title_id, source_path, NULL, &state)) {
+    *all_released = false;
+    return true;
+  }
+  if (!state.has_our_nullfs)
+    return true;
+  if (!title_stack_top_is_managed(&state)) {
+    log_debug("  [LINK] shutdown stack blocked by unmanaged top for %s",
+              state.system_ex_path);
+    *all_released = false;
     return true;
   }
 
   if (!unmount_controlled_mount_stack(state.system_ex_path)) {
     log_debug("  [LINK] failed to unmount shutdown stack for %s",
               state.system_ex_path);
+    *all_released = false;
   }
   return true;
 }
 
-void shutdown_title_mounts(void) {
-  for_each_title_app_dir(" during shutdown", false,
-                         shutdown_title_mounts_entry, NULL);
+bool shutdown_title_mounts(void) {
+  bool all_released = true;
+  if (!for_each_title_app_dir(" during shutdown", false,
+                              shutdown_title_mounts_entry, &all_released)) {
+    all_released = false;
+  }
+  return all_released;
 }

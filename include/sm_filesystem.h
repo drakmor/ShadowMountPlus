@@ -43,7 +43,7 @@ bool rollback_title_nullfs_mount(const char *title_id, const char *src_path);
 // Drop runtime layers for a title while preserving its metadata/link files.
 bool unmount_title_runtime_layers(const char *title_id);
 // Release every managed title layer while preserving link metadata.
-void unmount_all_title_runtime_layers(void);
+bool unmount_all_title_runtime_layers(void);
 // Reconcile the title mount stack against the expected source/backport state.
 bool reconcile_title_backport_mount(const char *title_id, const char *src_path,
                                     const char *expected_backport_path,
@@ -54,7 +54,7 @@ bool mount_backport_overlay(const char *mount_point,
                             const char *backport_path,
                             const char *title_id);
 // Unmount all managed /system_ex/app/<title_id> mount stacks on shutdown.
-void shutdown_title_mounts(void);
+bool shutdown_title_mounts(void);
 // Remove stale mount links and optionally restore image-backed mounts.
 void cleanup_mount_links(const char *removed_source_root,
                          bool unmount_system_ex_bind);

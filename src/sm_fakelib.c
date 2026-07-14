@@ -3,6 +3,7 @@
 #include "sm_fakelib.h"
 #include "sm_config_mount.h"
 #include "sm_log.h"
+#include "sm_mount_diag.h"
 #include "sm_types.h"
 
 #include <pthread.h>
@@ -52,15 +53,19 @@ static bool mount_fakelib_overlay(const char *title_id,
 
 static bool unmount_fakelib_overlay(const fakelib_layer_t *layer) {
   const char *mount_path = layer->mount_path;
-  if (unmount(mount_path, MNT_FORCE) == 0 || errno == ENOENT ||
+  if (unmount(mount_path, 0) == 0 || errno == ENOENT ||
       errno == EINVAL) {
     log_debug("  [FAKELIB] %s libraries unmounted: %s -> %s", layer->label,
               layer->source_path, mount_path);
     return true;
   }
 
-  log_debug("  [FAKELIB] %s unmount failed for %s: %s", layer->label,
-            mount_path, strerror(errno));
+  int unmount_errno = errno;
+  if (unmount_errno == EBUSY)
+    sm_mount_diag_log_busy(mount_path);
+  log_debug("  [FAKELIB] %s unmount deferred for %s: %s", layer->label,
+            mount_path, strerror(unmount_errno));
+  errno = unmount_errno;
   return false;
 }
 
