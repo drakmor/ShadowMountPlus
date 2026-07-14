@@ -1,4 +1,6 @@
 #include "sm_platform.h"
+#include <pthread.h>
+
 #include "sm_game_cache.h"
 #include "sm_config_mount.h"
 #include "sm_filesystem.h"
@@ -17,6 +19,7 @@ struct GameCache {
 };
 
 static struct GameCache g_game_cache[MAX_PENDING];
+static pthread_mutex_t g_game_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static bool game_cache_source_exists(const struct GameCache *entry) {
   if (path_exists(entry->path))
@@ -101,6 +104,7 @@ void cache_game_entry(const char *path, const char *title_id,
   char owning_scan_root[MAX_PATH];
   (void)resolve_game_cache_owning_scan_root(path, owning_scan_root);
 
+  pthread_mutex_lock(&g_game_cache_mutex);
   for (int k = 0; k < MAX_PENDING; k++) {
     if (!g_game_cache[k].valid)
       continue;
@@ -110,6 +114,7 @@ void cache_game_entry(const char *path, const char *title_id,
     }
     write_game_cache_slot(&g_game_cache[k], path, title_id, title_name,
                           owning_scan_root);
+    pthread_mutex_unlock(&g_game_cache_mutex);
     return;
   }
 
@@ -117,12 +122,15 @@ void cache_game_entry(const char *path, const char *title_id,
     if (!g_game_cache[k].valid) {
       write_game_cache_slot(&g_game_cache[k], path, title_id, title_name,
                             owning_scan_root);
+      pthread_mutex_unlock(&g_game_cache_mutex);
       return;
     }
   }
+  pthread_mutex_unlock(&g_game_cache_mutex);
 }
 
 void prune_game_cache(void) {
+  pthread_mutex_lock(&g_game_cache_mutex);
   for (int k = 0; k < MAX_PENDING; k++) {
     if (!g_game_cache[k].valid)
       continue;
@@ -130,6 +138,7 @@ void prune_game_cache(void) {
       continue;
     clear_game_cache_slot(k, "source removed");
   }
+  pthread_mutex_unlock(&g_game_cache_mutex);
 }
 
 void prune_game_cache_for_root(const char *root) {
@@ -138,6 +147,7 @@ void prune_game_cache_for_root(const char *root) {
     return;
   }
 
+  pthread_mutex_lock(&g_game_cache_mutex);
   for (int k = 0; k < MAX_PENDING; k++) {
     if (!g_game_cache[k].valid)
       continue;
@@ -151,6 +161,7 @@ void prune_game_cache_for_root(const char *root) {
       continue;
     clear_game_cache_slot(k, "source removed");
   }
+  pthread_mutex_unlock(&g_game_cache_mutex);
 }
 
 void for_each_cached_game_entry(const char *root, game_cache_iter_fn fn,
@@ -159,20 +170,68 @@ void for_each_cached_game_entry(const char *root, game_cache_iter_fn fn,
     return;
 
   for (int k = 0; k < MAX_PENDING; k++) {
-    if (!g_game_cache[k].valid)
-      continue;
-    bool has_owning_scan_root = ensure_game_cache_owning_scan_root(&g_game_cache[k]);
-    const char *entry_root =
-        has_owning_scan_root ? g_game_cache[k].owning_scan_root : g_game_cache[k].path;
-    if (root && root[0] != '\0' && strcmp(entry_root, root) != 0) {
-      continue;
+    sm_game_cache_snapshot_entry_t entry;
+    bool valid = false;
+    pthread_mutex_lock(&g_game_cache_mutex);
+    if (g_game_cache[k].valid) {
+      bool has_owning_scan_root =
+          ensure_game_cache_owning_scan_root(&g_game_cache[k]);
+      const char *entry_root = has_owning_scan_root
+                                   ? g_game_cache[k].owning_scan_root
+                                   : g_game_cache[k].path;
+      if (!root || root[0] == '\0' || strcmp(entry_root, root) == 0) {
+        (void)strlcpy(entry.path, g_game_cache[k].path, sizeof(entry.path));
+        (void)strlcpy(entry.title_id, g_game_cache[k].title_id,
+                      sizeof(entry.title_id));
+        (void)strlcpy(entry.title_name, g_game_cache[k].title_name,
+                      sizeof(entry.title_name));
+        (void)strlcpy(entry.owning_scan_root,
+                      has_owning_scan_root ? g_game_cache[k].owning_scan_root
+                                           : "",
+                      sizeof(entry.owning_scan_root));
+        valid = true;
+      }
     }
-    if (!fn(g_game_cache[k].path, g_game_cache[k].title_id,
-            g_game_cache[k].title_name,
-            has_owning_scan_root ? g_game_cache[k].owning_scan_root : NULL, ctx)) {
+    pthread_mutex_unlock(&g_game_cache_mutex);
+    if (!valid)
+      continue;
+    if (!fn(entry.path, entry.title_id, entry.title_name,
+            entry.owning_scan_root[0] != '\0' ? entry.owning_scan_root : NULL,
+            ctx)) {
       break;
     }
   }
+}
+
+size_t sm_game_cache_snapshot(size_t offset,
+                              sm_game_cache_snapshot_entry_t *entries,
+                              size_t capacity, size_t *total_out) {
+  size_t total = 0;
+  size_t copied = 0;
+  pthread_mutex_lock(&g_game_cache_mutex);
+  for (int k = 0; k < MAX_PENDING; ++k) {
+    if (!g_game_cache[k].valid)
+      continue;
+    bool has_root = ensure_game_cache_owning_scan_root(&g_game_cache[k]);
+    if (total++ < offset || copied >= capacity || !entries)
+      continue;
+    sm_game_cache_snapshot_entry_t *entry = &entries[copied++];
+    memset(entry, 0, sizeof(*entry));
+    (void)strlcpy(entry->path, g_game_cache[k].path, sizeof(entry->path));
+    (void)strlcpy(entry->title_id, g_game_cache[k].title_id,
+                  sizeof(entry->title_id));
+    (void)strlcpy(entry->title_name, g_game_cache[k].title_name,
+                  sizeof(entry->title_name));
+    if (has_root) {
+      (void)strlcpy(entry->owning_scan_root,
+                    g_game_cache[k].owning_scan_root,
+                    sizeof(entry->owning_scan_root));
+    }
+  }
+  pthread_mutex_unlock(&g_game_cache_mutex);
+  if (total_out)
+    *total_out = total;
+  return copied;
 }
 
 bool find_cached_game(const char *path, const char *title_id,
@@ -180,26 +239,31 @@ bool find_cached_game(const char *path, const char *title_id,
   if (existing_path_out)
     *existing_path_out = NULL;
 
+  pthread_mutex_lock(&g_game_cache_mutex);
   for (int k = 0; k < MAX_PENDING; k++) {
     if (!g_game_cache[k].valid)
       continue;
     if (path && strcmp(g_game_cache[k].path, path) == 0) {
       if (existing_path_out)
         *existing_path_out = g_game_cache[k].path;
+      pthread_mutex_unlock(&g_game_cache_mutex);
       return true;
     }
     if (title_id && title_id[0] != '\0' &&
         strcmp(g_game_cache[k].title_id, title_id) == 0) {
       if (existing_path_out)
         *existing_path_out = g_game_cache[k].path;
+      pthread_mutex_unlock(&g_game_cache_mutex);
       return true;
     }
   }
 
+  pthread_mutex_unlock(&g_game_cache_mutex);
   return false;
 }
 
 void clear_cached_game(const char *path) {
+  pthread_mutex_lock(&g_game_cache_mutex);
   for (int k = 0; k < MAX_PENDING; k++) {
     if (!g_game_cache[k].valid)
       continue;
@@ -207,4 +271,5 @@ void clear_cached_game(const char *path) {
       continue;
     clear_game_cache_slot(k, "removed from duplicate tracking");
   }
+  pthread_mutex_unlock(&g_game_cache_mutex);
 }

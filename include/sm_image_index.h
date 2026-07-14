@@ -2,9 +2,21 @@
 #define SM_IMAGE_INDEX_H
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <sys/stat.h>
 
+#include "sm_limits.h"
+
 struct AppDbTitleList;
+
+typedef struct {
+  char path[MAX_PATH];
+  int64_t size;
+  int64_t mtime_sec;
+  int32_t mtime_nsec;
+  bool complete;
+} sm_image_index_snapshot_entry_t;
 
 // Return true when an image must be opened to discover/install its contents.
 bool sm_image_index_needs_scan(const char *path, const struct stat *st,
@@ -21,5 +33,9 @@ void sm_image_index_complete_scan(const char *path);
 void sm_image_index_flush(void);
 // Drop persistent entries whose backing image disappeared.
 void sm_image_index_prune(void);
+// Copy a stable, paginated snapshot of known backing images.
+size_t sm_image_index_snapshot(size_t offset,
+                               sm_image_index_snapshot_entry_t *entries,
+                               size_t capacity, size_t *total_out);
 
 #endif

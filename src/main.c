@@ -5,6 +5,7 @@
 #include <sys/sysctl.h>
 
 #include "sm_runtime.h"
+#include "sm_api_service.h"
 #include "sm_types.h"
 #include "sm_log.h"
 #include "sm_shellcore_flags.h"
@@ -558,9 +559,12 @@ int main(void) {
     goto shutdown;
   }
   log_debug("[STARTUP] scanner startup sync done");
+  if (!sm_api_service_start())
+    log_debug("  [API] public socket unavailable: %s", strerror(errno));
   sm_scanner_run_loop();
 
 shutdown:
+  sm_api_service_stop();
   sm_shellcore_hooks_stop();
   sm_shellcore_service_stop();
   sm_shellcore_flags_stop();
