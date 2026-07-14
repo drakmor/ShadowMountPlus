@@ -2,14 +2,21 @@
 #define SM_SHELLCORE_SERVICE_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 // Start/stop the local Unix-socket owner used by the SceShellCore bridge.
 bool sm_shellcore_service_start(void);
 void sm_shellcore_service_stop(void);
 
-// Release transient title/image mounts after the lifecycle watcher confirms
-// that the game process exited.
+// Release transient title/image mounts after launch failure or ShellCore
+// workspace teardown.
 bool sm_shellcore_release_title_runtime(const char *title_id);
+// Bind the prepared managed title to the app id stored in LncApplication.
+void sm_shellcore_service_bind_prepared_app(const char *title_id,
+                                            uint32_t app_id);
+// Publish process exit without tearing down the still-live ShellCore workspace.
+// Returns true when a managed prepared title transitioned to exit-pending.
+bool sm_shellcore_service_note_game_exit(const char *title_id);
 // Ensure that a managed title has its image/nullfs/backport runtime stack.
 // Unmanaged stock titles are treated as already ready.
 bool sm_shellcore_ensure_title_runtime(const char *title_id);

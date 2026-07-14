@@ -779,7 +779,10 @@ bool release_scan_runtime_mounts(void) {
     runtime_mount_state_unlock();
     return true;
   }
-  unmount_all_title_runtime_layers();
+  if (!unmount_all_title_runtime_layers()) {
+    runtime_mount_state_unlock();
+    return false;
+  }
   bool released = release_runtime_image_mounts();
   runtime_mount_state_unlock();
   return released;
@@ -789,10 +792,12 @@ bool release_scan_runtime_mounts(void) {
 void cleanup_lost_sources_before_scan(void) {
   // 1) Drop stale game cache entries for deleted sources.
   prune_game_cache();
-  // 2) Drop stale/broken mount links and unmount stale /system_ex stacks.
-  cleanup_mount_links(NULL, true);
-  // 3) Unmount stale image mounts for deleted image files.
+  // 2) Recover or remove stale image mounts before validating their title links.
   cleanup_stale_image_mounts();
+  // 3) Drop stale/broken mount links and unmount stale /system_ex stacks.
+  runtime_mount_state_lock();
+  cleanup_mount_links(NULL, true);
+  runtime_mount_state_unlock();
   sm_image_index_prune();
   // 4) Drop stale path-state entries.
   prune_path_state();
@@ -800,8 +805,10 @@ void cleanup_lost_sources_before_scan(void) {
 
 void cleanup_lost_sources_for_scan_root(const char *scan_root) {
   prune_game_cache_for_root(scan_root);
-  cleanup_mount_links(scan_root, true);
   cleanup_stale_image_mounts_for_root(scan_root);
+  runtime_mount_state_lock();
+  cleanup_mount_links(scan_root, true);
+  runtime_mount_state_unlock();
   sm_image_index_prune();
   prune_path_state_for_root(scan_root);
 }

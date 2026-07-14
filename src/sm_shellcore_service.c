@@ -1,5 +1,6 @@
 #include "sm_platform.h"
 
+#include <stddef.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -17,6 +18,10 @@
 
 _Static_assert(sizeof(sm_shellcore_request_t) == 40,
                "unexpected ShellCore request size");
+_Static_assert(offsetof(sm_shellcore_request_t, payload) == 8,
+               "unexpected ShellCore request payload offset");
+_Static_assert(offsetof(sm_shellcore_request_t, payload.workspace.app_id) == 8,
+               "unexpected ShellCore workspace app id offset");
 _Static_assert(sizeof(sm_shellcore_response_t) == 4,
                "unexpected ShellCore response size");
 
@@ -29,6 +34,8 @@ typedef struct {
   int client_fd;
   // Owner of the prepared runtime mount, not the lifecycle active-game state.
   char prepared_title_id[MAX_TITLE_ID];
+  uint32_t prepared_app_id;
+  bool prepared_game_exited;
 } shellcore_service_state_t;
 
 static shellcore_service_state_t g_service = {
@@ -45,6 +52,11 @@ static void publish_prepared_title(const char *title_id) {
                   sizeof(g_service.prepared_title_id));
     changed = true;
   }
+  if (g_service.prepared_app_id != 0 || g_service.prepared_game_exited) {
+    g_service.prepared_app_id = 0;
+    g_service.prepared_game_exited = false;
+    changed = true;
+  }
   pthread_mutex_unlock(&g_service.mutex);
   if (changed)
     sm_scanner_wake();
@@ -55,6 +67,8 @@ static void clear_prepared_title(const char *title_id) {
   pthread_mutex_lock(&g_service.mutex);
   if (strcmp(g_service.prepared_title_id, title_id) == 0) {
     g_service.prepared_title_id[0] = '\0';
+    g_service.prepared_app_id = 0;
+    g_service.prepared_game_exited = false;
     changed = true;
   }
   pthread_mutex_unlock(&g_service.mutex);
@@ -265,32 +279,69 @@ static int handle_launch_request(const char *title_id) {
   return 0;
 }
 
-static void release_backing_image(const char *title_id) {
+static bool release_backing_image(const char *title_id) {
   char image_chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH];
   size_t image_count = 0;
   if (!read_mount_image_chain(title_id, image_chain, &image_count))
-    return;
+    return true;
 
   for (size_t layer = image_count; layer > 0; --layer) {
-    (void)release_runtime_image_mount(image_chain[layer - 1u]);
+    if (!release_runtime_image_mount(image_chain[layer - 1u]))
+      return false;
   }
+  return true;
 }
 
 bool sm_shellcore_release_title_runtime(const char *title_id) {
   if (!title_id || title_id[0] == '\0')
     return false;
   runtime_mount_state_lock();
+  log_debug("  [SHELLCORE] runtime release start: %s", title_id);
   bool released = unmount_title_runtime_layers(title_id);
   if (released)
-    release_backing_image(title_id);
+    released = release_backing_image(title_id);
   runtime_mount_state_unlock();
-  if (released)
-    clear_prepared_title(title_id);
+  // The lifecycle owner is gone even when a short-lived ShellCore sandbox
+  // nullfs still pins the title stack. Leaving the title marked as prepared
+  // would block scanner cleanup forever. The intact stack remains discoverable
+  // through mount.lnk and is retried by the normal full-scan cleanup cycle.
+  clear_prepared_title(title_id);
   return released;
+}
+
+void sm_shellcore_service_bind_prepared_app(const char *title_id,
+                                            uint32_t app_id) {
+  if (!title_id || title_id[0] == '\0' || app_id == 0)
+    return;
+
+  pthread_mutex_lock(&g_service.mutex);
+  if (strcmp(g_service.prepared_title_id, title_id) == 0) {
+    g_service.prepared_app_id = app_id;
+    g_service.prepared_game_exited = false;
+  }
+  pthread_mutex_unlock(&g_service.mutex);
+}
+
+bool sm_shellcore_service_note_game_exit(const char *title_id) {
+  if (!title_id || title_id[0] == '\0')
+    return false;
+
+  bool changed = false;
+  pthread_mutex_lock(&g_service.mutex);
+  bool prepared = strcmp(g_service.prepared_title_id, title_id) == 0;
+  if (prepared && !g_service.prepared_game_exited) {
+    g_service.prepared_game_exited = true;
+    changed = true;
+  }
+  pthread_mutex_unlock(&g_service.mutex);
+  return changed;
 }
 
 bool sm_shellcore_service_has_prepared_mount(void) {
   pthread_mutex_lock(&g_service.mutex);
+  // Keep scanner cleanup blocked after process exit as well. Only the
+  // post-unmountWorkspace event (or the explicit no-hook fallback) owns the
+  // transition that clears this state and releases the runtime stack.
   bool prepared = g_service.prepared_title_id[0] != '\0';
   pthread_mutex_unlock(&g_service.mutex);
   return prepared;
@@ -318,6 +369,25 @@ static int handle_launch_failed_request(const char *title_id) {
   return sm_shellcore_release_title_runtime(title_id) ? 0 : EBUSY;
 }
 
+static int handle_workspace_unmounted(uint32_t app_id) {
+  if (app_id == 0)
+    return 0;
+
+  char title_id[MAX_TITLE_ID] = {0};
+  pthread_mutex_lock(&g_service.mutex);
+  if (g_service.prepared_app_id == app_id &&
+      g_service.prepared_title_id[0] != '\0') {
+    (void)strlcpy(title_id, g_service.prepared_title_id, sizeof(title_id));
+  }
+  pthread_mutex_unlock(&g_service.mutex);
+  if (title_id[0] == '\0')
+    return 0;
+
+  log_debug("  [SHELLCORE] unmountWorkspace complete: %s app_id=0x%08X",
+            title_id, app_id);
+  return sm_shellcore_release_title_runtime(title_id) ? 0 : EBUSY;
+}
+
 static void handle_client(int fd) {
   sm_shellcore_request_t request;
   sm_shellcore_response_t response;
@@ -325,13 +395,18 @@ static void handle_client(int fd) {
     return;
   if (request.magic != SM_SHELLCORE_PROTOCOL_MAGIC ||
       request.version != SM_SHELLCORE_PROTOCOL_VERSION ||
-      strnlen(request.title_id, sizeof(request.title_id)) ==
-          sizeof(request.title_id)) {
+      ((request.operation == SM_SHELLCORE_REQUEST_LAUNCH ||
+        request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED) &&
+       strnlen(request.payload.title_id, sizeof(request.payload.title_id)) ==
+           sizeof(request.payload.title_id))) {
     response.status = EPROTO;
   } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH) {
-    response.status = handle_launch_request(request.title_id);
+    response.status = handle_launch_request(request.payload.title_id);
   } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED) {
-    response.status = handle_launch_failed_request(request.title_id);
+    response.status = handle_launch_failed_request(request.payload.title_id);
+  } else if (request.operation == SM_SHELLCORE_REQUEST_WORKSPACE_UNMOUNTED) {
+    response.status =
+        handle_workspace_unmounted(request.payload.workspace.app_id);
   } else {
     response.status = ENOTSUP;
   }
@@ -406,6 +481,8 @@ bool sm_shellcore_service_start(void) {
   g_service.client_fd = -1;
   g_service.stop_requested = false;
   g_service.prepared_title_id[0] = '\0';
+  g_service.prepared_app_id = 0;
+  g_service.prepared_game_exited = false;
   int rc = pthread_create(&g_service.thread, NULL, service_thread_main, NULL);
   if (rc != 0) {
     close(fd);
@@ -439,6 +516,8 @@ void sm_shellcore_service_stop(void) {
   g_service.stop_requested = false;
   g_service.client_fd = -1;
   g_service.prepared_title_id[0] = '\0';
+  g_service.prepared_app_id = 0;
+  g_service.prepared_game_exited = false;
   pthread_mutex_unlock(&g_service.mutex);
   (void)unlink(SM_SHELLCORE_SOCKET_PATH);
 }

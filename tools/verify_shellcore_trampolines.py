@@ -18,7 +18,7 @@ def verify_firmware(path: Path) -> None:
     decoder = Cs(CS_ARCH_X86, CS_MODE_64)
     decoder.detail = True
 
-    names = ["launch_app"]
+    names = ["launch_app", "unmount_workspace"]
     # AppInstallAll is hooked after the public TitleDir RPC disappeared.
     try:
         firmware = int(path.parents[2].name.replace(".", ""), 16)

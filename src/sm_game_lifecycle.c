@@ -18,6 +18,7 @@
 #include "sm_runtime.h"
 #include "sm_scan.h"
 #include "sm_scanner.h"
+#include "sm_shellcore_hooks.h"
 #include "sm_shellcore_service.h"
 #include "sm_time.h"
 
@@ -182,6 +183,7 @@ static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
   if (!sm_shellcore_ensure_title_runtime(title_id)) {
     return false;
   }
+  sm_shellcore_service_bind_prepared_app(title_id, app_id);
 
   if (!register_game_exit_watch(kq, pid)) {
     log_debug("  [GAME] skipping launch tracking for %s pid=%ld without exit watch",
@@ -473,8 +475,15 @@ static void handle_game_exit(pid_t pid) {
   sm_fakelib_game_on_exit(pid);
   sm_kstuff_game_on_exit(pid);
   if (had_active_title) {
-    if (!sm_shellcore_release_title_runtime(title_id))
-      log_debug("  [SHELLCORE] runtime release deferred/failed: %s", title_id);
+    if (sm_shellcore_service_note_game_exit(title_id)) {
+      if (sm_shellcore_workspace_hook_active()) {
+        log_debug("  [SHELLCORE] runtime release awaiting unmountWorkspace: %s",
+                  title_id);
+      } else if (!sm_shellcore_release_title_runtime(title_id)) {
+        log_debug("  [SHELLCORE] no workspace hook; runtime release deferred: %s",
+                  title_id);
+      }
+    }
     int snd0_updates = normalize_snd0info_for_title(title_id);
     if (snd0_updates >= 0)
       log_debug("  [DB] snd0info normalized after game exit rows=%d title=%s",
