@@ -381,6 +381,8 @@ static bool try_collect_candidate_for_directory(
   if (probe_result == DIRECTORY_CANDIDATE_DESCEND)
     return false;
 
+  note_game_cache_source_seen(full_path, info.title_id, info.title_name);
+
   if (!sm_image_index_record_game(full_path, info.title_id) &&
       unstable_found_out) {
     *unstable_found_out = true;

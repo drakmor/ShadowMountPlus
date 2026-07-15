@@ -241,6 +241,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
   state->cfg.force_mount = false;
   state->cfg.app_install_all_enabled = false;
+  state->cfg.auto_remove_missing_games = false;
   state->cfg.backport_fakelib_enabled = true;
   state->cfg.global_fakelib_enabled = true;
   state->cfg.global_fakelib_mount_first = true;
@@ -255,6 +256,8 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
   state->cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
   state->cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
+  state->cfg.auto_remove_missing_delay_seconds =
+      DEFAULT_AUTO_REMOVE_MISSING_DELAY_SECONDS;
   state->cfg.kstuff_pause_delay_image_seconds =
       DEFAULT_KSTUFF_PAUSE_DELAY_IMAGE_SECONDS;
   state->cfg.kstuff_pause_delay_direct_seconds =
@@ -1214,6 +1217,15 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "auto_remove_missing_games") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.auto_remove_missing_games = bval;
+      continue;
+    }
+
     if (strcasecmp(key, "image_ro") == 0 ||
         strcasecmp(key, "image_rw") == 0) {
       bool rule_read_only = (strcasecmp(key, "image_ro") == 0);
@@ -1382,6 +1394,22 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "auto_remove_missing_delay_seconds") == 0 ||
+        strcasecmp(key, "auto_remove_missing_delay_sec") == 0) {
+      if (!parse_u32_ini(value, &u32) ||
+          u32 < MIN_AUTO_REMOVE_MISSING_DELAY_SECONDS ||
+          u32 > MAX_AUTO_REMOVE_MISSING_DELAY_SECONDS) {
+        log_debug("  [CFG] invalid auto-remove delay at line %d: %s=%s "
+                  "(range: %u..%u)",
+                  line_no, key, value,
+                  (unsigned)MIN_AUTO_REMOVE_MISSING_DELAY_SECONDS,
+                  (unsigned)MAX_AUTO_REMOVE_MISSING_DELAY_SECONDS);
+        continue;
+      }
+      state->cfg.auto_remove_missing_delay_seconds = u32;
+      continue;
+    }
+
     if (strcasecmp(key, "kstuff_pause_delay_image_seconds") == 0 ||
         strcasecmp(key, "kstuff_pause_delay_image_sec") == 0) {
       if (!parse_u32_ini(value, &u32) || u32 > MAX_KSTUFF_PAUSE_DELAY_SECONDS) {
@@ -1497,7 +1525,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
   }
 
   log_debug("  [CFG] loaded: debug=%d quiet=%d ro=%d force=%d "
-            "app_install_all=%d api=%s:%u scan_depth=%u "
+            "app_install_all=%d auto_remove_missing_games=%d "
+            "auto_remove_missing_delay_s=%u api=%s:%u scan_depth=%u "
             "legacy_recursive_scan_forced=%d backport_fakelib=%d "
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
@@ -1511,6 +1540,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.mount_read_only ? 1 : 0,
             state->cfg.force_mount ? 1 : 0,
             state->cfg.app_install_all_enabled ? 1 : 0,
+            state->cfg.auto_remove_missing_games ? 1 : 0,
+            state->cfg.auto_remove_missing_delay_seconds,
             state->cfg.api_bind_address, state->cfg.api_port,
             state->cfg.scan_depth,
             state->cfg.legacy_recursive_scan_forced ? 1 : 0,

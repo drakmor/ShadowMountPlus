@@ -11,6 +11,7 @@
 #include "sm_fakelib.h"
 #include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
+#include "sm_game_cache.h"
 #include "sm_gameinfo.h"
 #include "sm_hash.h"
 #include "sm_image.h"
@@ -914,6 +915,11 @@ static bool apply_runtime_config_reload_effects(int kq,
 
   sm_kstuff_on_config_reload();
 
+  if (old_cfg->auto_remove_missing_games !=
+      new_cfg->auto_remove_missing_games) {
+    reset_missing_game_cache_timers();
+  }
+
   if (scan_topology_changed) {
     clear_scanner_watch_entries();
     reset_scanner_root_states();
@@ -970,6 +976,8 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
   process_scan_candidates(candidates, candidate_count);
   if (should_abort_scan_cycle())
     return false;
+
+  reconcile_missing_app_db_games();
 
   if (!sm_install_has_pending_work() && !release_scan_runtime_mounts())
     log_debug("  [IMG] some discovery mounts remain busy");

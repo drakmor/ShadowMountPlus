@@ -14,10 +14,13 @@ static sqlite3 *g_app_db;
 static sqlite3_stmt *g_app_db_stmt_update_snd0;
 static sqlite3_stmt *g_app_db_stmt_normalize_snd0;
 static struct AppDbTitleList g_app_db_title_cache;
+static struct AppDbTitleList g_app_db_auto_remove_cache;
 static struct AppDbTitleList g_app_db_blocked_uninstall_ppsa_cache;
 static bool g_app_db_title_cache_ready = false;
+static bool g_app_db_auto_remove_cache_ready = false;
 static bool g_app_db_blocked_uninstall_ppsa_cache_ready = false;
 static time_t g_app_db_title_cache_mtime = 0;
+static time_t g_app_db_auto_remove_cache_mtime = 0;
 static time_t g_app_db_blocked_uninstall_ppsa_cache_mtime = 0;
 static pthread_mutex_t g_app_db_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -49,10 +52,13 @@ void free_app_db_title_list(struct AppDbTitleList *list) {
 void shutdown_app_db(void) {
   pthread_mutex_lock(&g_app_db_mutex);
   free_app_db_title_list(&g_app_db_title_cache);
+  free_app_db_title_list(&g_app_db_auto_remove_cache);
   free_app_db_title_list(&g_app_db_blocked_uninstall_ppsa_cache);
   g_app_db_title_cache_ready = false;
+  g_app_db_auto_remove_cache_ready = false;
   g_app_db_blocked_uninstall_ppsa_cache_ready = false;
   g_app_db_title_cache_mtime = 0;
+  g_app_db_auto_remove_cache_mtime = 0;
   g_app_db_blocked_uninstall_ppsa_cache_mtime = 0;
   close_app_db();
   pthread_mutex_unlock(&g_app_db_mutex);
@@ -418,6 +424,28 @@ static bool load_app_db_title_list(struct AppDbTitleList *list) {
   return loaded;
 }
 
+static bool load_app_db_auto_remove_title_list(struct AppDbTitleList *list) {
+  free_app_db_title_list(list);
+
+  const char *sql =
+      "SELECT DISTINCT titleId "
+      "FROM tbl_contentinfo "
+      "WHERE metaDataPath GLOB '/user/app/PPSA*/sce_sys' "
+      "ORDER BY titleId;";
+  sqlite3_stmt *stmt = NULL;
+  int prep_rc = app_db_prepare_with_retry(sql, &stmt,
+                                          APP_DB_PREPARE_BUSY_RETRIES,
+                                          "auto-remove title query");
+  if (prep_rc != SQLITE_OK)
+    return false;
+
+  bool loaded = step_app_db_title_query(list, stmt, "auto-remove title list");
+  if (loaded)
+    log_debug("  [DB] loaded app.db auto-remove title list: %d entries",
+              list->count);
+  return loaded;
+}
+
 static bool load_app_db_blocked_uninstall_ppsa_list(struct AppDbTitleList *list) {
   free_app_db_title_list(list);
 
@@ -444,8 +472,10 @@ static bool load_app_db_blocked_uninstall_ppsa_list(struct AppDbTitleList *list)
 void invalidate_app_db_title_cache(void) {
   pthread_mutex_lock(&g_app_db_mutex);
   g_app_db_title_cache_ready = false;
+  g_app_db_auto_remove_cache_ready = false;
   g_app_db_blocked_uninstall_ppsa_cache_ready = false;
   g_app_db_title_cache_mtime = 0;
+  g_app_db_auto_remove_cache_mtime = 0;
   g_app_db_blocked_uninstall_ppsa_cache_mtime = 0;
   pthread_mutex_unlock(&g_app_db_mutex);
 }
@@ -470,34 +500,54 @@ static bool copy_app_db_title_list(struct AppDbTitleList *dst,
   return true;
 }
 
+typedef bool (*load_app_db_title_list_fn)(struct AppDbTitleList *list);
+
+static bool get_cached_app_db_title_list(
+    struct AppDbTitleList *list_out, struct AppDbTitleList *cache,
+    bool *cache_ready, time_t *cache_mtime, load_app_db_title_list_fn load_fn) {
+  free_app_db_title_list(list_out);
+
+  struct stat st;
+  int app_db_stat_rc = stat(APP_DB_PATH, &st);
+  if (!*cache_ready ||
+      (app_db_stat_rc == 0 && *cache_mtime != st.st_mtime)) {
+    struct AppDbTitleList fresh = {0};
+    if (app_db_stat_rc == 0 && load_fn(&fresh)) {
+      free_app_db_title_list(cache);
+      *cache = fresh;
+      *cache_mtime = st.st_mtime;
+      *cache_ready = true;
+    } else {
+      free_app_db_title_list(&fresh);
+      if (!*cache_ready)
+        return false;
+    }
+  }
+
+  return copy_app_db_title_list(list_out, cache);
+}
+
 bool get_app_db_title_list_cached(struct AppDbTitleList *list_out) {
   if (!list_out)
     return false;
 
-  free_app_db_title_list(list_out);
   pthread_mutex_lock(&g_app_db_mutex);
+  bool copied = get_cached_app_db_title_list(
+      list_out, &g_app_db_title_cache, &g_app_db_title_cache_ready,
+      &g_app_db_title_cache_mtime, load_app_db_title_list);
+  pthread_mutex_unlock(&g_app_db_mutex);
+  return copied;
+}
 
-  struct stat st;
-  int app_db_stat_rc = stat(APP_DB_PATH, &st);
+bool get_app_db_auto_remove_title_list(struct AppDbTitleList *list_out) {
+  if (!list_out)
+    return false;
 
-  if (!g_app_db_title_cache_ready ||
-      (app_db_stat_rc == 0 && g_app_db_title_cache_mtime != st.st_mtime)) {
-    struct AppDbTitleList fresh = {0};
-    if (app_db_stat_rc == 0 && load_app_db_title_list(&fresh)) {
-      free_app_db_title_list(&g_app_db_title_cache);
-      g_app_db_title_cache = fresh;
-      g_app_db_title_cache_mtime = st.st_mtime;
-      g_app_db_title_cache_ready = true;
-    } else {
-      free_app_db_title_list(&fresh);
-      if (!g_app_db_title_cache_ready) {
-        pthread_mutex_unlock(&g_app_db_mutex);
-        return false;
-      }
-    }
-  }
-
-  bool copied = copy_app_db_title_list(list_out, &g_app_db_title_cache);
+  pthread_mutex_lock(&g_app_db_mutex);
+  bool copied = get_cached_app_db_title_list(
+      list_out, &g_app_db_auto_remove_cache,
+      &g_app_db_auto_remove_cache_ready, &g_app_db_auto_remove_cache_mtime,
+      load_app_db_auto_remove_title_list);
   pthread_mutex_unlock(&g_app_db_mutex);
   return copied;
 }
@@ -506,33 +556,12 @@ bool get_app_db_blocked_uninstall_ppsa_list(struct AppDbTitleList *list_out) {
   if (!list_out)
     return false;
 
-  free_app_db_title_list(list_out);
   pthread_mutex_lock(&g_app_db_mutex);
-
-  struct stat st;
-  int app_db_stat_rc = stat(APP_DB_PATH, &st);
-
-  if (!g_app_db_blocked_uninstall_ppsa_cache_ready ||
-      (app_db_stat_rc == 0 &&
-       g_app_db_blocked_uninstall_ppsa_cache_mtime != st.st_mtime)) {
-    struct AppDbTitleList fresh = {0};
-    if (app_db_stat_rc == 0 &&
-        load_app_db_blocked_uninstall_ppsa_list(&fresh)) {
-      free_app_db_title_list(&g_app_db_blocked_uninstall_ppsa_cache);
-      g_app_db_blocked_uninstall_ppsa_cache = fresh;
-      g_app_db_blocked_uninstall_ppsa_cache_mtime = st.st_mtime;
-      g_app_db_blocked_uninstall_ppsa_cache_ready = true;
-    } else {
-      free_app_db_title_list(&fresh);
-      if (!g_app_db_blocked_uninstall_ppsa_cache_ready) {
-        pthread_mutex_unlock(&g_app_db_mutex);
-        return false;
-      }
-    }
-  }
-
-  bool loaded =
-      copy_app_db_title_list(list_out, &g_app_db_blocked_uninstall_ppsa_cache);
+  bool loaded = get_cached_app_db_title_list(
+      list_out, &g_app_db_blocked_uninstall_ppsa_cache,
+      &g_app_db_blocked_uninstall_ppsa_cache_ready,
+      &g_app_db_blocked_uninstall_ppsa_cache_mtime,
+      load_app_db_blocked_uninstall_ppsa_list);
   pthread_mutex_unlock(&g_app_db_mutex);
   return loaded;
 }

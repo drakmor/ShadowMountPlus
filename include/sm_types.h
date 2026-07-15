@@ -109,6 +109,7 @@ typedef struct runtime_config {
   bool mount_read_only;
   bool force_mount;
   bool app_install_all_enabled;
+  bool auto_remove_missing_games;
   bool backport_fakelib_enabled;
   bool global_fakelib_enabled;
   bool global_fakelib_mount_first;
@@ -123,6 +124,7 @@ typedef struct runtime_config {
   uint32_t scan_depth;
   uint32_t scan_interval_us;
   uint32_t stability_wait_seconds;
+  uint32_t auto_remove_missing_delay_seconds;
   uint32_t kstuff_pause_delay_image_seconds;
   uint32_t kstuff_pause_delay_direct_seconds;
   attach_backend_t exfat_backend;

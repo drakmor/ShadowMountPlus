@@ -22,6 +22,8 @@ typedef struct {
 bool sm_image_index_needs_scan(const char *path, const struct stat *st,
                                const struct AppDbTitleList *app_db_titles,
                                bool app_db_titles_ready);
+// Return true when a title is mapped to an existing backing image.
+bool sm_image_index_has_source_for_title(const char *title_id);
 // Start a new fingerprint generation before mounting an image.
 void sm_image_index_begin_scan(const char *path, const struct stat *st);
 // Associate a discovered mounted game with its outer backing image. Returns

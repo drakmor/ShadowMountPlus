@@ -22,6 +22,8 @@ void free_app_db_title_list(struct AppDbTitleList *list);
 void invalidate_app_db_title_cache(void);
 // Copy the cached app.db title list into caller-owned storage, loading it if needed.
 bool get_app_db_title_list_cached(struct AppDbTitleList *list_out);
+// Copy titles whose metadata path matches /user/app/PPSA*/sce_sys.
+bool get_app_db_auto_remove_title_list(struct AppDbTitleList *list_out);
 // Copy the cached PPSA titles that app.db marks as not uninstallable.
 bool get_app_db_blocked_uninstall_ppsa_list(struct AppDbTitleList *list_out);
 

@@ -232,6 +232,26 @@ bool sm_image_index_needs_scan(const char *path, const struct stat *st,
   return needs_scan;
 }
 
+bool sm_image_index_has_source_for_title(const char *title_id) {
+  if (!title_id || title_id[0] == '\0')
+    return false;
+
+  bool found = false;
+  pthread_mutex_lock(&g_image_index_mutex);
+  load_index();
+  for (int i = 0; i < MAX_IMAGE_TITLES; ++i) {
+    const image_index_title_t *title = &g_image_titles[i];
+    if (!title->valid || strcmp(title->title_id, title_id) != 0)
+      continue;
+
+    const image_index_entry_t *entry = &g_image_index[title->image_index];
+    found = entry->valid && path_exists(entry->path);
+    break;
+  }
+  pthread_mutex_unlock(&g_image_index_mutex);
+  return found;
+}
+
 void sm_image_index_begin_scan(const char *path, const struct stat *st) {
   pthread_mutex_lock(&g_image_index_mutex);
   load_index();

@@ -23,6 +23,13 @@ void cache_game_entry(const char *path, const char *title_id,
 void prune_game_cache(void);
 // Drop invalid or stale entries that belong to a specific scan root.
 void prune_game_cache_for_root(const char *root);
+// Cancel pending removal when the same title is discovered at a valid source.
+void note_game_cache_source_seen(const char *path, const char *title_id,
+                                 const char *title_name);
+// Reconcile app.db auto-remove candidates and uninstall expired missing entries.
+void reconcile_missing_app_db_games(void);
+// Reset pending missing timers after relevant runtime config changes.
+void reset_missing_game_cache_timers(void);
 // Look up a cached game entry by path or title ID.
 bool find_cached_game(const char *path, const char *title_id,
                       const char **existing_path_out);

@@ -59,6 +59,8 @@ Supported keys (all optional):
 - `mount_read_only=1|0` (default: `1`)
 - `force_mount=1|0` (mounting even damaged file systems; default: `0`)
 - `app_install_all=1|0` (`1` stages new titles and submits them through the stock batch `sceAppInstUtilAppInstallAll`; default: `0` on every firmware. On FW `12.00+`, the default per-title path is provided by the SceShellCore TitleDir bridge.)
+- `auto_remove_missing_games=1|0` (`1` automatically removes games from the system library when their source is no longer available; default: `0`)
+- `auto_remove_missing_delay_seconds=<1..86400>` (how long a source must remain unavailable before removal; default: `300`)
 - `image_ro=<image_filename>` (repeatable; force read-only mode for this image filename)
 - `image_rw=<image_filename>` (repeatable; force read-write mode for this image filename)
 - `image_sector=<image_filename>:<sector_size>` (repeatable; force sector size for this image filename)
@@ -121,6 +123,7 @@ Scan path behavior:
 - If `recursive_scan=1` is set, ShadowMount+ forces `scan_depth=2`.
 - Full scan loop runs every `scan_interval_seconds` (default: `15`).
 - Sources newer than `stability_wait_seconds` are deferred until stable (default: `10`).
+- With `auto_remove_missing_games=1`, a game is removed from the system library only after its source remains unavailable for `auto_remove_missing_delay_seconds`. If the source becomes available again before removal, the pending removal is cancelled.
 - Direct folder installs use `<game>/sce_sys` for this check; image and backport sources use the target path itself.
 
 Backport overlay behavior:

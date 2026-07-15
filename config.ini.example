@@ -46,6 +46,18 @@
 # Default: 0 on FW below 12.00, forced to 1 on FW 12.00 and newer
 # app_install_all=0
 
+# Automatically remove games from the system library when their source
+# is no longer available:
+# 1/true/yes/on  -> remove after the configured missing delay
+# 0/false/no/off -> keep the registration (default)
+# Default: 0
+# auto_remove_missing_games=0
+
+# How long a source must remain unavailable before removal (seconds),
+# range: 1..86400
+# Default: 300
+# auto_remove_missing_delay_seconds=300
+
 # Scan depth relative to each scan root:
 # 1 -> scan only first-level subdirectories
 # 2 -> also scan one additional nested level
