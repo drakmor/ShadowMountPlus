@@ -22,8 +22,8 @@ _Static_assert(sizeof(sm_shellcore_request_t) == 40,
                "unexpected ShellCore request size");
 _Static_assert(offsetof(sm_shellcore_request_t, payload) == 8,
                "unexpected ShellCore request payload offset");
-_Static_assert(offsetof(sm_shellcore_request_t, payload.workspace.app_id) == 8,
-               "unexpected ShellCore workspace app id offset");
+_Static_assert(offsetof(sm_shellcore_request_t, payload.app_exit.app_id) == 8,
+               "unexpected ShellCore app-exit app id offset");
 _Static_assert(sizeof(sm_shellcore_response_t) == 4,
                "unexpected ShellCore response size");
 
@@ -48,6 +48,9 @@ static shellcore_service_state_t g_service = {
     .listen_fd = -1,
     .client_fd = -1,
 };
+
+#define SHELLCORE_RELEASE_MAX_ATTEMPTS 5u
+#define SHELLCORE_RELEASE_RETRY_DELAY_US 150000u
 
 static int claim_prepared_title(const char *title_id, bool launch_request,
                                 bool *claimed_out) {
@@ -132,6 +135,13 @@ static void end_runtime_release(void) {
   pthread_mutex_lock(&g_service.mutex);
   g_service.release_in_progress = false;
   pthread_mutex_unlock(&g_service.mutex);
+}
+
+static bool shellcore_service_stopping(void) {
+  pthread_mutex_lock(&g_service.mutex);
+  bool stopping = g_service.stop_requested;
+  pthread_mutex_unlock(&g_service.mutex);
+  return stopping;
 }
 
 static bool find_required_image_layer(const char *root,
@@ -361,18 +371,47 @@ static bool release_title_runtime(const char *title_id,
     errno = begin_status;
     return false;
   }
-  runtime_mount_state_lock();
   log_debug("  [SHELLCORE] runtime release start: %s", title_id);
-  bool released = unmount_title_runtime_layers(title_id);
-  if (released)
-    released = release_backing_image(title_id);
-  runtime_mount_state_unlock();
+  bool released = false;
+  int release_errno = 0;
+  unsigned int attempts = public_request ? 1u : SHELLCORE_RELEASE_MAX_ATTEMPTS;
+  unsigned int attempt = 0;
+  for (; attempt < attempts; ++attempt) {
+    bool diagnose_busy = attempt + 1u == attempts;
+    runtime_mount_state_lock();
+    released = diagnose_busy
+                   ? unmount_title_runtime_layers(title_id)
+                   : unmount_title_runtime_layers_quiet(title_id);
+    if (released)
+      released = release_backing_image(title_id);
+    release_errno = released ? 0 : errno;
+    runtime_mount_state_unlock();
+
+    if (released || release_errno != EBUSY || attempt + 1u == attempts ||
+        shellcore_service_stopping()) {
+      break;
+    }
+    if (attempt == 0) {
+      log_debug("  [SHELLCORE] runtime release busy; fast retry armed: %s "
+                "attempts=%u delay_ms=%u",
+                title_id, attempts - 1u,
+                SHELLCORE_RELEASE_RETRY_DELAY_US / 1000u);
+    }
+    (void)sceKernelUsleep(SHELLCORE_RELEASE_RETRY_DELAY_US);
+  }
+  if (released && attempt > 0) {
+    log_debug("  [SHELLCORE] runtime release completed after retry: %s "
+              "attempt=%u",
+              title_id, attempt + 1u);
+  }
   // The lifecycle owner is gone even when a short-lived ShellCore sandbox
   // nullfs still pins the title stack. Leaving the title marked as prepared
   // would block scanner cleanup forever. The intact stack remains discoverable
   // through mount.lnk and is retried by the normal full-scan cleanup cycle.
   clear_prepared_title(title_id);
   end_runtime_release();
+  if (!released && release_errno != 0)
+    errno = release_errno;
   return released;
 }
 
@@ -413,7 +452,7 @@ bool sm_shellcore_service_note_game_exit(const char *title_id) {
 bool sm_shellcore_service_has_prepared_mount(void) {
   pthread_mutex_lock(&g_service.mutex);
   // Keep scanner cleanup blocked after process exit as well. Only the
-  // post-unmountWorkspace event (or the explicit no-hook fallback) owns the
+  // post-onAppExit event (or the explicit no-hook fallback) owns the
   // transition that clears this state and releases the runtime stack.
   bool prepared = g_service.prepared_title_id[0] != '\0';
   pthread_mutex_unlock(&g_service.mutex);
@@ -442,28 +481,29 @@ static int handle_launch_failed_request(const char *title_id) {
   return sm_shellcore_release_title_runtime(title_id) ? 0 : EBUSY;
 }
 
-static int handle_workspace_unmounted(uint32_t app_id) {
+static bool resolve_app_exit_title(uint32_t app_id,
+                                   char title_id[MAX_TITLE_ID]) {
   if (app_id == 0)
-    return 0;
+    return false;
 
-  char title_id[MAX_TITLE_ID] = {0};
   pthread_mutex_lock(&g_service.mutex);
   if (g_service.prepared_app_id == app_id &&
       g_service.prepared_title_id[0] != '\0') {
-    (void)strlcpy(title_id, g_service.prepared_title_id, sizeof(title_id));
+    (void)strlcpy(title_id, g_service.prepared_title_id, MAX_TITLE_ID);
   }
   pthread_mutex_unlock(&g_service.mutex);
   if (title_id[0] == '\0')
-    return 0;
+    return false;
 
-  log_debug("  [SHELLCORE] unmountWorkspace complete: %s app_id=0x%08X",
+  log_debug("  [SHELLCORE] onAppExit cleanup complete: %s app_id=0x%08X",
             title_id, app_id);
-  return sm_shellcore_release_title_runtime(title_id) ? 0 : EBUSY;
+  return true;
 }
 
 static void handle_client(int fd) {
   sm_shellcore_request_t request;
   sm_shellcore_response_t response;
+  char release_title_id[MAX_TITLE_ID] = {0};
   if (!sm_socket_read_full(fd, &request, sizeof(request)))
     return;
   if (request.magic != SM_SHELLCORE_PROTOCOL_MAGIC ||
@@ -477,13 +517,16 @@ static void handle_client(int fd) {
     response.status = handle_launch_request(request.payload.title_id);
   } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED) {
     response.status = handle_launch_failed_request(request.payload.title_id);
-  } else if (request.operation == SM_SHELLCORE_REQUEST_WORKSPACE_UNMOUNTED) {
-    response.status =
-        handle_workspace_unmounted(request.payload.workspace.app_id);
+  } else if (request.operation == SM_SHELLCORE_REQUEST_APP_EXITED) {
+    (void)resolve_app_exit_title(request.payload.app_exit.app_id,
+                                 release_title_id);
+    response.status = 0;
   } else {
     response.status = ENOTSUP;
   }
   (void)sm_socket_write_full(fd, &response, sizeof(response));
+  if (release_title_id[0] != '\0')
+    (void)sm_shellcore_release_title_runtime(release_title_id);
 }
 
 static void *service_thread_main(void *arg) {

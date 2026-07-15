@@ -476,11 +476,11 @@ static void handle_game_exit(pid_t pid) {
   sm_kstuff_game_on_exit(pid);
   if (had_active_title) {
     if (sm_shellcore_service_note_game_exit(title_id)) {
-      if (sm_shellcore_workspace_hook_active()) {
-        log_debug("  [SHELLCORE] runtime release awaiting unmountWorkspace: %s",
+      if (sm_shellcore_app_exit_hook_active()) {
+        log_debug("  [SHELLCORE] runtime release awaiting onAppExit: %s",
                   title_id);
       } else if (!sm_shellcore_release_title_runtime(title_id)) {
-        log_debug("  [SHELLCORE] no workspace hook; runtime release deferred: %s",
+        log_debug("  [SHELLCORE] no app-exit hook; runtime release deferred: %s",
                   title_id);
       }
     }

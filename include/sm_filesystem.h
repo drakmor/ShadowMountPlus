@@ -42,6 +42,8 @@ bool mount_title_nullfs(const char *title_id, const char *src_path);
 bool rollback_title_nullfs_mount(const char *title_id, const char *src_path);
 // Drop runtime layers for a title while preserving its metadata/link files.
 bool unmount_title_runtime_layers(const char *title_id);
+// Same operation without expected EBUSY diagnostics during a bounded retry.
+bool unmount_title_runtime_layers_quiet(const char *title_id);
 // Release every managed title layer while preserving link metadata.
 bool unmount_all_title_runtime_layers(void);
 // Reconcile the title mount stack against the expected source/backport state.

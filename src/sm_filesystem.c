@@ -11,6 +11,8 @@
 #include "sm_paths.h"
 
 static bool unmount_controlled_mount_stack(const char *path);
+static bool unmount_controlled_mount_stack_impl(const char *path,
+                                                bool diagnose_busy);
 
 // --- FILESYSTEM ---
 bool is_installed(const char *title_id) {
@@ -593,7 +595,8 @@ static bool inspect_title_stack(const char *title_id, const char *source_path,
   return true;
 }
 
-static bool unmount_top_controlled_layer(const char *path) {
+static bool unmount_top_controlled_layer_impl(const char *path,
+                                              bool diagnose_busy) {
   struct statfs mount_st;
   if (!get_top_mount(path, &mount_st))
     return true;
@@ -611,13 +614,19 @@ static bool unmount_top_controlled_layer(const char *path) {
   if (unmount(path, 0) == 0 || errno == ENOENT || errno == EINVAL)
     return true;
   int unmount_errno = errno;
-  if (unmount_errno == EBUSY)
+  if (unmount_errno == EBUSY && diagnose_busy)
     sm_mount_diag_log_busy(path);
 
-  log_debug("  [LINK] unmount deferred for %s: %s", path,
-            strerror(unmount_errno));
+  if (unmount_errno != EBUSY || diagnose_busy) {
+    log_debug("  [LINK] unmount deferred for %s: %s", path,
+              strerror(unmount_errno));
+  }
   errno = unmount_errno;
   return false;
+}
+
+static bool unmount_top_controlled_layer(const char *path) {
+  return unmount_top_controlled_layer_impl(path, true);
 }
 
 static bool title_stack_top_is_managed(const title_mount_state_t *state) {
@@ -638,7 +647,8 @@ bool rollback_title_nullfs_mount(const char *title_id, const char *src_path) {
   return true;
 }
 
-bool unmount_title_runtime_layers(const char *title_id) {
+static bool unmount_title_runtime_layers_impl(const char *title_id,
+                                              bool diagnose_busy) {
   if (!title_id || title_id[0] == '\0')
     return false;
 
@@ -647,10 +657,18 @@ bool unmount_title_runtime_layers(const char *title_id) {
   if (written < 0 || (size_t)written >= sizeof(path))
     return false;
 
-  if (!unmount_controlled_mount_stack(path))
+  if (!unmount_controlled_mount_stack_impl(path, diagnose_busy))
     return false;
   log_debug("  [LINK] runtime layers released: %s", title_id);
   return true;
+}
+
+bool unmount_title_runtime_layers(const char *title_id) {
+  return unmount_title_runtime_layers_impl(title_id, true);
+}
+
+bool unmount_title_runtime_layers_quiet(const char *title_id) {
+  return unmount_title_runtime_layers_impl(title_id, false);
 }
 
 static bool unmount_managed_title_entry(
@@ -763,17 +781,22 @@ bool mount_backport_overlay(const char *mount_point,
   return false;
 }
 
-static bool unmount_controlled_mount_stack(const char *path) {
+static bool unmount_controlled_mount_stack_impl(const char *path,
+                                                bool diagnose_busy) {
   for (int i = 0; i < MAX_LAYERED_UNMOUNT_ATTEMPTS * 4; i++) {
     struct statfs mount_st;
     if (!get_top_mount(path, &mount_st))
       return true;
-    if (!unmount_top_controlled_layer(path))
+    if (!unmount_top_controlled_layer_impl(path, diagnose_busy))
       return false;
   }
 
   struct statfs mount_st;
   return !get_top_mount(path, &mount_st);
+}
+
+static bool unmount_controlled_mount_stack(const char *path) {
+  return unmount_controlled_mount_stack_impl(path, true);
 }
 
 static void unmount_mount_point_for_recovery(const char *path) {

@@ -8,8 +8,7 @@
 bool sm_shellcore_service_start(void);
 void sm_shellcore_service_stop(void);
 
-// Release transient title/image mounts after launch failure or ShellCore
-// workspace teardown.
+// Release transient title/image mounts after launch failure or app exit.
 bool sm_shellcore_release_title_runtime(const char *title_id);
 // Public API entry points. Return 0 or a positive errno value.
 int sm_shellcore_mount_title_runtime(const char *title_id);
@@ -17,7 +16,7 @@ int sm_shellcore_unmount_title_runtime(const char *title_id);
 // Bind the prepared managed title to the app id stored in LncApplication.
 void sm_shellcore_service_bind_prepared_app(const char *title_id,
                                             uint32_t app_id);
-// Publish process exit without tearing down the still-live ShellCore workspace.
+// Publish process exit while ShellCore finishes its own app-exit cleanup.
 // Returns true when a managed prepared title transitioned to exit-pending.
 bool sm_shellcore_service_note_game_exit(const char *title_id);
 // Ensure that a managed title has its image/nullfs/backport runtime stack.

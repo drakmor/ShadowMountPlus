@@ -9,21 +9,18 @@ from pathlib import Path
 from capstone import CS_ARCH_X86, CS_GRP_CALL, CS_GRP_JUMP, CS_MODE_64, Cs
 from capstone.x86 import X86_OP_MEM, X86_REG_RIP
 
-from generate_shellcore_offsets import ShellCore
+from generate_shellcore_offsets import ShellCore, firmware_key
+from generate_shellcore_offsets_from_files import firmware_files
 
 
-def verify_firmware(path: Path) -> None:
+def verify_firmware(path: Path, firmware: int) -> None:
     shellcore = ShellCore(path)
     targets = shellcore.locate_targets()
     decoder = Cs(CS_ARCH_X86, CS_MODE_64)
     decoder.detail = True
 
-    names = ["launch_app", "unmount_workspace"]
+    names = ["launch_app", "app_exit"]
     # AppInstallAll is hooked after the public TitleDir RPC disappeared.
-    try:
-        firmware = int(path.parents[2].name.replace(".", ""), 16)
-    except ValueError:
-        firmware = 0
     if firmware >= 0x1200:
         names.append("install_all")
 
@@ -53,14 +50,27 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
     args = parser.parse_args()
+    firmware_inputs: list[tuple[int, Path]] = []
     firmware_dirs = sorted(
         path
         for path in args.root.iterdir()
         if (path / "system/vsh/SceShellCore.elf").is_file()
     )
     for firmware_dir in firmware_dirs:
-        verify_firmware(firmware_dir / "system/vsh/SceShellCore.elf")
-    print(f"verified {len(firmware_dirs)} firmware trampoline layouts")
+        firmware_inputs.append(
+            (
+                firmware_key(firmware_dir.name),
+                firmware_dir / "system/vsh/SceShellCore.elf",
+            )
+        )
+    for major, minor, path in firmware_files(args.root):
+        firmware_inputs.append((firmware_key(f"{major}.{minor:02d}"), path))
+    if not firmware_inputs:
+        raise ValueError(f"no SceShellCore firmware files under {args.root}")
+
+    for firmware, path in firmware_inputs:
+        verify_firmware(path, firmware)
+    print(f"verified {len(firmware_inputs)} firmware trampoline layouts")
     return 0
 
 

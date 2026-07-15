@@ -5,6 +5,13 @@ The generator identifies functions through semantic log strings, finds the
 containing function prologue and emits a compact firmware offset table.  It is
 intentionally independent from IDA databases so the checked-in table can be
 reproduced from unpacked firmware files.
+
+The runtime-release hook targets ``LncManager::onAppExit`` rather than an
+application/workspace destructor.  ShellCore can destroy a launch-time
+``LncApplication`` object with the live app id, so destructor hooks produce a
+false exit event while the game is still running.  ``onAppExit`` is the
+SysCore exit-event owner and returns after the firmware-specific exit cleanup
+path has run.
 """
 
 from __future__ import annotations
@@ -19,7 +26,7 @@ from capstone import CS_ARCH_X86, CS_MODE_64, Cs
 PROLOGUE = b"\x55\x48\x89\xe5"
 TARGET_NAMES = (
     "launch_app",
-    "unmount_workspace",
+    "app_exit",
     "install_title_dir",
     "install_all",
 )
@@ -54,6 +61,7 @@ class ShellCore:
                 self.executable = segment
         if self.executable is None:
             raise ValueError(f"{path}: executable PT_LOAD not found")
+        self._rip_references: list[tuple[int, int]] | None = None
 
     def file_to_virtual(self, offset: int) -> int:
         for segment in self.loads:
@@ -85,25 +93,42 @@ class ShellCore:
             offset += 1
 
     def rip_xrefs(self, targets: list[int], slop: int = 0) -> list[int]:
-        segment = self.executable
-        assert segment is not None
-        code = self.data[
-            segment.file_offset : segment.file_offset + segment.file_size
+        if self._rip_references is None:
+            segment = self.executable
+            assert segment is not None
+            code = self.data[
+                segment.file_offset : segment.file_offset + segment.file_size
+            ]
+            references: list[tuple[int, int]] = []
+            for index in range(len(code) - 7):
+                if code[index] not in (0x48, 0x4C):
+                    continue
+                if code[index + 1] not in (0x8D, 0x8B):
+                    continue
+                if code[index + 2] & 0xC7 != 0x05:
+                    continue
+                displacement = struct.unpack_from("<i", code, index + 3)[0]
+                instruction_address = segment.virtual_address + index
+                references.append(
+                    (instruction_address, instruction_address + 7 + displacement)
+                )
+            self._rip_references = references
+
+        if slop == 0:
+            exact_targets = set(targets)
+            return [
+                address
+                for address, destination in self._rip_references
+                if destination in exact_targets
+            ]
+        return [
+            address
+            for address, destination in self._rip_references
+            if any(
+                target - slop <= destination <= target + slop
+                for target in targets
+            )
         ]
-        result: list[int] = []
-        for index in range(len(code) - 7):
-            if code[index] not in (0x48, 0x4C):
-                continue
-            if code[index + 1] not in (0x8D, 0x8B):
-                continue
-            if code[index + 2] & 0xC7 != 0x05:
-                continue
-            displacement = struct.unpack_from("<i", code, index + 3)[0]
-            instruction_address = segment.virtual_address + index
-            destination = instruction_address + 7 + displacement
-            if any(target - slop <= destination <= target + slop for target in targets):
-                result.append(instruction_address)
-        return result
 
     def preceding_prologue(self, address: int, window: int = 0x40000) -> int:
         end = self.virtual_to_file(address)
@@ -120,17 +145,32 @@ class ShellCore:
             raise ValueError(f"launchApp xrefs: {launch_xrefs!r}")
         launch = self.preceding_prologue(launch_xrefs[0])
 
-        unmount_strings = self.string_addresses(
-            b"m_workspace.unmountWorkspace()", False
+        app_exit_strings = self.string_addresses(
+            b"[SceLncService] onAppExit() appId={0x%08x}", False
         )
-        unmount_groups = {
+        app_exit_groups = {
             self.preceding_prologue(xref)
-            for xref in self.rip_xrefs(unmount_strings, slop=8)
+            for xref in self.rip_xrefs(app_exit_strings, slop=8)
         }
-        unmount_groups.discard(launch)
-        if len(unmount_groups) != 1:
-            raise ValueError(f"unmountWorkspace candidates: {unmount_groups!r}")
-        unmount = next(iter(unmount_groups))
+        if len(app_exit_groups) != 1:
+            raise ValueError(f"onAppExit candidates: {app_exit_groups!r}")
+        app_exit = next(iter(app_exit_groups))
+
+        # Validate the candidate with an independent source-expression log.
+        # This prevents a changed format string from silently selecting an
+        # unrelated function that also logs an app id.
+        app_remove_strings = self.string_addresses(
+            b"m_app_list.remove(app);", False
+        )
+        app_remove_groups = {
+            self.preceding_prologue(xref)
+            for xref in self.rip_xrefs(app_remove_strings, slop=8)
+        }
+        if app_exit not in app_remove_groups:
+            raise ValueError(
+                "onAppExit candidate does not remove the application: "
+                f"0x{app_exit:x}, remove candidates {app_remove_groups!r}"
+            )
 
         install_strings = self.string_addresses(b"AppInstallTitleDirMain", False)
         install_groups: dict[int, int] = {}
@@ -162,7 +202,7 @@ class ShellCore:
 
         return {
             "launch_app": launch,
-            "unmount_workspace": unmount,
+            "app_exit": app_exit,
             "install_title_dir": best[0],
             "install_all": app_install_all,
         }

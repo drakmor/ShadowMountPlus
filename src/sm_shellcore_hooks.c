@@ -71,10 +71,10 @@ int kernel_dynlib_obj(pid_t pid, uint32_t handle, shellcore_dynlib_obj_t *obj);
 extern const uint8_t sm_shellcore_bridge_blob_start[];
 extern const uint8_t sm_shellcore_bridge_blob_end[];
 extern const uint8_t sm_shellcore_bridge_launch_hook[];
-extern const uint8_t sm_shellcore_bridge_unmount_hook[];
+extern const uint8_t sm_shellcore_bridge_app_exit_hook[];
 extern const uint8_t sm_shellcore_bridge_install_all_hook[];
 extern const uint8_t sm_shellcore_bridge_launch_trampoline[];
-extern const uint8_t sm_shellcore_bridge_unmount_trampoline[];
+extern const uint8_t sm_shellcore_bridge_app_exit_trampoline[];
 extern const uint8_t sm_shellcore_bridge_install_all_trampoline[];
 extern const uint8_t sm_shellcore_bridge_install_title_dir[];
 extern const uint8_t sm_shellcore_bridge_install_armed[];
@@ -260,12 +260,12 @@ static bool install_hooks_for_pid(pid_t pid) {
                                 : SHELLCORE_BASE_HOOK_COUNT;
   uintptr_t targets[SHELLCORE_MAX_HOOK_COUNT] = {
       remote.targets[SM_SHELLCORE_TARGET_LAUNCH_APP],
-      remote.targets[SM_SHELLCORE_TARGET_UNMOUNT_WORKSPACE],
+      remote.targets[SM_SHELLCORE_TARGET_APP_EXIT],
       remote.targets[SM_SHELLCORE_TARGET_INSTALL_ALL],
   };
   sm_shellcore_target_t target_ids[SHELLCORE_MAX_HOOK_COUNT] = {
       SM_SHELLCORE_TARGET_LAUNCH_APP,
-      SM_SHELLCORE_TARGET_UNMOUNT_WORKSPACE,
+      SM_SHELLCORE_TARGET_APP_EXIT,
       SM_SHELLCORE_TARGET_INSTALL_ALL,
   };
 
@@ -290,7 +290,7 @@ static bool install_hooks_for_pid(pid_t pid) {
 
   size_t cursor = blob_size;
   uintptr_t launch_trampoline = 0;
-  uintptr_t unmount_trampoline = 0;
+  uintptr_t app_exit_trampoline = 0;
   uintptr_t install_all_trampoline = 0;
   if (!append_trampoline(bridge, bridge_capacity, &cursor, g_hooks.original[0],
                          g_hooks.original_size[0],
@@ -303,11 +303,11 @@ static bool install_hooks_for_pid(pid_t pid) {
   if (!append_trampoline(bridge, bridge_capacity, &cursor, g_hooks.original[1],
                          g_hooks.original_size[1],
                          targets[1] + g_hooks.original_size[1], object.eh_frame,
-                         &unmount_trampoline)) {
+                         &app_exit_trampoline)) {
     goto done;
   }
-  set_bridge_pointer(bridge, sm_shellcore_bridge_unmount_trampoline,
-                     unmount_trampoline);
+  set_bridge_pointer(bridge, sm_shellcore_bridge_app_exit_trampoline,
+                     app_exit_trampoline);
   if (install_hook_enabled) {
     if (!append_trampoline(bridge, bridge_capacity, &cursor,
                            g_hooks.original[2], g_hooks.original_size[2],
@@ -335,8 +335,8 @@ static bool install_hooks_for_pid(pid_t pid) {
   uintptr_t launch_hook =
       object.eh_frame + (uintptr_t)(sm_shellcore_bridge_launch_hook -
                                     sm_shellcore_bridge_blob_start);
-  uintptr_t unmount_hook =
-      object.eh_frame + (uintptr_t)(sm_shellcore_bridge_unmount_hook -
+  uintptr_t app_exit_hook =
+      object.eh_frame + (uintptr_t)(sm_shellcore_bridge_app_exit_hook -
                                     sm_shellcore_bridge_blob_start);
   uintptr_t install_all_hook =
       object.eh_frame +
@@ -344,7 +344,7 @@ static bool install_hooks_for_pid(pid_t pid) {
                   sm_shellcore_bridge_blob_start);
   if (!patch_remote_jump(pid, targets[0], launch_hook,
                          g_hooks.original_size[0]) ||
-      !patch_remote_jump(pid, targets[1], unmount_hook,
+      !patch_remote_jump(pid, targets[1], app_exit_hook,
                          g_hooks.original_size[1]) ||
       (install_hook_enabled &&
        !patch_remote_jump(pid, targets[2], install_all_hook,
@@ -360,7 +360,7 @@ static bool install_hooks_for_pid(pid_t pid) {
   g_hooks.installed = true;
   ok = true;
   log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld lifecycle=1 "
-            "workspace=1 install=%d",
+            "app_exit=1 install=%d",
             remote.offsets->name, (long)pid, install_hook_enabled ? 1 : 0);
   goto done;
 
@@ -417,7 +417,7 @@ void sm_shellcore_hooks_stop(void) {
   pthread_mutex_unlock(&g_install_mutex);
 }
 
-bool sm_shellcore_workspace_hook_active(void) {
+bool sm_shellcore_app_exit_hook_active(void) {
   int saved_errno = errno;
   pthread_mutex_lock(&g_install_mutex);
   bool active = g_hooks.installed && g_hooks.remote.pid > 0;

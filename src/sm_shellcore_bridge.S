@@ -4,10 +4,10 @@
     .global sm_shellcore_bridge_blob_start
     .global sm_shellcore_bridge_blob_end
     .global sm_shellcore_bridge_launch_hook
-    .global sm_shellcore_bridge_unmount_hook
+    .global sm_shellcore_bridge_app_exit_hook
     .global sm_shellcore_bridge_install_all_hook
     .global sm_shellcore_bridge_launch_trampoline
-    .global sm_shellcore_bridge_unmount_trampoline
+    .global sm_shellcore_bridge_app_exit_trampoline
     .global sm_shellcore_bridge_install_all_trampoline
     .global sm_shellcore_bridge_install_title_dir
     .global sm_shellcore_bridge_install_armed
@@ -70,15 +70,14 @@ sm_shellcore_bridge_launch_hook:
 
     .p2align 4
 /*
- * LncApplication::unmountWorkspace() first removes FsSandbox mappings and
- * tears down m_workspace. Notify ShadowMount only after the original method
- * returns. The first LncApplication dword is m_appId (also passed by callers
- * to endAppMount), which lets the service reject unrelated application exits.
+ * LncManager::onAppExit(uint32_t app_id) owns the SysCore application-exit
+ * event. Notify ShadowMount only after the original method returns, after its
+ * firmware-specific exit cleanup. The app id is the second argument.
  */
-sm_shellcore_bridge_unmount_hook:
+sm_shellcore_bridge_app_exit_hook:
     pushq %rbx
-    movl (%rdi), %ebx
-    call *sm_shellcore_bridge_unmount_trampoline(%rip)
+    movl %esi, %ebx
+    call *sm_shellcore_bridge_app_exit_trampoline(%rip)
     pushq %rax
     subq $8, %rsp
     movl $3, %edi
@@ -196,7 +195,7 @@ sm_shellcore_bridge_exchange:
     .p2align 3
 sm_shellcore_bridge_launch_trampoline:
     .quad 0
-sm_shellcore_bridge_unmount_trampoline:
+sm_shellcore_bridge_app_exit_trampoline:
     .quad 0
 sm_shellcore_bridge_install_all_trampoline:
     .quad 0
