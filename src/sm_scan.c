@@ -25,11 +25,13 @@
 
 typedef struct {
   char discovered_param_roots[MAX_PENDING][MAX_PATH];
+  char found_titles[MAX_PENDING][MAX_TITLE_ID];
   char checked_appmeta_titles[MAX_PENDING][MAX_TITLE_ID];
   char blocked_ppsa_uninstall_titles[MAX_PENDING][MAX_TITLE_ID];
   bool checked_appmeta_present[MAX_PENDING];
   int checked_appmeta_count;
   int blocked_ppsa_uninstall_count;
+  int found_title_count;
 } scan_workspace_t;
 
 // Reuse the largest transient scan buffer instead of placing ~512 KiB of path
@@ -39,6 +41,23 @@ static scan_workspace_t g_scan_workspace;
 static void reset_scan_workspace(void) {
   g_scan_workspace.checked_appmeta_count = 0;
   g_scan_workspace.blocked_ppsa_uninstall_count = 0;
+  g_scan_workspace.found_title_count = 0;
+}
+
+static void note_found_title(const char *title_id) {
+  if (!title_id || title_id[0] == '\0')
+    return;
+
+  for (int i = 0; i < g_scan_workspace.found_title_count; i++) {
+    if (strcmp(g_scan_workspace.found_titles[i], title_id) == 0)
+      return;
+  }
+  if (g_scan_workspace.found_title_count >= MAX_PENDING)
+    return;
+
+  int slot = g_scan_workspace.found_title_count++;
+  (void)strlcpy(g_scan_workspace.found_titles[slot], title_id,
+                sizeof(g_scan_workspace.found_titles[slot]));
 }
 
 static bool blocked_ppsa_uninstall_requested(const char *title_id) {
@@ -381,6 +400,8 @@ static bool try_collect_candidate_for_directory(
   if (probe_result == DIRECTORY_CANDIDATE_DESCEND)
     return false;
 
+  note_found_title(info.title_id);
+
   note_game_cache_source_seen(full_path, info.title_id, info.title_name);
 
   if (!sm_image_index_record_game(full_path, info.title_id) &&
@@ -503,8 +524,9 @@ static bool collect_candidate_image_visit(const char *image_path,
     return true;
   bool persistent_image = !is_under_image_mount_base(image_path);
   if (persistent_image &&
-      !sm_image_index_needs_scan(image_path, &image_st, ctx->app_db->titles,
-                                 ctx->app_db->titles_ready)) {
+      sm_image_index_visit_ready_titles(
+          image_path, &image_st, ctx->app_db->titles,
+          ctx->app_db->titles_ready, note_found_title)) {
     return true;
   }
   bool image_unstable = false;
@@ -600,9 +622,11 @@ static void collect_scan_candidates_from_manual_path(
   const char *name = get_filename_component(manual_path);
   if (S_ISREG(st.st_mode) &&
       is_supported_image_file_path(manual_path, name)) {
-    if (!sm_image_index_needs_scan(manual_path, &st, app_db->titles,
-                                   app_db->titles_ready))
+    if (sm_image_index_visit_ready_titles(
+            manual_path, &st, app_db->titles, app_db->titles_ready,
+            note_found_title)) {
       return;
+    }
     bool image_unstable = false;
     if (!maybe_mount_image_file(manual_path, name, &image_unstable)) {
       if (image_unstable && unstable_found_out)
@@ -932,7 +956,7 @@ int collect_scan_candidates_for_scan_root(const char *scan_root,
                                     unstable_found_out);
 
   if (total_found_out)
-    *total_found_out = discovered_param_root_count;
+    *total_found_out = g_scan_workspace.found_title_count;
   sm_image_index_flush();
   free_app_db_title_list(&blocked_ppsa_titles);
   free_app_db_title_list(&app_db_titles);
@@ -982,7 +1006,7 @@ int collect_scan_candidates(scan_candidate_t *candidates, int max_candidates,
                                 blocked_ppsa_titles_ready);
 
   if (total_found_out)
-    *total_found_out = discovered_param_root_count;
+    *total_found_out = g_scan_workspace.found_title_count;
   sm_image_index_flush();
   free_app_db_title_list(&blocked_ppsa_titles);
   free_app_db_title_list(&app_db_titles);

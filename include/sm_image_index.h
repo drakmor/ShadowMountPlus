@@ -10,6 +10,8 @@
 
 struct AppDbTitleList;
 
+typedef void (*sm_image_index_title_visitor_t)(const char *title_id);
+
 typedef struct {
   char path[MAX_PATH];
   int64_t size;
@@ -18,10 +20,12 @@ typedef struct {
   bool complete;
 } sm_image_index_snapshot_entry_t;
 
-// Return true when an image must be opened to discover/install its contents.
-bool sm_image_index_needs_scan(const char *path, const struct stat *st,
-                               const struct AppDbTitleList *app_db_titles,
-                               bool app_db_titles_ready);
+// Return true when a complete unchanged index entry can be reused instead of
+// opening the image, visiting every retained title ID before returning.
+bool sm_image_index_visit_ready_titles(
+    const char *path, const struct stat *st,
+    const struct AppDbTitleList *app_db_titles, bool app_db_titles_ready,
+    sm_image_index_title_visitor_t visitor);
 // Return true when a title is mapped to an existing backing image.
 bool sm_image_index_has_source_for_title(const char *title_id);
 // Start a new fingerprint generation before mounting an image.

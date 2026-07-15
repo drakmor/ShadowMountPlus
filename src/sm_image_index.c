@@ -218,18 +218,29 @@ static bool cached_titles_ready(int entry_index,
   return true;
 }
 
-bool sm_image_index_needs_scan(const char *path, const struct stat *st,
-                               const struct AppDbTitleList *app_db_titles,
-                               bool app_db_titles_ready) {
+bool sm_image_index_visit_ready_titles(
+    const char *path, const struct stat *st,
+    const struct AppDbTitleList *app_db_titles, bool app_db_titles_ready,
+    sm_image_index_title_visitor_t visitor) {
+  if (!path || !st || !visitor)
+    return false;
+
   pthread_mutex_lock(&g_image_index_mutex);
   load_index();
   int entry_index = find_entry(path);
-  bool needs_scan = entry_index < 0 || !g_image_index[entry_index].complete ||
-                    !stamp_matches(&g_image_index[entry_index], st) ||
-                    !cached_titles_ready(entry_index, app_db_titles,
-                                         app_db_titles_ready);
+  bool ready = entry_index >= 0 && g_image_index[entry_index].complete &&
+               stamp_matches(&g_image_index[entry_index], st) &&
+               cached_titles_ready(entry_index, app_db_titles,
+                                   app_db_titles_ready);
+  if (ready) {
+    for (int i = 0; i < MAX_IMAGE_TITLES; ++i) {
+      const image_index_title_t *title = &g_image_titles[i];
+      if (title->valid && title->image_index == (uint16_t)entry_index)
+        visitor(title->title_id);
+    }
+  }
   pthread_mutex_unlock(&g_image_index_mutex);
-  return needs_scan;
+  return ready;
 }
 
 bool sm_image_index_has_source_for_title(const char *title_id) {
