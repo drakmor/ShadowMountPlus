@@ -29,6 +29,24 @@ static bool game_cache_source_exists(const struct GameCache *entry) {
   return entry->path[0] != '\0' && path_exists(entry->path);
 }
 
+static bool title_is_protected_by_dlc(const char *title_id,
+                                      bool remove_games_with_dlc) {
+  if (remove_games_with_dlc)
+    return false;
+
+  char addcont_path[MAX_PATH];
+  int written = snprintf(addcont_path, sizeof(addcont_path),
+                         "/user/addcont/%s", title_id);
+  if (written <= 0 || (size_t)written >= sizeof(addcont_path))
+    return true;
+
+  struct stat st;
+  if (stat(addcont_path, &st) == 0)
+    return S_ISDIR(st.st_mode);
+
+  return errno != ENOENT && errno != ENOTDIR;
+}
+
 static bool resolve_game_cache_owning_scan_root(const char *path,
                                                 char owning_scan_root[MAX_PATH]) {
   char resolved_source_path[MAX_PATH];
@@ -214,7 +232,8 @@ void note_game_cache_source_seen(const char *path, const char *title_id,
 }
 
 static void reconcile_missing_game_cache(
-    const struct AppDbTitleList *auto_remove_titles, uint64_t now_us) {
+    const struct AppDbTitleList *auto_remove_titles, uint64_t now_us,
+    bool remove_games_with_dlc) {
   pthread_mutex_lock(&g_game_cache_mutex);
   for (int k = 0; k < MAX_PENDING; ++k) {
     struct GameCache *entry = &g_game_cache[k];
@@ -229,7 +248,10 @@ static void reconcile_missing_game_cache(
   bool cache_full_logged = false;
   for (int i = 0; i < auto_remove_titles->count; ++i) {
     const char *title_id = auto_remove_titles->ids[i];
-    bool image_source_exists = sm_image_index_has_source_for_title(title_id);
+    bool protected_by_dlc =
+        title_is_protected_by_dlc(title_id, remove_games_with_dlc);
+    bool image_source_exists =
+        !protected_by_dlc && sm_image_index_has_source_for_title(title_id);
 
     pthread_mutex_lock(&g_game_cache_mutex);
     int entry_index = -1;
@@ -246,7 +268,15 @@ static void reconcile_missing_game_cache(
       }
     }
 
-    if (entry_index >= 0) {
+    if (protected_by_dlc) {
+      if (entry_index >= 0) {
+        struct GameCache *entry = &g_game_cache[entry_index];
+        if (game_cache_source_exists(entry))
+          entry->missing_since_us = 0;
+        else
+          clear_game_cache_slot(entry_index, NULL);
+      }
+    } else if (entry_index >= 0) {
       struct GameCache *entry = &g_game_cache[entry_index];
       if (game_cache_source_exists(entry) || image_source_exists) {
         if (entry->missing_since_us != 0) {
@@ -286,7 +316,8 @@ void reconcile_missing_app_db_games(void) {
   const uint64_t now_us = monotonic_time_us();
   const uint64_t delay_us =
       (uint64_t)cfg->auto_remove_missing_delay_seconds * 1000000ull;
-  reconcile_missing_game_cache(&auto_remove_titles, now_us);
+  reconcile_missing_game_cache(&auto_remove_titles, now_us,
+                               cfg->auto_remove_games_with_dlc);
 
   for (;;) {
     char title_id[MAX_TITLE_ID];
@@ -308,6 +339,9 @@ void reconcile_missing_app_db_games(void) {
       break;
 
     if (!app_db_title_list_contains(&auto_remove_titles, title_id))
+      continue;
+    if (title_is_protected_by_dlc(title_id,
+                                  cfg->auto_remove_games_with_dlc))
       continue;
 
     int res = sceAppInstUtilAppUnInstall(title_id);

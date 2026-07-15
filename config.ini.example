@@ -53,6 +53,12 @@
 # Default: 0
 # auto_remove_missing_games=0
 
+# Allow automatic removal of games that have installed DLC:
+# 1/true/yes/on  -> allow removal
+# 0/false/no/off -> keep games with installed DLC (default)
+# Default: 0
+# auto_remove_games_with_dlc=0
+
 # How long a source must remain unavailable before removal (seconds),
 # range: 1..86400
 # Default: 300

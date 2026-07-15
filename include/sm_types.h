@@ -110,6 +110,7 @@ typedef struct runtime_config {
   bool force_mount;
   bool app_install_all_enabled;
   bool auto_remove_missing_games;
+  bool auto_remove_games_with_dlc;
   bool backport_fakelib_enabled;
   bool global_fakelib_enabled;
   bool global_fakelib_mount_first;

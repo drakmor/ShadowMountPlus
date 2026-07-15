@@ -242,6 +242,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.force_mount = false;
   state->cfg.app_install_all_enabled = false;
   state->cfg.auto_remove_missing_games = false;
+  state->cfg.auto_remove_games_with_dlc = false;
   state->cfg.backport_fakelib_enabled = true;
   state->cfg.global_fakelib_enabled = true;
   state->cfg.global_fakelib_mount_first = true;
@@ -1226,6 +1227,15 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "auto_remove_games_with_dlc") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.auto_remove_games_with_dlc = bval;
+      continue;
+    }
+
     if (strcasecmp(key, "image_ro") == 0 ||
         strcasecmp(key, "image_rw") == 0) {
       bool rule_read_only = (strcasecmp(key, "image_ro") == 0);
@@ -1526,7 +1536,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
   log_debug("  [CFG] loaded: debug=%d quiet=%d ro=%d force=%d "
             "app_install_all=%d auto_remove_missing_games=%d "
-            "auto_remove_missing_delay_s=%u api=%s:%u scan_depth=%u "
+            "auto_remove_games_with_dlc=%d auto_remove_missing_delay_s=%u "
+            "api=%s:%u scan_depth=%u "
             "legacy_recursive_scan_forced=%d backport_fakelib=%d "
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
@@ -1541,6 +1552,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.force_mount ? 1 : 0,
             state->cfg.app_install_all_enabled ? 1 : 0,
             state->cfg.auto_remove_missing_games ? 1 : 0,
+            state->cfg.auto_remove_games_with_dlc ? 1 : 0,
             state->cfg.auto_remove_missing_delay_seconds,
             state->cfg.api_bind_address, state->cfg.api_port,
             state->cfg.scan_depth,

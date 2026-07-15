@@ -60,6 +60,7 @@ Supported keys (all optional):
 - `force_mount=1|0` (mounting even damaged file systems; default: `0`)
 - `app_install_all=1|0` (`1` stages new titles and submits them through the stock batch `sceAppInstUtilAppInstallAll`; default: `0` on every firmware. On FW `12.00+`, the default per-title path is provided by the SceShellCore TitleDir bridge.)
 - `auto_remove_missing_games=1|0` (`1` automatically removes games from the system library when their source is no longer available; default: `0`)
+- `auto_remove_games_with_dlc=1|0` (`1` allows automatic removal of games that have installed DLC; default: `0`)
 - `auto_remove_missing_delay_seconds=<1..86400>` (how long a source must remain unavailable before removal; default: `300`)
 - `image_ro=<image_filename>` (repeatable; force read-only mode for this image filename)
 - `image_rw=<image_filename>` (repeatable; force read-write mode for this image filename)
