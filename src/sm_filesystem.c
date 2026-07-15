@@ -920,7 +920,7 @@ int copy_file(const char *src, const char *dst) {
     return copy_param_json_rewrite(src, dst);
   }
 
-  char buf[8192];
+  char buf[64 * 1024];
   FILE *fs = fopen(src, "rb");
   if (!fs)
     return -1;

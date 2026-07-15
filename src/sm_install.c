@@ -160,6 +160,13 @@ static bool update_trophy_metadata(const char *title_id,
   return ok;
 }
 
+static void update_registered_title_snd0info(const char *title_id) {
+  sceKernelUsleep(200000);
+  int snd0_updates = update_snd0info(title_id);
+  if (snd0_updates >= 0)
+    log_debug("  [DB] snd0info updated rows=%d", snd0_updates);
+}
+
 // --- Install/Remount Action ---
 static bool mount_and_install(const char *src_path, const char *title_id,
                               const char *title_name, bool is_remount,
@@ -345,27 +352,19 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     mark_register_attempted(title_id);
     res = app_install_title_dir_fn(title_id, APP_BASE "/", NULL);
   }
-  sceKernelUsleep(200000);
-
   if (res == 0) {
     invalidate_app_db_title_cache();
     clear_register_attempts(title_id);
     log_debug("  [REG] Installed NEW!");
     notify_game_installed_rich(title_id);
-    if (has_src_snd0) {
-      int snd0_updates = update_snd0info(title_id);
-      if (snd0_updates >= 0)
-        log_debug("  [DB] snd0info updated rows=%d", snd0_updates);
-    }
+    if (has_src_snd0)
+      update_registered_title_snd0info(title_id);
   } else if ((uint32_t)res == 0x80990002u) {
     invalidate_app_db_title_cache();
     clear_register_attempts(title_id);
     log_debug("  [REG] Restored.");
-    if (has_src_snd0) {
-      int snd0_updates = update_snd0info(title_id);
-      if (snd0_updates >= 0)
-        log_debug("  [DB] snd0info updated rows=%d", snd0_updates);
-    }
+    if (has_src_snd0)
+      update_registered_title_snd0info(title_id);
     // Silent on restore/remount to avoid spam
   } else {
     log_debug("  [REG] FAIL: 0x%x", res);
