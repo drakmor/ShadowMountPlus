@@ -6,6 +6,7 @@
 #include <sys/select.h>
 
 #include "sm_config_mount.h"
+#include "sm_api_service.h"
 #include "sm_appdb.h"
 #include "sm_fakelib.h"
 #include "sm_filesystem.h"
@@ -901,6 +902,12 @@ static bool apply_runtime_config_reload_effects(int kq,
                                                 const runtime_config_t *old_cfg,
                                                 const runtime_config_t *new_cfg,
                                                 bool scan_topology_changed) {
+  if (strcmp(old_cfg->api_bind_address, new_cfg->api_bind_address) != 0 ||
+      old_cfg->api_port != new_cfg->api_port) {
+    if (!sm_api_service_reconfigure())
+      log_debug("  [CFG] HTTP API reconfigure failed: %s", strerror(errno));
+  }
+
   if (old_cfg->backport_fakelib_enabled &&
       fakelib_runtime_config_changed(old_cfg, new_cfg))
     sm_fakelib_game_shutdown();

@@ -1,5 +1,7 @@
 #include "sm_platform.h"
 
+#include <pthread.h>
+
 #include "sm_appdb.h"
 #include "sm_filesystem.h"
 #include "sm_image_cache.h"
@@ -42,6 +44,7 @@ static image_index_entry_t g_image_index[MAX_IMAGE_MOUNTS];
 static image_index_title_t g_image_titles[MAX_IMAGE_TITLES];
 static bool g_image_index_loaded;
 static bool g_image_index_dirty;
+static pthread_mutex_t g_image_index_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static bool stamp_matches(const image_index_entry_t *entry,
                           const struct stat *st) {
@@ -171,6 +174,22 @@ static int reserve_entry(const char *path) {
   return -1;
 }
 
+static void begin_scan_locked(const char *path, const struct stat *st) {
+  int entry_index = reserve_entry(path);
+  if (entry_index < 0) {
+    log_debug("  [IMGIDX] cache full, scanning without fingerprint: %s", path);
+    return;
+  }
+  clear_entry_titles(entry_index);
+  image_index_entry_t *entry = &g_image_index[entry_index];
+  entry->size = (int64_t)st->st_size;
+  entry->mtime_sec = (int64_t)st->st_mtim.tv_sec;
+  entry->mtime_nsec = (int32_t)st->st_mtim.tv_nsec;
+  entry->complete = 0;
+  entry->valid = 1;
+  g_image_index_dirty = true;
+}
+
 static bool cached_titles_ready(int entry_index,
                                 const struct AppDbTitleList *app_db_titles,
                                 bool app_db_titles_ready) {
@@ -202,48 +221,46 @@ static bool cached_titles_ready(int entry_index,
 bool sm_image_index_needs_scan(const char *path, const struct stat *st,
                                const struct AppDbTitleList *app_db_titles,
                                bool app_db_titles_ready) {
+  pthread_mutex_lock(&g_image_index_mutex);
   load_index();
   int entry_index = find_entry(path);
-  if (entry_index < 0 || !g_image_index[entry_index].complete ||
-      !stamp_matches(&g_image_index[entry_index], st)) {
-    return true;
-  }
-  return !cached_titles_ready(entry_index, app_db_titles, app_db_titles_ready);
+  bool needs_scan = entry_index < 0 || !g_image_index[entry_index].complete ||
+                    !stamp_matches(&g_image_index[entry_index], st) ||
+                    !cached_titles_ready(entry_index, app_db_titles,
+                                         app_db_titles_ready);
+  pthread_mutex_unlock(&g_image_index_mutex);
+  return needs_scan;
 }
 
 void sm_image_index_begin_scan(const char *path, const struct stat *st) {
+  pthread_mutex_lock(&g_image_index_mutex);
   load_index();
-  int entry_index = reserve_entry(path);
-  if (entry_index < 0) {
-    log_debug("  [IMGIDX] cache full, scanning without fingerprint: %s", path);
-    return;
-  }
-  clear_entry_titles(entry_index);
-  image_index_entry_t *entry = &g_image_index[entry_index];
-  entry->size = (int64_t)st->st_size;
-  entry->mtime_sec = (int64_t)st->st_mtim.tv_sec;
-  entry->mtime_nsec = (int32_t)st->st_mtim.tv_nsec;
-  entry->complete = 0;
-  entry->valid = 1;
-  g_image_index_dirty = true;
+  begin_scan_locked(path, st);
+  pthread_mutex_unlock(&g_image_index_mutex);
 }
 
 bool sm_image_index_record_game(const char *game_path, const char *title_id) {
+  pthread_mutex_lock(&g_image_index_mutex);
   load_index();
   char image_path[MAX_PATH];
   if (!resolve_outermost_image_source_from_mount_cache(
           game_path, image_path, sizeof(image_path))) {
+    pthread_mutex_unlock(&g_image_index_mutex);
     return true;
   }
   int entry_index = find_entry(image_path);
   if (entry_index < 0) {
     struct stat st;
-    if (stat(image_path, &st) != 0)
+    if (stat(image_path, &st) != 0) {
+      pthread_mutex_unlock(&g_image_index_mutex);
       return false;
-    sm_image_index_begin_scan(image_path, &st);
+    }
+    begin_scan_locked(image_path, &st);
     entry_index = find_entry(image_path);
-    if (entry_index < 0)
+    if (entry_index < 0) {
+      pthread_mutex_unlock(&g_image_index_mutex);
       return false;
+    }
   }
   char tracked_path[MAX_PATH];
   char linked_image[MAX_PATH];
@@ -260,6 +277,7 @@ bool sm_image_index_record_game(const char *game_path, const char *title_id) {
     if (g_image_titles[i].valid &&
         g_image_titles[i].image_index == (uint16_t)entry_index &&
         strcmp(g_image_titles[i].title_id, title_id) == 0) {
+      pthread_mutex_unlock(&g_image_index_mutex);
       return true;
     }
   }
@@ -271,33 +289,42 @@ bool sm_image_index_record_game(const char *game_path, const char *title_id) {
     (void)strlcpy(g_image_titles[i].title_id, title_id,
                   sizeof(g_image_titles[i].title_id));
     g_image_index_dirty = true;
+    pthread_mutex_unlock(&g_image_index_mutex);
     return true;
   }
   log_debug("  [IMGIDX] title cache full: %s", title_id);
+  pthread_mutex_unlock(&g_image_index_mutex);
   return false;
 }
 
 void sm_image_index_complete_scan(const char *path) {
+  pthread_mutex_lock(&g_image_index_mutex);
   load_index();
   int entry_index = find_entry(path);
-  if (entry_index < 0)
+  if (entry_index < 0) {
+    pthread_mutex_unlock(&g_image_index_mutex);
     return;
+  }
   image_index_entry_t *entry = &g_image_index[entry_index];
   if (!entry->complete) {
     entry->complete = 1;
     g_image_index_dirty = true;
   }
+  pthread_mutex_unlock(&g_image_index_mutex);
 }
 
 void sm_image_index_flush(void) {
+  pthread_mutex_lock(&g_image_index_mutex);
   load_index();
   if (!save_index())
     log_debug("  [IMGIDX] failed to persist scan index: %s", strerror(errno));
+  pthread_mutex_unlock(&g_image_index_mutex);
 }
 
 void sm_image_index_prune(void) {
   struct stat st;
 
+  pthread_mutex_lock(&g_image_index_mutex);
   load_index();
   for (int i = 0; i < MAX_IMAGE_MOUNTS; ++i) {
     if (g_image_index[i].valid && stat(g_image_index[i].path, &st) != 0 &&
@@ -307,4 +334,47 @@ void sm_image_index_prune(void) {
   }
   if (!save_index())
     log_debug("  [IMGIDX] failed to persist prune: %s", strerror(errno));
+  pthread_mutex_unlock(&g_image_index_mutex);
+}
+
+bool sm_image_index_snapshot(sm_image_index_snapshot_entry_t **entries_out,
+                             size_t *count_out) {
+  if (!entries_out || !count_out)
+    return false;
+  *entries_out = NULL;
+  *count_out = 0;
+
+  pthread_mutex_lock(&g_image_index_mutex);
+  load_index();
+  size_t count = 0;
+  for (int i = 0; i < MAX_IMAGE_MOUNTS; ++i) {
+    if (g_image_index[i].valid)
+      count++;
+  }
+
+  sm_image_index_snapshot_entry_t *entries = NULL;
+  if (count > 0) {
+    entries = calloc(count, sizeof(*entries));
+    if (!entries) {
+      pthread_mutex_unlock(&g_image_index_mutex);
+      return false;
+    }
+  }
+
+  size_t copied = 0;
+  for (int i = 0; i < MAX_IMAGE_MOUNTS; ++i) {
+    const image_index_entry_t *source = &g_image_index[i];
+    if (!source->valid)
+      continue;
+    sm_image_index_snapshot_entry_t *entry = &entries[copied++];
+    (void)strlcpy(entry->path, source->path, sizeof(entry->path));
+    entry->size = source->size;
+    entry->mtime_sec = source->mtime_sec;
+    entry->mtime_nsec = source->mtime_nsec;
+    entry->complete = source->complete != 0;
+  }
+  pthread_mutex_unlock(&g_image_index_mutex);
+  *entries_out = entries;
+  *count_out = copied;
+  return true;
 }

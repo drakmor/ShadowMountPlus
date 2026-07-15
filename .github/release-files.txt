@@ -10,3 +10,6 @@ mkexfat_macos.sh
 mkufs2.sh
 New-OsfExfatImage.ps1
 README.md
+docs/socket-api.md
+docs/openapi.yaml
+tools/api_test.py

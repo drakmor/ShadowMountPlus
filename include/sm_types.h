@@ -115,6 +115,8 @@ typedef struct runtime_config {
   bool kstuff_game_auto_toggle;
   bool kstuff_crash_detection_enabled;
   bool legacy_recursive_scan_forced;
+  char api_bind_address[MAX_API_BIND_ADDRESS];
+  uint32_t api_port;
   char global_fakelib_path[MAX_PATH];
   uint32_t global_fakelib_exclude_title_count;
   char global_fakelib_exclude_title_ids[MAX_FAKELIB_EXCLUDE_RULES][MAX_TITLE_ID];

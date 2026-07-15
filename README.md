@@ -54,6 +54,8 @@ This file is optional. If it does not exist, ShadowMountPlus creates it from the
 Supported keys (all optional):
 - `debug=1|0` (`1` enables `log_debug` output to console + `/data/shadowmount/debug.log`; default is `1`)
 - `quiet_mode=1|0` (`1` suppresses plain informational popups but keeps rich toasts; default is `0`)
+- `api_bind_address=<IPv4>` (HTTP/JSON API bind address; default: `127.0.0.1`; use `0.0.0.0` for network access)
+- `api_port=<1..65535>` (HTTP/JSON API port; default: `10101`)
 - `mount_read_only=1|0` (default: `1`)
 - `force_mount=1|0` (mounting even damaged file systems; default: `0`)
 - `app_install_all=1|0` (`1` stages new titles and submits them through the stock batch `sceAppInstUtilAppInstallAll`; default: `0` on every firmware. On FW `12.00+`, the default per-title path is provided by the SceShellCore TitleDir bridge.)
@@ -87,6 +89,9 @@ Supported keys (all optional):
 - `lvd_pfs_sector_size=<value>` (default: `32768`)
 - `md_exfat_sector_size=<value>` (default: `512`)
 - `md_ufs_sector_size=<value>` (default: `512`)
+
+The public API routes and JSON schemas are documented in [docs/socket-api.md](docs/socket-api.md)
+and available as an [OpenAPI manifest](docs/openapi.yaml).
 
 Per-image mode override behavior:
 - Match is done by image file name (without path).

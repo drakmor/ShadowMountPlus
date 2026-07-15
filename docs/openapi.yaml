@@ -1,0 +1,570 @@
+openapi: 3.1.2
+info:
+  title: ShadowMount HTTP API
+  version: "1"
+  description: |
+    HTTP/JSON API exposed by the ShadowMountPlus payload. The service has no
+    authentication and should only be exposed on a trusted network.
+servers:
+  - url: http://127.0.0.1:10101
+    description: Default loopback endpoint on the PS5
+  - url: http://{address}:{port}
+    description: Configured network endpoint
+    variables:
+      address:
+        default: 192.168.1.50
+        description: PS5 IPv4 address or hostname
+      port:
+        default: "10101"
+        description: Value of api_port
+security: []
+tags:
+  - name: Service
+  - name: Images
+  - name: Games
+
+paths:
+  /api/v1/version:
+    options:
+      operationId: preflightVersion
+      summary: CORS preflight
+      tags: [Service]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: getVersion
+      summary: Get API version and capabilities
+      tags: [Service]
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/VersionSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/images:
+    options:
+      operationId: preflightImages
+      summary: CORS preflight
+      tags: [Images]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: listImages
+      summary: Get the complete image snapshot
+      tags: [Images]
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/ImagesSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/games:
+    options:
+      operationId: preflightGames
+      summary: CORS preflight
+      tags: [Games]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: listGames
+      summary: Get the complete game snapshot
+      tags: [Games]
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/GamesSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/games/mount:
+    options:
+      operationId: preflightMountGame
+      summary: CORS preflight
+      tags: [Games]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: mountGame
+      summary: Mount a managed game
+      tags: [Games]
+      requestBody:
+        $ref: "#/components/requestBodies/TitleRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/MountSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/games/unmount:
+    options:
+      operationId: preflightUnmountGame
+      summary: CORS preflight
+      tags: [Games]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: unmountGame
+      summary: Unmount a managed game
+      tags: [Games]
+      requestBody:
+        $ref: "#/components/requestBodies/TitleRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/UnmountSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+components:
+  requestBodies:
+    EmptyRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+          example: {}
+    TitleRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/TitleRequest"
+
+  headers:
+    AllowOrigin:
+      description: Browser origins allowed to access the API
+      schema:
+        type: string
+        const: "*"
+    AllowMethods:
+      description: Methods allowed by CORS preflight
+      schema:
+        type: string
+        const: POST, OPTIONS
+    AllowHeaders:
+      description: Request headers allowed by CORS preflight
+      schema:
+        type: string
+        const: Content-Type
+    AllowPrivateNetwork:
+      description: Private Network Access permission
+      schema:
+        type: string
+        const: "true"
+    MaxAge:
+      description: Number of seconds for which the preflight may be cached
+      schema:
+        type: integer
+        const: 86400
+
+  responses:
+    Preflight:
+      description: CORS preflight accepted
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+        Access-Control-Allow-Methods:
+          $ref: "#/components/headers/AllowMethods"
+        Access-Control-Allow-Headers:
+          $ref: "#/components/headers/AllowHeaders"
+        Access-Control-Allow-Private-Network:
+          $ref: "#/components/headers/AllowPrivateNetwork"
+        Access-Control-Max-Age:
+          $ref: "#/components/headers/MaxAge"
+
+    VersionSuccess:
+      description: API version and capabilities
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VersionResponse"
+
+    ImagesSuccess:
+      description: Complete image snapshot
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ImagesResponse"
+
+    GamesSuccess:
+      description: Complete game snapshot
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GamesResponse"
+
+    MountSuccess:
+      description: Game mounted
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MountResponse"
+
+    UnmountSuccess:
+      description: Game unmounted
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnmountResponse"
+
+    BadRequest:
+      description: Invalid HTTP request, JSON body or title ID
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Managed title tracker was not found
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Busy:
+      description: Runtime state does not currently permit the operation
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: 16
+            error: Device busy
+    LengthRequired:
+      description: Content-Length is required
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PayloadTooLarge:
+      description: JSON request body exceeds 4096 bytes
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnsupportedMediaType:
+      description: Content-Type is not application/json
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    HeadersTooLarge:
+      description: HTTP headers exceed 8192 bytes
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Internal failure
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotImplemented:
+      description: Unsupported transfer encoding or runtime operation
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    TitleId:
+      type: string
+      pattern: "^(CUSA|PPSA)[0-9]{5}$"
+      examples: [PPSA12345]
+
+    TitleRequest:
+      type: object
+      required: [title_id]
+      properties:
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+
+    VersionResponse:
+      type: object
+      additionalProperties: false
+      required: [status, api_version, shadowmount_version, capabilities]
+      properties:
+        status:
+          type: integer
+          const: 0
+        api_version:
+          type: integer
+          const: 1
+        shadowmount_version:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [list_images, list_games, mount_game, unmount_game]
+          example: [list_images, list_games, mount_game, unmount_game]
+
+    Image:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - mount_point
+        - size
+        - mtime_sec
+        - mtime_nsec
+        - unit_id
+        - backend
+        - complete
+        - source_available
+        - mapped
+        - mounted
+      properties:
+        path:
+          type: string
+        mount_point:
+          type: string
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+        mtime_sec:
+          type: integer
+          format: int64
+        mtime_nsec:
+          type: integer
+          minimum: 0
+          maximum: 999999999
+        unit_id:
+          type: integer
+          minimum: -1
+        backend:
+          type: string
+          enum: [LVD, MD, UNKNOWN]
+        complete:
+          type: boolean
+        source_available:
+          type: boolean
+        mapped:
+          type: boolean
+        mounted:
+          type: boolean
+
+    ImagesResponse:
+      type: object
+      additionalProperties: false
+      required: [status, count, images]
+      properties:
+        status:
+          type: integer
+          const: 0
+        count:
+          type: integer
+          minimum: 0
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/Image"
+
+    Game:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - image_path
+        - title_id
+        - title_name
+        - installed
+        - managed
+        - mounted
+        - image_backed
+        - source_available
+      properties:
+        path:
+          type: string
+        image_path:
+          type: string
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+        title_name:
+          type: string
+        installed:
+          type: boolean
+        managed:
+          type: boolean
+        mounted:
+          type: boolean
+        image_backed:
+          type: boolean
+        source_available:
+          type: boolean
+
+    GamesResponse:
+      type: object
+      additionalProperties: false
+      required: [status, count, games]
+      properties:
+        status:
+          type: integer
+          const: 0
+        count:
+          type: integer
+          minimum: 0
+        games:
+          type: array
+          items:
+            $ref: "#/components/schemas/Game"
+
+    MountResponse:
+      type: object
+      additionalProperties: false
+      required: [status, title_id, mounted]
+      properties:
+        status:
+          type: integer
+          const: 0
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+        mounted:
+          type: boolean
+          const: true
+
+    UnmountResponse:
+      type: object
+      additionalProperties: false
+      required: [status, title_id, mounted]
+      properties:
+        status:
+          type: integer
+          const: 0
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+        mounted:
+          type: boolean
+          const: false
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [status, error]
+      properties:
+        status:
+          type: integer
+          minimum: 1
+          description: Positive errno value
+        error:
+          type: string

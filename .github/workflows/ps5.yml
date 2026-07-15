@@ -47,6 +47,7 @@ jobs:
             automake \
             build-essential \
             clang-18 \
+            cmake \
             curl \
             git \
             libarchive-tools \
@@ -56,6 +57,8 @@ jobs:
             meson \
             pacman-package-manager \
             pkg-config \
+            python3 \
+            python3-yaml \
             xxd \
             zip
 
@@ -65,11 +68,28 @@ jobs:
           makepkg -c -f
           sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
 
+      - name: Build PS5 openlibm package
+        working-directory: pacbrew-repo/openlibm
+        run: |
+          makepkg -c -f
+          sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+
+      - name: Build PS5 json-c package
+        working-directory: pacbrew-repo/json-c
+        run: |
+          makepkg -c -f
+          sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+
       - name: Build PS5 sqlite package
         working-directory: pacbrew-repo/sqlite
         run: |
           makepkg -c -f
           sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+
+      - name: Check API tools and manifest
+        run: |
+          python3 -m py_compile tools/api_test.py
+          python3 -c 'import pathlib, yaml; doc = yaml.safe_load(pathlib.Path("docs/openapi.yaml").read_text()); assert doc["openapi"] == "3.1.2" and len(doc["paths"]) == 5'
 
       - name: Build payload
         run: |

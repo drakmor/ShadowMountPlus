@@ -3,15 +3,17 @@ include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 
 VERSION_TAG := $(shell git describe --abbrev=6 --dirty --always --tags 2>/dev/null || echo unknown)
 
-# Standard Flags (No extra libraries)
+# Compiler and dependency flags
+JSON_C_ROOT := $(PS5_PAYLOAD_SDK)/target/user/homebrew
+JSON_CFLAGS := -I$(JSON_C_ROOT)/include
 CFLAGS := -O3 -flto=thin -DNDEBUG -ffunction-sections -fdata-sections -Wall -Wextra -Wstrict-prototypes -Wmissing-prototypes -Werror=strict-prototypes -Werror=missing-prototypes -D_BSD_SOURCE -std=gnu11 -Iinclude -Isrc
 CFLAGS += -DSHADOWMOUNT_VERSION=\"$(VERSION_TAG)\"
 
 # Linker
 LDFLAGS := -flto=thin -Wl,--gc-sections
 
-# Standard Libraries Only
-LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lsqlite3
+# Libraries
+LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lsqlite3 $(JSON_C_ROOT)/lib/libjson-c.a -lm
 PS5_SCE_STUBS_DIR ?= $(PS5_PAYLOAD_SDK)/src/sce_stubs
 KERNEL_SYS_STUB_SO := src/libkernel_sys_ext.so
 KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUBS_DIR)/libkernel_sys.c src/libkernel_sys_ext.c
@@ -41,6 +43,8 @@ src/notify_icon_asset.c: smp_icon.png
 src/config_ini_example_asset.c: config.ini.example
 	xxd -i $< > $@
 
+src/sm_api_service.o: CFLAGS += $(JSON_CFLAGS)
+
 src/%.o: src/%.c $(HEADERS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -48,4 +52,4 @@ src/%.o: src/%.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f shadowmountplus.elf kill.elf src/*.o $(KERNEL_SYS_STUB_SO) src/notify_icon_asset.c src/config_ini_example_asset.c
+	rm -f shadowmountplus.elf api-test.elf kill.elf src/*.o $(KERNEL_SYS_STUB_SO) src/notify_icon_asset.c src/config_ini_example_asset.c

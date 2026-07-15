@@ -48,6 +48,7 @@
 #define MAX_PATH 1024
 #define MAX_TITLE_ID 32
 #define MAX_TITLE_NAME 256
+#define MAX_API_BIND_ADDRESS 16
 #define MAX_PARAM_JSON_SIZE (1024u * 1024u)
 
 #endif

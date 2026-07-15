@@ -21,6 +21,13 @@
 # Default: 0
 # quiet_mode=0
 
+# Public HTTP/JSON API listener:
+# The loopback default accepts connections only from software running on the PS5.
+# Use 0.0.0.0 explicitly if remote devices on the network must connect.
+# Defaults: 127.0.0.1:10101
+# api_bind_address=127.0.0.1
+# api_port=10101
+
 # Global mount mode:
 # 1/true/yes/on/ro  -> read-only mounts
 # 0/false/no/off/rw -> read-write mounts

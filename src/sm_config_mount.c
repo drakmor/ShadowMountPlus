@@ -1,4 +1,9 @@
 #include "sm_platform.h"
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+#include "sm_api_protocol.h"
 #include "sm_config_mount.h"
 #include "sm_types.h"
 #include "sm_limits.h"
@@ -242,6 +247,9 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.kstuff_game_auto_toggle = true;
   state->cfg.kstuff_crash_detection_enabled = true;
   state->cfg.legacy_recursive_scan_forced = false;
+  (void)strlcpy(state->cfg.api_bind_address, SM_API_DEFAULT_BIND_ADDRESS,
+                sizeof(state->cfg.api_bind_address));
+  state->cfg.api_port = SM_API_DEFAULT_PORT;
   (void)strlcpy(state->cfg.global_fakelib_path, DEFAULT_GLOBAL_FAKELIB_PATH,
                 sizeof(state->cfg.global_fakelib_path));
   state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
@@ -1155,6 +1163,29 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "api_bind_address") == 0) {
+      struct in_addr address;
+      if (strlen(value) >= sizeof(state->cfg.api_bind_address) ||
+          inet_pton(AF_INET, value, &address) != 1) {
+        log_debug("  [CFG] invalid API IPv4 address at line %d: %s=%s",
+                  line_no, key, value);
+        continue;
+      }
+      (void)strlcpy(state->cfg.api_bind_address, value,
+                    sizeof(state->cfg.api_bind_address));
+      continue;
+    }
+
+    if (strcasecmp(key, "api_port") == 0) {
+      if (!parse_u32_ini(value, &u32) || u32 == 0 || u32 > 65535u) {
+        log_debug("  [CFG] invalid API port at line %d: %s=%s (range: 1..65535)",
+                  line_no, key, value);
+        continue;
+      }
+      state->cfg.api_port = u32;
+      continue;
+    }
+
     if (strcasecmp(key, "mount_read_only") == 0 ||
         strcasecmp(key, "read_only") == 0) {
       if (!parse_bool_ini(value, &bval)) {
@@ -1466,7 +1497,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
   }
 
   log_debug("  [CFG] loaded: debug=%d quiet=%d ro=%d force=%d "
-            "app_install_all=%d scan_depth=%u "
+            "app_install_all=%d api=%s:%u scan_depth=%u "
             "legacy_recursive_scan_forced=%d backport_fakelib=%d "
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
@@ -1480,6 +1511,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.mount_read_only ? 1 : 0,
             state->cfg.force_mount ? 1 : 0,
             state->cfg.app_install_all_enabled ? 1 : 0,
+            state->cfg.api_bind_address, state->cfg.api_port,
             state->cfg.scan_depth,
             state->cfg.legacy_recursive_scan_forced ? 1 : 0,
             state->cfg.backport_fakelib_enabled ? 1 : 0,
