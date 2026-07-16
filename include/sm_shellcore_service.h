@@ -17,14 +17,14 @@ int sm_shellcore_unmount_title_runtime(const char *title_id);
 void sm_shellcore_service_bind_prepared_app(const char *title_id,
                                             uint32_t app_id);
 // Publish process exit while ShellCore finishes its own app-exit cleanup.
-// Returns true when a managed prepared title transitioned to exit-pending.
+// Returns true when an owned incoming/outgoing title became exit-pending.
 bool sm_shellcore_service_note_game_exit(const char *title_id);
 // Ensure that a managed title has its image/nullfs/backport runtime stack.
 // Unmanaged stock titles are treated as already ready.
 bool sm_shellcore_ensure_title_runtime(const char *title_id);
-// Return true when the named title owns the prepared runtime mount.
+// Return true when the named title owns an incoming or outgoing runtime mount.
 bool sm_shellcore_service_title_is_prepared(const char *title_id);
-// Return true while ShellCore owns a title mount prepared for launch or exit.
+// Return true while ShellCore owns any title mount prepared for launch or exit.
 bool sm_shellcore_service_has_prepared_mount(void);
 
 #endif
