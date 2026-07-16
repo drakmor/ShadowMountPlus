@@ -163,7 +163,7 @@ Kstuff game lifecycle behavior:
   - `direct=<seconds>`
   - `image=<seconds>`
 - If both kinds of rule target the same title, `kstuff_no_pause` takes priority.
-- When crash monitoring detects an app crash before kstuff was paused, ShadowMountPlus only notifies that the app crashed and kstuff is not to blame.
+- When crash monitoring detects an app crash before kstuff was paused, ShadowMountPlus only notifies that the app crashed.
 - When crash monitoring detects an app crash within 2 minutes after kstuff auto-pause, ShadowMountPlus doubles the applied pause delay for that title and upserts it into `/data/shadowmount/autotune.ini` (up to `3600` seconds), then prompts you to launch the game again.
 - When the last tracked game stops, ShadowMount immediately enables kstuff again if it was the component that disabled it.
 

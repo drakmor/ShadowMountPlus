@@ -25,6 +25,10 @@ int mdbg_call(void *cmd, void *req, void *res);
 #define MDBG_AUTOTUNE_WINDOW_US (300ull * 1000000ull)
 #define MDBG_LOG_LINE_BUFFER_SIZE 512u
 #define MDBG_RTLD_ERROR_PREFIX_SIZE 32u
+#define MDBG_FATAL_ERROR_BUFFER_SIZE 256u
+#define MDBG_FATAL_EXCEPTION_PREFIX "# exception: "
+#define MDBG_FATAL_THREAD_NAME_PREFIX "# thread name: "
+#define MDBG_FATAL_PROCESS_ID_PREFIX "# proc ID: "
 #ifndef MDBG_USE_PRIVATE_LOG_TEXT
 #define MDBG_USE_PRIVATE_LOG_TEXT 0
 #endif
@@ -56,6 +60,12 @@ typedef struct {
   uint64_t reserved[2];
 } mdbg_res_t;
 
+typedef enum {
+  MDBG_FAILURE_GENERIC = 0,
+  MDBG_FAILURE_RTLD,
+  MDBG_FAILURE_FATAL_SIGNAL,
+} mdbg_failure_kind_t;
+
 typedef struct {
   bool active;
   bool log_monitoring_active;
@@ -75,9 +85,13 @@ typedef struct {
   size_t log_buffer_size;
   size_t log_snapshot_length;
   size_t log_line_length;
+  size_t fatal_error_length;
+  pid_t fatal_error_pid;
+  bool fatal_error_active;
   char *log_snapshot;
   char *log_storage;
   char log_line[MDBG_LOG_LINE_BUFFER_SIZE];
+  char fatal_error[MDBG_FATAL_ERROR_BUFFER_SIZE];
   mdbg_game_state_t game;
 } sm_mdbg_state_t;
 
@@ -93,6 +107,7 @@ static int mdbg_call_raw(int64_t pid, uint64_t subcmd, uint64_t arg,
 static int query_mdbg_flags(pid_t pid, uint64_t *flags_out);
 static bool is_mdbg_process_gone_error(int ret);
 static void reset_log_line_buffer(void);
+static void reset_fatal_error_buffer(void);
 static void reset_log_snapshot(void);
 static void free_log_buffers(void);
 static bool ensure_log_buffers(void);
@@ -104,11 +119,18 @@ static bool matches_tracked_rtld_error(const char *text);
 static void summarize_failure_reason(const char *reason, char *summary_out,
                                      size_t summary_out_size,
                                      bool is_rtld_error);
-static void handle_pre_pause_failure(const char *reason);
-static void handle_post_pause_failure(const char *reason, uint64_t now_us);
+static void handle_pre_pause_failure(const char *reason,
+                                     mdbg_failure_kind_t kind);
+static void handle_post_pause_failure(const char *reason, uint64_t now_us,
+                                      mdbg_failure_kind_t kind);
+static void append_fatal_error_detail(const char *detail);
+static void parse_fatal_error_pid(const char *line);
+static void finish_fatal_error(uint64_t now_us);
 static void process_log_line(const char *line, uint64_t now_us);
+static void flush_log_line(uint64_t now_us);
 static void append_log_char(char ch, uint64_t now_us);
 static void poll_log_monitor(uint64_t now_us);
+static void drain_log_monitor_before_clear(uint64_t now_us);
 static void start_log_monitoring(void);
 static void handle_crash_candidate(uint64_t flags, uint64_t now_us);
 
@@ -179,7 +201,7 @@ static int query_mdbg_flags(pid_t pid, uint64_t *flags_out) {
   int64_t status;
   uint64_t value;
   int ret = mdbg_call_raw(pid, MDBG_SUBCMD_FLAGS, 0, &status, &value);
-  if (ret < 0)
+  if (ret != 0)
     return ret;
   if (status != 0)
     return (int)status;
@@ -197,9 +219,17 @@ static void reset_log_line_buffer(void) {
   g_mdbg.log_line[0] = '\0';
 }
 
+static void reset_fatal_error_buffer(void) {
+  g_mdbg.fatal_error_active = false;
+  g_mdbg.fatal_error_length = 0;
+  g_mdbg.fatal_error_pid = 0;
+  g_mdbg.fatal_error[0] = '\0';
+}
+
 static void reset_log_snapshot(void) {
   g_mdbg.log_snapshot_length = 0;
   reset_log_line_buffer();
+  reset_fatal_error_buffer();
 }
 
 static void free_log_buffers(void) {
@@ -359,19 +389,25 @@ static void summarize_failure_reason(const char *reason, char *summary_out,
   (void)strlcpy(summary_out, reason, summary_out_size);
 }
 
-static void handle_pre_pause_failure(const char *reason) {
+static void handle_pre_pause_failure(const char *reason,
+                                     mdbg_failure_kind_t kind) {
   log_debug("  [MDBG] %s crashed before kstuff auto-pause%s%s",
             g_mdbg.game.title_id, reason ? ": " : "", reason ? reason : "");
-  notify_system_info("App crashed before KStuff pause: %s. KStuff is not to "
-                     "blame.",
-                     g_mdbg.game.title_id);
+  if (kind == MDBG_FAILURE_FATAL_SIGNAL) {
+    notify_system_info("%s crashed before KStuff pause:\n%s",
+                       g_mdbg.game.title_id, reason);
+  } else {
+    notify_system_info("App crashed before KStuff pause: %s.",
+                       g_mdbg.game.title_id);
+  }
   clear_tracked_game();
 }
 
-static void handle_post_pause_failure(const char *reason, uint64_t now_us) {
+static void handle_post_pause_failure(const char *reason, uint64_t now_us,
+                                      mdbg_failure_kind_t kind) {
   if (!g_mdbg.game.pause_seen || g_mdbg.game.pause_time_us == 0 ||
       now_us < g_mdbg.game.pause_time_us) {
-    handle_pre_pause_failure(reason);
+    handle_pre_pause_failure(reason, kind);
     return;
   }
 
@@ -380,14 +416,21 @@ static void handle_post_pause_failure(const char *reason, uint64_t now_us) {
     log_debug("  [MDBG] %s crashed %us after kstuff pause; autotune skipped%s%s",
               g_mdbg.game.title_id, (unsigned)(post_pause_us / 1000000ull),
               reason ? ": " : "", reason ? reason : "");
-    notify_system_info("App crashed after KStuff pause: %s. Autotune skipped.",
-                       g_mdbg.game.title_id);
+    if (kind == MDBG_FAILURE_FATAL_SIGNAL) {
+      notify_system_info("%s crashed after KStuff pause:\n%s\nAutotune skipped.",
+                         g_mdbg.game.title_id, reason);
+    } else {
+      notify_system_info("App crashed after KStuff pause: %s. Autotune "
+                         "skipped.",
+                         g_mdbg.game.title_id);
+    }
     clear_tracked_game();
     return;
   }
 
   char reason_summary[128];
-  bool is_rtld_error = matches_tracked_rtld_error(reason);
+  bool is_rtld_error = kind == MDBG_FAILURE_RTLD;
+  bool is_fatal_error = kind == MDBG_FAILURE_FATAL_SIGNAL;
   summarize_failure_reason(reason, reason_summary, sizeof(reason_summary),
                            is_rtld_error);
 
@@ -406,6 +449,10 @@ static void handle_post_pause_failure(const char *reason, uint64_t now_us) {
                                                    : "Can't load module after "
                                                      "KStuff pause",
                          tuned_delay_seconds);
+    } else if (is_fatal_error) {
+      notify_system_info("%s crashed after KStuff pause:\n%s\nDelay increased "
+                         "to %us.\nLaunch the game again.",
+                         g_mdbg.game.title_id, reason, tuned_delay_seconds);
     } else {
       notify_system_info("Crash detected after KStuff pause: pause delay for %s "
                          "increased to %us. Launch the game again.",
@@ -417,18 +464,116 @@ static void handle_post_pause_failure(const char *reason, uint64_t now_us) {
 
   log_debug("  [MDBG] failed to persist autotune pause delay for %s%s%s",
             g_mdbg.game.title_id, reason ? ": " : "", reason ? reason : "");
-  notify_system_info("Crash detected after KStuff pause: %s. Failed to update "
-                     "autotune delay.",
-                     g_mdbg.game.title_id);
+  if (is_fatal_error) {
+    notify_system_info("%s crashed after KStuff pause:\n%s\nFailed to update "
+                       "autotune delay.",
+                       g_mdbg.game.title_id, reason);
+  } else {
+    notify_system_info("Crash detected after KStuff pause: %s. Failed to "
+                       "update autotune delay.",
+                       g_mdbg.game.title_id);
+  }
   clear_tracked_game();
 }
 
+static void append_fatal_error_detail(const char *detail) {
+  if (!detail || detail[0] == '\0' ||
+      g_mdbg.fatal_error_length + 1u >= sizeof(g_mdbg.fatal_error)) {
+    return;
+  }
+
+  size_t remaining = sizeof(g_mdbg.fatal_error) - g_mdbg.fatal_error_length;
+  int written = snprintf(g_mdbg.fatal_error + g_mdbg.fatal_error_length,
+                         remaining, "%s%s",
+                         g_mdbg.fatal_error_length != 0 ? "\n" : "",
+                         detail);
+  if (written < 0)
+    return;
+  if ((size_t)written >= remaining) {
+    g_mdbg.fatal_error_length = sizeof(g_mdbg.fatal_error) - 1u;
+    return;
+  }
+
+  g_mdbg.fatal_error_length += (size_t)written;
+}
+
+static void parse_fatal_error_pid(const char *line) {
+  const char *value = line + strlen(MDBG_FATAL_PROCESS_ID_PREFIX);
+  char *end = NULL;
+  long parsed = strtol(value, &end, 10);
+  pid_t pid = (pid_t)parsed;
+
+  if (end == value || end[0] != '\0' || pid <= 0 || (long)pid != parsed)
+    return;
+
+  g_mdbg.fatal_error_pid = pid;
+}
+
+static void finish_fatal_error(uint64_t now_us) {
+  if (!g_mdbg.fatal_error_active)
+    return;
+
+  g_mdbg.fatal_error_active = false;
+  if (g_mdbg.fatal_error_length == 0) {
+    reset_fatal_error_buffer();
+    return;
+  }
+
+  if (g_mdbg.fatal_error_pid != g_mdbg.game.pid) {
+    log_debug("  [MDBG] ignoring fatal error for pid=%ld while tracking pid=%ld",
+              (long)g_mdbg.fatal_error_pid, (long)g_mdbg.game.pid);
+    reset_fatal_error_buffer();
+    return;
+  }
+
+  log_debug("  [MDBG] fatal error for %s:\n%s", g_mdbg.game.title_id,
+            g_mdbg.fatal_error);
+  handle_post_pause_failure(g_mdbg.fatal_error, now_us,
+                            MDBG_FAILURE_FATAL_SIGNAL);
+}
+
 static void process_log_line(const char *line, uint64_t now_us) {
+  if (!strncmp(line, MDBG_FATAL_EXCEPTION_PREFIX,
+               strlen(MDBG_FATAL_EXCEPTION_PREFIX))) {
+    reset_fatal_error_buffer();
+    g_mdbg.fatal_error_active = true;
+    append_fatal_error_detail(line + strlen(MDBG_FATAL_EXCEPTION_PREFIX));
+    return;
+  }
+
+  if (g_mdbg.fatal_error_active) {
+    if (line[0] != '#')
+      return;
+
+    if (!strcmp(line, "#")) {
+      finish_fatal_error(now_us);
+      return;
+    }
+
+    if (!strncmp(line, MDBG_FATAL_THREAD_NAME_PREFIX,
+                 strlen(MDBG_FATAL_THREAD_NAME_PREFIX))) {
+      append_fatal_error_detail(line + 2);
+    } else if (!strncmp(line, MDBG_FATAL_PROCESS_ID_PREFIX,
+                        strlen(MDBG_FATAL_PROCESS_ID_PREFIX))) {
+      parse_fatal_error_pid(line);
+    }
+    return;
+  }
+
   if (!matches_tracked_rtld_error(line))
     return;
 
   log_debug("  [MDBG] log load error for %s: %s", g_mdbg.game.title_id, line);
-  handle_post_pause_failure(line, now_us);
+  handle_post_pause_failure(line, now_us, MDBG_FAILURE_RTLD);
+}
+
+static void flush_log_line(uint64_t now_us) {
+  if (g_mdbg.log_line_length == 0)
+    return;
+
+  g_mdbg.log_line[g_mdbg.log_line_length] = '\0';
+  process_log_line(g_mdbg.log_line, now_us);
+  reset_log_line_buffer();
 }
 
 static void append_log_char(char ch, uint64_t now_us) {
@@ -436,18 +581,14 @@ static void append_log_char(char ch, uint64_t now_us) {
     return;
 
   if (ch == '\r' || ch == '\n') {
-    if (g_mdbg.log_line_length == 0)
-      return;
-    g_mdbg.log_line[g_mdbg.log_line_length] = '\0';
-    process_log_line(g_mdbg.log_line, now_us);
-    reset_log_line_buffer();
+    flush_log_line(now_us);
     return;
   }
 
   if (g_mdbg.log_line_length + 1u >= sizeof(g_mdbg.log_line)) {
-    g_mdbg.log_line[g_mdbg.log_line_length] = '\0';
-    process_log_line(g_mdbg.log_line, now_us);
-    reset_log_line_buffer();
+    flush_log_line(now_us);
+    if (!g_mdbg.game.active)
+      return;
   }
 
   g_mdbg.log_line[g_mdbg.log_line_length++] = ch;
@@ -474,6 +615,11 @@ static void poll_log_monitor(uint64_t now_us) {
     return;
   }
 
+  if (text_len == g_mdbg.log_snapshot_length &&
+      (text_len == 0 || !memcmp(g_mdbg.log_snapshot, text, text_len))) {
+    return;
+  }
+
   size_t skip = 0;
   if (g_mdbg.log_snapshot_length != 0 && text_len >= g_mdbg.log_snapshot_length &&
       !memcmp(g_mdbg.log_snapshot, text, g_mdbg.log_snapshot_length)) {
@@ -484,6 +630,7 @@ static void poll_log_monitor(uint64_t now_us) {
       log_debug("  [MDBG] log stream reset or truncated for %s",
                 g_mdbg.game.title_id);
       reset_log_line_buffer();
+      reset_fatal_error_buffer();
     }
   }
 
@@ -494,6 +641,18 @@ static void poll_log_monitor(uint64_t now_us) {
   }
 
   update_log_snapshot(text, text_len);
+}
+
+static void drain_log_monitor_before_clear(uint64_t now_us) {
+  poll_log_monitor(now_us);
+  if (!g_mdbg.game.active)
+    return;
+
+  flush_log_line(now_us);
+  if (!g_mdbg.game.active)
+    return;
+
+  finish_fatal_error(now_us);
 }
 
 static void start_log_monitoring(void) {
@@ -525,6 +684,7 @@ static void start_log_monitoring(void) {
 
   update_log_snapshot(text, text_len);
   reset_log_line_buffer();
+  reset_fatal_error_buffer();
 }
 
 static void handle_crash_candidate(uint64_t flags, uint64_t now_us) {
@@ -534,7 +694,7 @@ static void handle_crash_candidate(uint64_t flags, uint64_t now_us) {
   log_debug("  [MDBG] crash-candidate: %s pid=%ld flags=0x%08" PRIx64,
             g_mdbg.game.title_id, (long)g_mdbg.game.pid, flags);
 
-  handle_post_pause_failure("crash-candidate", now_us);
+  handle_post_pause_failure("crash-candidate", now_us, MDBG_FAILURE_GENERIC);
 }
 
 void sm_mdbg_init(void) {
@@ -577,6 +737,7 @@ void sm_mdbg_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id) {
 
   log_debug("  [MDBG] tracking crash-candidate state: %s pid=%ld app_id=0x%08X",
             g_mdbg.game.title_id, (long)pid, app_id);
+  start_log_monitoring();
 }
 
 void sm_mdbg_game_on_kstuff_pause(pid_t pid, uint64_t pause_time_us,
@@ -584,20 +745,29 @@ void sm_mdbg_game_on_kstuff_pause(pid_t pid, uint64_t pause_time_us,
   if (!g_mdbg.game.active || g_mdbg.game.pid != pid)
     return;
 
+  if (g_mdbg.game.log_monitoring_active) {
+    poll_log_monitor(pause_time_us);
+    if (!g_mdbg.game.active)
+      return;
+  }
+
   g_mdbg.game.pause_seen = true;
   g_mdbg.game.pause_time_us = pause_time_us;
   g_mdbg.game.monitor_deadline_us =
       g_mdbg.game.pause_time_us + MDBG_AUTOTUNE_WINDOW_US;
   g_mdbg.game.pause_delay_seconds = pause_delay_seconds;
   g_mdbg.game.next_poll_us = pause_time_us;
-  start_log_monitoring();
+  if (!g_mdbg.game.log_monitoring_active)
+    start_log_monitoring();
 }
 
 void sm_mdbg_game_on_exit(pid_t pid) {
   if (!g_mdbg.game.active || g_mdbg.game.pid != pid)
     return;
 
-  clear_tracked_game();
+  drain_log_monitor_before_clear(monotonic_time_us());
+  if (g_mdbg.game.active)
+    clear_tracked_game();
 }
 
 void sm_mdbg_game_shutdown(void) {
@@ -642,16 +812,23 @@ void sm_mdbg_poll(void) {
     return;
   }
 
-  poll_log_monitor(now_us);
-  if (!g_mdbg.game.active)
-    return;
+  if (g_mdbg.game.pause_seen || g_mdbg.fatal_error_active) {
+    poll_log_monitor(now_us);
+    if (!g_mdbg.game.active)
+      return;
+  }
 
   g_mdbg.game.next_poll_us = now_us + GAME_LIFECYCLE_POLL_INTERVAL_US;
+
+  if (g_mdbg.fatal_error_active)
+    return;
 
   uint64_t flags = 0;
   int ret = query_mdbg_flags(g_mdbg.game.pid, &flags);
   if (is_mdbg_process_gone_error(ret)) {
-    clear_tracked_game();
+    drain_log_monitor_before_clear(now_us);
+    if (g_mdbg.game.active)
+      clear_tracked_game();
     return;
   }
   if (ret != 0)
@@ -659,6 +836,12 @@ void sm_mdbg_poll(void) {
 
   if ((flags & MDBG_FLAG_EXCEPTION_STOP) == 0)
     return;
+
+  if (!g_mdbg.game.pause_seen) {
+    poll_log_monitor(now_us);
+    if (!g_mdbg.game.active || g_mdbg.fatal_error_active)
+      return;
+  }
 
   handle_crash_candidate(flags, now_us);
 }
