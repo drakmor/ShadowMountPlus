@@ -46,6 +46,8 @@ typedef enum {
 
 typedef struct {
   int fd;
+  bool owns_fd;      // Exactly one subscription closes each shared fd.
+  bool fd_shareable; // Cleared after terminal vnode events until rebuild.
   int scan_root_index;
   uint8_t depth;
   scanner_watch_kind_t kind;
@@ -66,6 +68,12 @@ typedef struct {
   uint64_t ready_after_us;
   char watch_tree_rebuild_path[MAX_PATH];
 } scanner_root_state_t;
+
+typedef struct {
+  int scan_root_index;
+  uint8_t depth;
+  scanner_watch_kind_t kind;
+} scanner_event_subscription_t;
 
 static int g_scanner_wake_pipe[2] = {-1, -1};
 static atomic_bool g_usb_watches_suspended = ATOMIC_VAR_INIT(true);
@@ -157,8 +165,10 @@ static void close_scanner_manual_file(void) {
 
 static void clear_scanner_watch_entries(void) {
   for (size_t i = 0; i < g_scanner_watch_count; i++) {
-    if (g_scanner_watch_entries[i].fd >= 0)
+    if (g_scanner_watch_entries[i].owns_fd &&
+        g_scanner_watch_entries[i].fd >= 0) {
       close(g_scanner_watch_entries[i].fd);
+    }
   }
   free(g_scanner_watch_entries);
   free(g_scanner_watch_fd_index);
@@ -289,6 +299,8 @@ static bool rebuild_scanner_watch_fd_index_with_count(size_t watch_count) {
     g_scanner_watch_fd_index[i] = SCANNER_WATCH_INDEX_NONE;
 
   for (size_t i = 0; i < g_scanner_watch_count; i++) {
+    if (!g_scanner_watch_entries[i].owns_fd)
+      continue;
     if (!insert_scanner_watch_fd_index_entry(
             (uintptr_t)g_scanner_watch_entries[i].fd, i)) {
       return false;
@@ -355,10 +367,32 @@ static void rebind_scanner_watch_entry_root_index(size_t old_index,
   }
 }
 
+static size_t append_scanner_watch_subscription(
+    int fd, bool owns_fd, int scan_root_index, const char *path,
+    scanner_watch_kind_t kind, uint8_t depth) {
+  size_t index = g_scanner_watch_count++;
+  scanner_watch_entry_t *entry = &g_scanner_watch_entries[index];
+  memset(entry, 0, sizeof(*entry));
+  entry->fd = fd;
+  entry->owns_fd = owns_fd;
+  entry->fd_shareable = true;
+  entry->scan_root_index = scan_root_index;
+  entry->depth = depth;
+  entry->kind = kind;
+  entry->prev_root_watch_index = SCANNER_WATCH_INDEX_NONE;
+  entry->next_root_watch_index = SCANNER_WATCH_INDEX_NONE;
+  (void)strlcpy(entry->path, path, sizeof(entry->path));
+  link_scanner_watch_entry_to_root(index);
+  return index;
+}
+
 static bool register_scanner_watch_entry(int kq, int scan_root_index,
                                          const char *path,
                                          scanner_watch_kind_t kind,
                                          uint8_t depth) {
+  if (!ensure_scanner_watch_capacity(g_scanner_watch_count + 1u))
+    return false;
+
   int fd = open(path, O_RDONLY | O_DIRECTORY);
   if (fd < 0) {
     if (errno != ENOENT && errno != ENOTDIR) {
@@ -368,10 +402,46 @@ static bool register_scanner_watch_entry(int kq, int scan_root_index,
     return true;
   }
 
-  if (!ensure_scanner_watch_capacity(g_scanner_watch_count + 1u)) {
-    close(fd);
-    return false;
+  struct stat opened_st;
+  bool opened_identity_checked = false;
+  bool opened_identity_ready = false;
+  int shared_fd = -1;
+  for (size_t i = 0; i < g_scanner_watch_count; i++) {
+    const scanner_watch_entry_t *existing = &g_scanner_watch_entries[i];
+    if (!existing->fd_shareable || strcmp(existing->path, path) != 0)
+      continue;
+    if (existing->fd != shared_fd) {
+      struct stat existing_st;
+      if (!opened_identity_checked) {
+        opened_identity_ready = fstat(fd, &opened_st) == 0;
+        opened_identity_checked = true;
+      }
+      if (!opened_identity_ready || fstat(existing->fd, &existing_st) != 0 ||
+          existing_st.st_dev != opened_st.st_dev ||
+          existing_st.st_ino != opened_st.st_ino) {
+        continue;
+      }
+    }
+    if (existing->scan_root_index == scan_root_index) {
+      if (existing->kind == kind && existing->depth == depth) {
+        close(fd);
+        return true;
+      }
+      log_debug("  [SCAN] conflicting watcher subscription for %s", path);
+      close(fd);
+      return false;
+    }
+    if (shared_fd < 0)
+      shared_fd = existing->fd;
   }
+
+  if (shared_fd >= 0) {
+    close(fd);
+    (void)append_scanner_watch_subscription(
+        shared_fd, false, scan_root_index, path, kind, depth);
+    return true;
+  }
+
   if (!ensure_scanner_watch_fd_index_capacity(g_scanner_watch_count + 1u)) {
     close(fd);
     return false;
@@ -389,20 +459,12 @@ static bool register_scanner_watch_entry(int kq, int scan_root_index,
     return false;
   }
 
-  scanner_watch_entry_t *entry = &g_scanner_watch_entries[g_scanner_watch_count++];
-  memset(entry, 0, sizeof(*entry));
-  entry->fd = fd;
-  entry->scan_root_index = scan_root_index;
-  entry->depth = depth;
-  entry->kind = kind;
-  entry->prev_root_watch_index = SCANNER_WATCH_INDEX_NONE;
-  entry->next_root_watch_index = SCANNER_WATCH_INDEX_NONE;
-  (void)strlcpy(entry->path, path, sizeof(entry->path));
-  link_scanner_watch_entry_to_root(g_scanner_watch_count - 1u);
-  if (!insert_scanner_watch_fd_index_entry((uintptr_t)fd,
-                                           g_scanner_watch_count - 1u)) {
-    unlink_scanner_watch_entry_from_root(g_scanner_watch_count - 1u);
-    memset(entry, 0, sizeof(*entry));
+  size_t entry_index = append_scanner_watch_subscription(
+      fd, true, scan_root_index, path, kind, depth);
+  if (!insert_scanner_watch_fd_index_entry((uintptr_t)fd, entry_index)) {
+    unlink_scanner_watch_entry_from_root(entry_index);
+    memset(&g_scanner_watch_entries[entry_index], 0,
+           sizeof(g_scanner_watch_entries[entry_index]));
     close(fd);
     g_scanner_watch_count--;
     (void)rebuild_scanner_watch_fd_index();
@@ -415,9 +477,22 @@ static void remove_scanner_watch_entry_at(size_t index) {
   if (index >= g_scanner_watch_count)
     return;
 
+  scanner_watch_entry_t *removed = &g_scanner_watch_entries[index];
+  int removed_fd = removed->fd;
+  bool close_fd = removed->owns_fd && removed_fd >= 0;
+
   unlink_scanner_watch_entry_from_root(index);
-  if (g_scanner_watch_entries[index].fd >= 0)
-    close(g_scanner_watch_entries[index].fd);
+  if (close_fd) {
+    for (size_t i = 0; i < g_scanner_watch_count; i++) {
+      if (i == index || g_scanner_watch_entries[i].fd != removed_fd)
+        continue;
+      g_scanner_watch_entries[i].owns_fd = true;
+      close_fd = false;
+      break;
+    }
+  }
+  if (close_fd)
+    close(removed_fd);
 
   size_t last_index = g_scanner_watch_count - 1u;
   if (index != last_index) {
@@ -542,20 +617,20 @@ static bool resolve_existing_parent_directory_path(
   }
 }
 
-static bool resolve_watch_tree_rebuild_target(const scanner_watch_entry_t *entry,
-                                              char rebuild_path[MAX_PATH],
-                                              uint8_t *rebuild_depth_out,
-                                              scanner_watch_kind_t *kind_out) {
-  switch (entry->kind) {
+static bool resolve_watch_tree_rebuild_target(
+    const scanner_event_subscription_t *subscription, const char *watched_path,
+    char rebuild_path[MAX_PATH],
+    uint8_t *rebuild_depth_out, scanner_watch_kind_t *kind_out) {
+  switch (subscription->kind) {
   case SCANNER_WATCH_SCAN_ROOT:
   case SCANNER_WATCH_SCAN_SUBDIR:
-    (void)strlcpy(rebuild_path, entry->path, MAX_PATH);
-    *rebuild_depth_out = entry->depth;
-    *kind_out = entry->kind;
+    (void)strlcpy(rebuild_path, watched_path, MAX_PATH);
+    *rebuild_depth_out = subscription->depth;
+    *kind_out = subscription->kind;
     return true;
   case SCANNER_WATCH_SCAN_ROOT_PARENT:
-    (void)strlcpy(rebuild_path, get_scan_path(entry->scan_root_index),
-                  MAX_PATH);
+    (void)strlcpy(rebuild_path,
+                  get_scan_path(subscription->scan_root_index), MAX_PATH);
     *rebuild_depth_out = 0;
     *kind_out = SCANNER_WATCH_SCAN_ROOT;
     return true;
@@ -755,16 +830,17 @@ static bool scanner_event_requires_consistency_cleanup(uint32_t fflags) {
 }
 
 static bool scanner_event_requires_watch_tree_refresh(
-    const scanner_watch_entry_t *entry, uint32_t fflags) {
+    const scanner_event_subscription_t *subscription, uint32_t fflags) {
   uint32_t tree_change_flags =
       NOTE_WRITE | NOTE_EXTEND | NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE;
 
-  switch (entry->kind) {
+  switch (subscription->kind) {
   case SCANNER_WATCH_SCAN_ROOT:
     return (fflags & tree_change_flags) != 0;
   case SCANNER_WATCH_SCAN_SUBDIR:
-    return entry->depth <
-               get_scan_depth_for_root(get_scan_path(entry->scan_root_index)) &&
+    return subscription->depth <
+               get_scan_depth_for_root(
+                   get_scan_path(subscription->scan_root_index)) &&
            (fflags & tree_change_flags) != 0;
   default:
     return false;
@@ -772,16 +848,19 @@ static bool scanner_event_requires_watch_tree_refresh(
 }
 
 static void schedule_scan_root_watch_tree_rebuild(
-    const scanner_watch_entry_t *entry) {
+    const scanner_event_subscription_t *subscription,
+    const char *watched_path) {
   char rebuild_path[MAX_PATH];
   uint8_t rebuild_depth = 0;
   scanner_watch_kind_t rebuild_kind = SCANNER_WATCH_SCAN_ROOT;
-  if (!resolve_watch_tree_rebuild_target(entry, rebuild_path, &rebuild_depth,
+  if (!resolve_watch_tree_rebuild_target(subscription, watched_path,
+                                         rebuild_path, &rebuild_depth,
                                          &rebuild_kind)) {
     return;
   }
 
-  scanner_root_state_t *state = &g_scanner_root_states[entry->scan_root_index];
+  scanner_root_state_t *state =
+      &g_scanner_root_states[subscription->scan_root_index];
   if (!state->watch_tree_stale || state->watch_tree_rebuild_path[0] == '\0') {
     state->watch_tree_stale = true;
     state->watch_tree_rebuild_depth = rebuild_depth;
@@ -815,7 +894,7 @@ static void schedule_scan_root_watch_tree_rebuild(
   state->watch_tree_rebuild_depth = 0;
   state->watch_tree_rebuild_kind = SCANNER_WATCH_SCAN_ROOT;
   (void)strlcpy(state->watch_tree_rebuild_path,
-                get_scan_path(entry->scan_root_index),
+                get_scan_path(subscription->scan_root_index),
                 sizeof(state->watch_tree_rebuild_path));
 }
 
@@ -1133,29 +1212,31 @@ static const struct timespec *build_wait_timeout(struct timespec *timeout,
 }
 
 static bool handle_scan_root_parent_event(
-    int kq, const scanner_watch_entry_t *entry, uint64_t now_us) {
-  const char *scan_root = get_scan_path(entry->scan_root_index);
+    int kq, const scanner_event_subscription_t *subscription,
+    const char *watched_path, uint64_t now_us) {
+  int scan_root_index = subscription->scan_root_index;
+  const char *scan_root = get_scan_path(scan_root_index);
   bool root_present = false;
-  bool root_changed = update_scan_root_presence_state(
-      entry->scan_root_index, scan_root, &root_present);
+  bool root_changed = update_scan_root_presence_state(scan_root_index, scan_root,
+                                                       &root_present);
   if (root_present && root_changed) {
-    schedule_scan_root_dirty(entry->scan_root_index, now_us, false);
-    schedule_scan_root_watch_tree_rebuild(entry);
+    schedule_scan_root_dirty(scan_root_index, now_us, false);
+    schedule_scan_root_watch_tree_rebuild(subscription, watched_path);
     return true;
   }
   if (root_present)
     return true;
   if (root_changed) {
-    schedule_scan_root_cleanup(entry->scan_root_index);
-    schedule_scan_root_dirty(entry->scan_root_index, now_us, true);
-    schedule_scan_root_watch_tree_rebuild(entry);
+    schedule_scan_root_cleanup(scan_root_index);
+    schedule_scan_root_dirty(scan_root_index, now_us, true);
+    schedule_scan_root_watch_tree_rebuild(subscription, watched_path);
     return true;
   }
 
   char parent_path[MAX_PATH];
   if (!resolve_existing_parent_directory_path(scan_root, parent_path) ||
-      strcmp(parent_path, entry->path) != 0) {
-    return rebuild_scan_root_watch_tree(kq, entry->scan_root_index);
+      strcmp(parent_path, watched_path) != 0) {
+    return rebuild_scan_root_watch_tree(kq, scan_root_index);
   }
 
   return true;
@@ -1211,25 +1292,61 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
       continue;
     }
 
-    scanner_watch_entry_t *watch_entry =
+    scanner_watch_entry_t *watch_owner =
         find_scanner_watch_entry_by_fd(event->ident);
-    if (!watch_entry)
+    if (!watch_owner)
       continue;
 
-    if (watch_entry->kind == SCANNER_WATCH_SCAN_ROOT_PARENT) {
-      if (!handle_scan_root_parent_event(kq, watch_entry, now_us))
+    scanner_event_subscription_t subscriptions[MAX_SCAN_PATHS];
+    size_t subscription_count = 0;
+    char watched_path[MAX_PATH];
+    (void)strlcpy(watched_path, watch_owner->path, sizeof(watched_path));
+    bool immediate =
+        scanner_event_requires_consistency_cleanup(event->fflags);
+
+    for (size_t watch_index = 0; watch_index < g_scanner_watch_count;
+         watch_index++) {
+      scanner_watch_entry_t *entry = &g_scanner_watch_entries[watch_index];
+      if ((uintptr_t)entry->fd != event->ident)
+        continue;
+      if (immediate)
+        entry->fd_shareable = false;
+      if (subscription_count >= MAX_SCAN_PATHS) {
+        log_debug("  [SCAN] too many watcher subscriptions for %s",
+                  watched_path);
         return false;
-      continue;
+      }
+      subscriptions[subscription_count++] =
+          (scanner_event_subscription_t){
+              .scan_root_index = entry->scan_root_index,
+              .depth = entry->depth,
+              .kind = entry->kind,
+          };
     }
 
-    bool immediate =
-        (event->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0;
-    if (scanner_event_requires_consistency_cleanup(event->fflags))
-      schedule_scan_root_cleanup(watch_entry->scan_root_index);
-    schedule_scan_root_dirty(watch_entry->scan_root_index, now_us, immediate);
+    for (size_t subscription_index = 0;
+         subscription_index < subscription_count; subscription_index++) {
+      const scanner_event_subscription_t *subscription =
+          &subscriptions[subscription_index];
 
-    if (scanner_event_requires_watch_tree_refresh(watch_entry, event->fflags))
-      schedule_scan_root_watch_tree_rebuild(watch_entry);
+      if (subscription->kind == SCANNER_WATCH_SCAN_ROOT_PARENT) {
+        if (!handle_scan_root_parent_event(kq, subscription, watched_path,
+                                           now_us)) {
+          return false;
+        }
+        continue;
+      }
+
+      if (immediate)
+        schedule_scan_root_cleanup(subscription->scan_root_index);
+      schedule_scan_root_dirty(subscription->scan_root_index, now_us,
+                               immediate);
+
+      if (scanner_event_requires_watch_tree_refresh(subscription,
+                                                    event->fflags)) {
+        schedule_scan_root_watch_tree_rebuild(subscription, watched_path);
+      }
+    }
   }
 
   return true;
@@ -1389,7 +1506,6 @@ void sm_scanner_run_loop(void) {
     request_scanner_shutdown("scanner watcher initialization failed");
     return;
   }
-
   uint64_t next_full_resync_us =
       monotonic_time_us() + scanner_full_resync_interval_us();
   bool was_sleeping = false;
