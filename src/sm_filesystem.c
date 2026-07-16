@@ -776,8 +776,8 @@ bool mount_backport_overlay(const char *mount_point,
   int overlay_err = errno;
   log_debug("  [IMG] backport overlay failed: %s -> %s (%s)", backport_path,
             mount_point, strerror(overlay_err));
-  notify_system("Backport overlay failed: %s\n%s\n0x%08X", title_id,
-                backport_path, (uint32_t)overlay_err);
+  notify_system_l10n(SM_L10N_BACKPORT_OVERLAY_FAILED, title_id, backport_path,
+                     (uint32_t)overlay_err);
   return false;
 }
 

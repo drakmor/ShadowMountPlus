@@ -708,8 +708,8 @@ static bool apply_kstuff_enabled_state(bool enabled, bool notify_user,
   if (fully_applied) {
     log_debug("  [KSTUFF] %s both sysentvecs", enabled ? "enabled" : "disabled");
     if (notify_user) {
-      notify_system_info(enabled ? "KStuff active again"
-                                 : "KStuff paused while the game is running");
+      notify_system_info_l10n(enabled ? SM_L10N_KSTUFF_ACTIVE
+                                      : SM_L10N_KSTUFF_PAUSED);
     }
   } else {
     log_debug("  [KSTUFF] %s request incomplete (ps5=%s ps4=%s)",

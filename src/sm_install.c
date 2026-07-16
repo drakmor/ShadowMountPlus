@@ -335,8 +335,8 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   if (sm_shellcore_install_bridge_enabled()) {
     if (!sm_shellcore_install_title_dir(title_id, APP_BASE "/", &res)) {
       log_debug("  [REG] internal AppInstallTitleDir bridge unavailable");
-      notify_system("Register failed: %s (%s)\nTitleDir bridge unavailable",
-                    title_name, title_id);
+      notify_system_l10n(SM_L10N_REGISTER_BRIDGE_UNAVAILABLE, title_name,
+                         title_id);
       return false;
     }
     mark_register_attempted(title_id);
@@ -345,8 +345,8 @@ static bool mount_and_install(const char *src_path, const char *title_id,
         resolve_app_install_title_dir();
     if (!app_install_title_dir_fn) {
       log_debug("  [REG] sceAppInstUtilAppInstallTitleDir unavailable");
-      notify_system("Register failed: %s (%s)\nAppInstallTitleDir unavailable",
-                    title_name, title_id);
+      notify_system_l10n(SM_L10N_REGISTER_FAILED_UNAVAILABLE, title_name,
+                         title_id);
       return false;
     }
     mark_register_attempted(title_id);
@@ -368,8 +368,8 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     // Silent on restore/remount to avoid spam
   } else {
     log_debug("  [REG] FAIL: 0x%x", res);
-    notify_system("Register failed: %s (%s)\ncode=0x%08X", title_name, title_id,
-                  (uint32_t)res);
+    notify_system_l10n(SM_L10N_REGISTER_FAILED_CODE, title_name, title_id,
+                       (uint32_t)res);
     return false;
   }
 
@@ -397,8 +397,8 @@ void process_scan_candidates(const scan_candidate_t *candidates,
     } else {
       log_debug("  [ACTION] Installing: %s (%s)", c->title_name, c->title_id);
       if (!use_app_install_all) {
-        notify_system_info("Installing: %s (%s)...", c->title_name,
-                           c->title_id);
+        notify_system_info_l10n(SM_L10N_INSTALLING, c->title_name,
+                                c->title_id);
       }
     }
 

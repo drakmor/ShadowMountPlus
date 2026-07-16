@@ -7,6 +7,7 @@
 #include "sm_config_mount.h"
 #include "sm_types.h"
 #include "sm_limits.h"
+#include "sm_l10n.h"
 #include "sm_log.h"
 #include "sm_mount_defs.h"
 #include "sm_mount_device.h"
@@ -264,6 +265,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
       DEFAULT_KSTUFF_PAUSE_DELAY_IMAGE_SECONDS;
   state->cfg.kstuff_pause_delay_direct_seconds =
       DEFAULT_KSTUFF_PAUSE_DELAY_DIRECT_SECONDS;
+  state->cfg.language_id = SM_LANGUAGE_AUTO;
   state->cfg.exfat_backend = default_exfat_backend();
   state->cfg.ufs_backend = default_ufs_backend();
   state->cfg.lvd_sector_exfat = LVD_SECTOR_SIZE_EXFAT;
@@ -1168,6 +1170,19 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "language") == 0 || strcasecmp(key, "lang") == 0 ||
+        strcasecmp(key, "locale") == 0) {
+      int32_t language_id = SM_LANGUAGE_AUTO;
+      if (!sm_l10n_parse_language_id(value, &language_id)) {
+        log_debug("  [CFG] invalid language at line %d: %s=%s "
+                  "(use auto or a supported locale like en-US, ru-RU)",
+                  line_no, key, value);
+        continue;
+      }
+      state->cfg.language_id = language_id;
+      continue;
+    }
+
     if (strcasecmp(key, "api_bind_address") == 0) {
       struct in_addr address;
       if (strlen(value) >= sizeof(state->cfg.api_bind_address) ||
@@ -1544,7 +1559,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       kstuff_delay_rule_count++;
   }
 
-  log_debug("  [CFG] loaded: debug=%d quiet=%d ro=%d force=%d "
+  log_debug("  [CFG] loaded: debug=%d quiet=%d language=%s ro=%d force=%d "
             "persistent_image_mounts=%d app_install_all=%d "
             "auto_remove_missing_games=%d "
             "auto_remove_games_with_dlc=%d auto_remove_missing_delay_s=%u "
@@ -1559,6 +1574,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d "
             "kstuff_no_pause=%d kstuff_delay_rules=%d",
             state->cfg.debug_enabled ? 1 : 0, state->cfg.quiet_mode ? 1 : 0,
+            sm_l10n_language_name(state->cfg.language_id),
             state->cfg.mount_read_only ? 1 : 0,
             state->cfg.force_mount ? 1 : 0,
             state->cfg.persistent_image_mounts ? 1 : 0,

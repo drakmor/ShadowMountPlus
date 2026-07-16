@@ -21,6 +21,12 @@
 # Default: 0
 # quiet_mode=0
 
+# Notification language:
+# auto -> use the console system language
+# Or set a supported locale, for example: en-US, ru-RU, de-DE, fr-FR, es-ES
+# Default: auto
+# language=auto
+
 # Public HTTP/JSON API listener:
 # The loopback default accepts connections only from software running on the PS5.
 # Use 0.0.0.0 explicitly if remote devices on the network must connect.

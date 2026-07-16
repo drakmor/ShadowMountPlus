@@ -54,6 +54,7 @@ int sceAppInstUtilAppInstallAll(void *reserved);
 int sceAppInstUtilAppUnInstall(const char *title_id);
 int sceKernelGetAppInfo(pid_t pid, app_info_t *info);
 int sceKernelUsleep(unsigned int microseconds);
+int32_t sceSystemServiceParamGetInt(int32_t param_id, int32_t *value);
 int sceUserServiceInitialize(void *);
 void sceUserServiceTerminate(void);
 

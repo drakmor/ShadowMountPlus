@@ -23,6 +23,7 @@ SRCS := src/main.c $(wildcard src/sm_*.c) $(ASSET_SRCS)
 ASM_SRCS := src/sm_shellcore_bridge.S
 OBJS := $(SRCS:.c=.o) $(ASM_SRCS:.S=.o)
 HEADERS := $(wildcard include/*.h)
+L10N_CATALOGS := $(wildcard include/lang/*.inc)
 
 # Targets
 all: shadowmountplus.elf
@@ -44,6 +45,8 @@ src/config_ini_example_asset.c: config.ini.example
 	xxd -i $< > $@
 
 src/sm_api_service.o: CFLAGS += $(JSON_CFLAGS)
+
+src/sm_l10n.o: $(L10N_CATALOGS)
 
 src/%.o: src/%.c $(HEADERS)
 	$(CC) $(CFLAGS) -c -o $@ $<
