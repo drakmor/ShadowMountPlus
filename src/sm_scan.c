@@ -60,6 +60,17 @@ static void note_found_title(const char *title_id) {
                 sizeof(g_scan_workspace.found_titles[slot]));
 }
 
+static bool mount_persistent_indexed_image(const char *image_path,
+                                           const char *image_name,
+                                           bool *unstable_found_out) {
+  bool image_unstable = false;
+  if (maybe_mount_image_file(image_path, image_name, &image_unstable))
+    return true;
+  if (image_unstable && unstable_found_out)
+    *unstable_found_out = true;
+  return false;
+}
+
 static bool blocked_ppsa_uninstall_requested(const char *title_id) {
   if (!title_id || title_id[0] == '\0')
     return false;
@@ -522,11 +533,17 @@ static bool collect_candidate_image_visit(const char *image_path,
   struct stat image_st;
   if (stat(image_path, &image_st) != 0)
     return true;
-  bool persistent_image = !is_under_image_mount_base(image_path);
-  if (persistent_image &&
-      sm_image_index_visit_ready_titles(
-          image_path, &image_st, ctx->app_db->titles,
-          ctx->app_db->titles_ready, note_found_title)) {
+  bool indexed_image = !is_under_image_mount_base(image_path);
+  bool index_ready =
+      indexed_image && sm_image_index_visit_ready_titles(
+                           image_path, &image_st, ctx->app_db->titles,
+                           ctx->app_db->titles_ready, note_found_title);
+  if (index_ready && !runtime_config()->persistent_image_mounts)
+    return true;
+
+  if (index_ready) {
+    (void)mount_persistent_indexed_image(image_path, image_name,
+                                         ctx->unstable_found_out);
     return true;
   }
   bool image_unstable = false;
@@ -535,7 +552,7 @@ static bool collect_candidate_image_visit(const char *image_path,
       *ctx->unstable_found_out = true;
     return true;
   }
-  if (persistent_image)
+  if (indexed_image)
     sm_image_index_begin_scan(image_path, &image_st);
 
   char mount_point[MAX_PATH];
@@ -547,7 +564,7 @@ static bool collect_candidate_image_visit(const char *image_path,
       &image_unstable);
   if (image_unstable && ctx->unstable_found_out)
     *ctx->unstable_found_out = true;
-  if (persistent_image && !image_unstable && !should_stop_requested() &&
+  if (indexed_image && !image_unstable && !should_stop_requested() &&
       !runtime_sleep_mode_active()) {
     sm_image_index_complete_scan(image_path);
   }
@@ -622,9 +639,26 @@ static void collect_scan_candidates_from_manual_path(
   const char *name = get_filename_component(manual_path);
   if (S_ISREG(st.st_mode) &&
       is_supported_image_file_path(manual_path, name)) {
-    if (sm_image_index_visit_ready_titles(
-            manual_path, &st, app_db->titles, app_db->titles_ready,
-            note_found_title)) {
+    bool index_ready = sm_image_index_visit_ready_titles(
+        manual_path, &st, app_db->titles, app_db->titles_ready,
+        note_found_title);
+    if (index_ready && !runtime_config()->persistent_image_mounts)
+      return;
+
+    if (index_ready) {
+      if (!mount_persistent_indexed_image(manual_path, name,
+                                          unstable_found_out)) {
+        return;
+      }
+
+      char mount_point[MAX_PATH];
+      get_image_mount_point_for_source(manual_path, mount_point);
+      if (is_pfsc_image_mount_base_or_child(mount_point)) {
+        collect_scan_candidates_from_manual_root(
+            mount_point, manual_path, candidates, max_candidates,
+            candidate_count, app_db, discovered_param_roots,
+            discovered_param_root_count, unstable_found_out);
+      }
       return;
     }
     bool image_unstable = false;
@@ -809,7 +843,8 @@ bool release_scan_runtime_mounts(void) {
     runtime_mount_state_unlock();
     return false;
   }
-  bool released = release_runtime_image_mounts();
+  bool released = runtime_config()->persistent_image_mounts ||
+                  release_runtime_image_mounts();
   runtime_mount_state_unlock();
   return released;
 }

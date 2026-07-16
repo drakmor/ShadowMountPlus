@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include "sm_config_mount.h"
 #include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
 #include "sm_gameinfo.h"
@@ -382,7 +383,7 @@ static bool release_title_runtime(const char *title_id,
     released = diagnose_busy
                    ? unmount_title_runtime_layers(title_id)
                    : unmount_title_runtime_layers_quiet(title_id);
-    if (released)
+    if (released && !runtime_config()->persistent_image_mounts)
       released = release_backing_image(title_id);
     release_errno = released ? 0 : errno;
     runtime_mount_state_unlock();

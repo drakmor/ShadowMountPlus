@@ -81,6 +81,8 @@ Mount mutations remain conservative. They return HTTP 409 with `status` set to
 during suspend, or while a conflicting mount/release is in progress. Clients
 must not retry this response in a tight loop. HTTP 404 with `ENOENT` means the
 title has no ShadowMount `mount.lnk` tracker.
+With `persistent_image_mounts=1`, unmounting a game releases its per-title
+runtime layers but keeps the backing image mounted.
 
 ## Test client
 

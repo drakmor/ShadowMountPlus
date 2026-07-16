@@ -58,6 +58,7 @@ Supported keys (all optional):
 - `api_port=<1..65535>` (HTTP/JSON API port; default: `10101`)
 - `mount_read_only=1|0` (default: `1`)
 - `force_mount=1|0` (mounting even damaged file systems; default: `0`)
+- `persistent_image_mounts=1|0` (`1` keeps discovered images mounted between game launches; default: `0`)
 - `app_install_all=1|0` (`1` stages new titles and submits them through the stock batch `sceAppInstUtilAppInstallAll`; default: `0` on every firmware. On FW `12.00+`, the default per-title path is provided by the SceShellCore TitleDir bridge.)
 - `auto_remove_missing_games=1|0` (`1` automatically removes games from the system library when their source is no longer available; default: `0`)
 - `auto_remove_games_with_dlc=1|0` (`1` allows automatic removal of games that have installed DLC; default: `0`)
@@ -109,6 +110,12 @@ image_rw=MYGame 123.exfat
 image_ro=legacy_dump.ffpkg
 image_sector=MYGame 123.exfat:65536
 ```
+
+Persistent image mount behavior:
+- With `persistent_image_mounts=0` (default), backing images are mounted when a game starts and released after it exits.
+- With `persistent_image_mounts=1`, images discovered during scans remain mounted between launches. Per-title runtime and backport layers are still mounted only when needed.
+- USB-backed images are always released during suspend and mounted again by the resume scan.
+- Persistent mode consumes one backing device per mounted image layer and is intended for libraries that fit the available LVD/MD device capacity.
 
 Per-image sector override behavior:
 - Match is done by image file name (without path).

@@ -920,6 +920,13 @@ static bool apply_runtime_config_reload_effects(int kq,
     reset_missing_game_cache_timers();
   }
 
+  if (old_cfg->persistent_image_mounts !=
+      new_cfg->persistent_image_mounts) {
+    request_scan_now(new_cfg->persistent_image_mounts
+                         ? "persistent image mounting enabled"
+                         : "persistent image mounting disabled");
+  }
+
   if (scan_topology_changed) {
     clear_scanner_watch_entries();
     reset_scanner_root_states();

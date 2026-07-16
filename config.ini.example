@@ -40,6 +40,13 @@
 # Default: 0
 # force_mount=0
 
+# Keep discovered images mounted between game launches:
+# 1/true/yes/on  -> mount during scans and keep images mounted
+# 0/false/no/off -> mount images on demand for each game (default)
+# USB-backed images are still unmounted during suspend.
+# Default: 0
+# persistent_image_mounts=0
+
 # Use batch registration for newly staged titles:
 # 1/true/yes/on  -> submit queued installs through sceAppInstUtilAppInstallAll
 # 0/false/no/off -> register each title directly

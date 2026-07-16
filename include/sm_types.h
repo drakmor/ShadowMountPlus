@@ -108,6 +108,7 @@ typedef struct runtime_config {
   bool quiet_mode;
   bool mount_read_only;
   bool force_mount;
+  bool persistent_image_mounts;
   bool app_install_all_enabled;
   bool auto_remove_missing_games;
   bool auto_remove_games_with_dlc;
