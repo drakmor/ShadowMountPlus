@@ -507,6 +507,12 @@ static bool get_cached_app_db_title_list(
     bool *cache_ready, time_t *cache_mtime, load_app_db_title_list_fn load_fn) {
   free_app_db_title_list(list_out);
 
+  // ShellCore can keep app.db busy for several five-second timeout windows
+  // immediately after WORKING. The pre-suspend snapshot is sufficient for
+  // mounting already registered games and keeps resume scans non-blocking.
+  if (*cache_ready && runtime_resume_grace_active())
+    return copy_app_db_title_list(list_out, cache);
+
   struct stat st;
   int app_db_stat_rc = stat(APP_DB_PATH, &st);
   if (!*cache_ready ||

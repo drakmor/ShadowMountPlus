@@ -700,7 +700,6 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
         "SceSystemStateMgrStatus=SHELLUI_SHUTDOWN_IN_PROGRESS");
   }
   if (entered_resume_working) {
-    request_scan_now("SceSystemStateMgrInfo=WORKING");
     request_runtime_sleep_mode(false, "SceSystemStateMgrInfo=WORKING");
   }
 }

@@ -15,6 +15,8 @@ bool should_stop_requested(void);
 void request_shutdown_stop(const char *reason);
 // Return true when the payload is paused for system suspend/resume.
 bool runtime_sleep_mode_active(void);
+// Return true while a launch may briefly wait for USB storage after resume.
+bool runtime_resume_grace_active(void);
 // Enter or leave sleep mode with a descriptive source string.
 // Returns true when the runtime sleep state changed.
 bool request_runtime_sleep_mode(bool active, const char *reason);

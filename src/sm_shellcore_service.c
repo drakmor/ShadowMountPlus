@@ -10,6 +10,7 @@
 #include "sm_game_lifecycle.h"
 #include "sm_gameinfo.h"
 #include "sm_image.h"
+#include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_path_utils.h"
 #include "sm_runtime.h"
@@ -264,6 +265,59 @@ static bool prepare_image_source(const char *title_id,
   return false;
 }
 
+static bool resumed_runtime_source_ready(const char *title_id,
+                                         char runtime_source[MAX_PATH]) {
+  char refreshed_source[MAX_PATH];
+  if (read_mount_link(title_id, refreshed_source, sizeof(refreshed_source)) &&
+      strcmp(refreshed_source, runtime_source) != 0) {
+    (void)strlcpy(runtime_source, refreshed_source, MAX_PATH);
+    log_debug("  [SHELLCORE] resumed source path updated: %s -> %s", title_id,
+              runtime_source);
+  }
+
+  if (is_usb_storage_path(runtime_source)) {
+    char eboot_path[MAX_PATH];
+    int written =
+        snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", runtime_source);
+    return written > 0 && (size_t)written < sizeof(eboot_path) &&
+           path_exists(eboot_path);
+  }
+  if (!is_under_image_mount_base(runtime_source))
+    return true;
+
+  char image_chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH];
+  size_t image_count = 0;
+  if (!read_mount_image_chain(title_id, image_chain, &image_count) ||
+      image_count == 0) {
+    return false;
+  }
+  return !is_usb_storage_path(image_chain[0]) || path_exists(image_chain[0]);
+}
+
+static bool wait_for_resumed_runtime_source(const char *title_id,
+                                            char runtime_source[MAX_PATH]) {
+  if (!runtime_resume_grace_active())
+    return true;
+
+  if (resumed_runtime_source_ready(title_id, runtime_source))
+    return true;
+
+  log_debug("  [SHELLCORE] waiting for resumed source: %s", title_id);
+  while (runtime_resume_grace_active() && !runtime_sleep_mode_active() &&
+         !should_stop_requested() && !shellcore_service_stopping()) {
+    if (resumed_runtime_source_ready(title_id, runtime_source)) {
+      log_debug("  [SHELLCORE] resumed source ready: %s", title_id);
+      return true;
+    }
+    (void)sceKernelUsleep(RUNTIME_RESUME_POLL_US);
+  }
+  if (runtime_sleep_mode_active() || should_stop_requested() ||
+      shellcore_service_stopping()) {
+    return false;
+  }
+  return resumed_runtime_source_ready(title_id, runtime_source);
+}
+
 static bool prepare_title_runtime(const char *title_id,
                                   const char *source_path) {
   if (!prepare_image_source(title_id, source_path))
@@ -294,6 +348,8 @@ static int mount_managed_title_runtime(const char *title_id,
   char source_path[MAX_PATH];
   if (!read_mount_link(title_id, source_path, sizeof(source_path)))
     return allow_unmanaged ? 0 : ENOENT;
+  if (!wait_for_resumed_runtime_source(title_id, source_path))
+    return EIO;
 
   bool claimed = false;
   int claim_status =

@@ -18,6 +18,9 @@ bool is_pfsc_image_mount_base_or_child(const char *path);
 bool path_matches_root_or_child(const char *path, const char *root);
 // Return true when a path lives on USB-backed storage.
 bool is_usb_storage_path(const char *path);
+// Return true when the path's USB root is mounted, not just an empty mount
+// point under /mnt.
+bool usb_storage_root_mounted(const char *path);
 // Build "<scan_path>/backports" for a managed scan root.
 bool build_backports_root_path(const char *scan_path, char out[MAX_PATH]);
 

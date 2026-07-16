@@ -780,12 +780,21 @@ static bool suspend_usb_scan_root_watch_trees(void) {
   return !removed_any || rebuild_scanner_watch_fd_index();
 }
 
+static void schedule_scan_root_dirty(int scan_root_index, uint64_t now_us,
+                                     bool immediate);
+
 static bool resume_usb_scan_root_watch_trees(int kq) {
+  uint64_t now_us = monotonic_time_us();
   for (int i = 0; i < get_scan_path_count(); i++) {
-    if (!is_usb_storage_path(get_scan_path(i)))
+    const char *scan_root = get_scan_path(i);
+    if (!is_usb_storage_path(scan_root))
       continue;
+    // Rebuild every configured USB root because the same disk can resume
+    // under a different usbN assignment.
     if (!rebuild_scan_root_watch_tree(kq, i))
       return false;
+    if (usb_storage_root_mounted(scan_root))
+      schedule_scan_root_dirty(i, now_us, true);
   }
   return true;
 }
@@ -1220,13 +1229,23 @@ static bool handle_scan_root_parent_event(
   bool root_changed = update_scan_root_presence_state(scan_root_index, scan_root,
                                                        &root_present);
   if (root_present && root_changed) {
-    schedule_scan_root_dirty(scan_root_index, now_us, false);
+    bool resumed_usb_root =
+        runtime_resume_grace_active() && is_usb_storage_path(scan_root);
+    if (resumed_usb_root && !usb_storage_root_mounted(scan_root)) {
+      // The permanent /mnt/usbN directory is visible again, but the USB
+      // filesystem is not. Refresh the terminal vnode watch without scanning
+      // or cleaning the temporarily unavailable source.
+      return rebuild_scan_root_watch_tree(kq, scan_root_index);
+    }
+    schedule_scan_root_dirty(scan_root_index, now_us, resumed_usb_root);
     schedule_scan_root_watch_tree_rebuild(subscription, watched_path);
     return true;
   }
   if (root_present)
     return true;
   if (root_changed) {
+    if (runtime_resume_grace_active() && is_usb_storage_path(scan_root))
+      return rebuild_scan_root_watch_tree(kq, scan_root_index);
     schedule_scan_root_cleanup(scan_root_index);
     schedule_scan_root_dirty(scan_root_index, now_us, true);
     schedule_scan_root_watch_tree_rebuild(subscription, watched_path);
@@ -1525,6 +1544,7 @@ void sm_scanner_run_loop(void) {
           request_scanner_shutdown("USB watcher suspend failed");
           return;
         }
+        clear_all_dirty_scan_roots();
         atomic_store_explicit(&g_usb_watches_suspended, true,
                               memory_order_release);
         wake_game_lifecycle_watcher();
@@ -1563,6 +1583,8 @@ void sm_scanner_run_loop(void) {
       atomic_store_explicit(&g_usb_watches_suspended, false,
                             memory_order_release);
       was_sleeping = false;
+      next_full_resync_us =
+          monotonic_time_us() + RUNTIME_RESUME_GRACE_US;
       log_debug("[SLEEP] USB scanner watches resumed");
     }
 

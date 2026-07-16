@@ -47,6 +47,7 @@
 static volatile sig_atomic_t g_stop_requested = 0;
 static atomic_bool g_shutdown_on_going_stop_requested = false;
 static atomic_bool g_runtime_sleep_mode_active = false;
+static atomic_uint_fast64_t g_runtime_resume_grace_deadline_us = 0;
 static _Atomic(uintptr_t) g_shutdown_stop_reason_bits = 0;
 static atomic_uint_fast64_t g_next_stop_file_poll_us = 0;
 static pthread_mutex_t g_runtime_mount_state_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -131,6 +132,13 @@ bool runtime_sleep_mode_active(void) {
                               memory_order_acquire);
 }
 
+bool runtime_resume_grace_active(void) {
+  uint64_t deadline_us = atomic_load_explicit(
+      &g_runtime_resume_grace_deadline_us, memory_order_acquire);
+  uint64_t now_us = monotonic_time_us();
+  return deadline_us != 0 && now_us != 0 && now_us < deadline_us;
+}
+
 static void clear_scan_now_request(void) {
   pthread_mutex_lock(&g_scan_now.reason_mutex);
   g_scan_now.reason[0] = '\0';
@@ -138,13 +146,29 @@ static void clear_scan_now_request(void) {
 }
 
 bool request_runtime_sleep_mode(bool active, const char *reason) {
-  bool previous = atomic_exchange_explicit(&g_runtime_sleep_mode_active, active,
-                                           memory_order_acq_rel);
-  if (previous == active)
-    return false;
-
-  if (active)
+  if (active) {
+    bool previous = atomic_exchange_explicit(&g_runtime_sleep_mode_active, true,
+                                             memory_order_acq_rel);
+    if (previous)
+      return false;
     clear_scan_now_request();
+    atomic_store_explicit(&g_runtime_resume_grace_deadline_us, 0,
+                          memory_order_release);
+  } else {
+    if (!runtime_sleep_mode_active())
+      return false;
+    uint64_t now_us = monotonic_time_us();
+    uint64_t deadline_us =
+        now_us != 0 ? now_us + RUNTIME_RESUME_GRACE_US : 0;
+    // Publish the deadline before allowing launch requests to observe that
+    // sleep mode ended.
+    atomic_store_explicit(&g_runtime_resume_grace_deadline_us, deadline_us,
+                          memory_order_release);
+    bool previous = atomic_exchange_explicit(&g_runtime_sleep_mode_active,
+                                             false, memory_order_acq_rel);
+    if (!previous)
+      return false;
+  }
 
   const char *resolved_reason =
       (reason && reason[0] != '\0') ? reason : "unknown sleep source";
@@ -166,20 +190,17 @@ void runtime_mount_state_unlock(void) {
 void request_scan_now(const char *reason) {
   const char *resolved_reason =
       (reason && reason[0] != '\0') ? reason : "unknown scan source";
-  bool resume_scan =
-      strcmp(resolved_reason, "SceSystemStateMgrInfo=WORKING") == 0;
-  if (runtime_sleep_mode_active() && !resume_scan)
+  if (runtime_sleep_mode_active())
     return;
 
   char log_reason[sizeof(g_scan_now.reason)];
-  bool should_log = !resume_scan;
+  bool should_log = false;
 
   pthread_mutex_lock(&g_scan_now.reason_mutex);
   if (g_scan_now.reason[0] == '\0') {
     (void)strlcpy(g_scan_now.reason, resolved_reason, sizeof(g_scan_now.reason));
     (void)strlcpy(log_reason, g_scan_now.reason, sizeof(log_reason));
-  } else {
-    should_log = false;
+    should_log = true;
   }
   pthread_mutex_unlock(&g_scan_now.reason_mutex);
 
