@@ -101,6 +101,8 @@
 # lvd   -> /dev/lvdctl -> /dev/lvdN
 # md    -> /dev/mdctl  -> /dev/mdN
 # Defaults: exfat=lvd, ufs=lvd
+# LVD is required for the exFAT img_type=5/BFS sdimg fast path. The image file
+# must also reside on internal BFS and be formatted with a 64 KiB cluster.
 # exfat_backend=lvd
 # ufs_backend=lvd
 
@@ -149,12 +151,14 @@
 # kstuff_pause_delay_direct_seconds=15
 
 # Backend-specific sector size overrides:
-# Defaults: lvd_exfat=512, lvd_ufs=4096, lvd_pfs=32768, md_exfat=512, md_ufs=512
+# Defaults: lvd_exfat=512, lvd_ufs=4096, lvd_pfs=4096, md_exfat=512, md_ufs=4096
+# Keep lvd_exfat at 512 for the BFS fast path. 65536 is the exFAT cluster and
+# LVD secondary unit, not the logical sector size.
 # lvd_exfat_sector_size=512
 # lvd_ufs_sector_size=4096
-# lvd_pfs_sector_size=32768
+# lvd_pfs_sector_size=4096
 # md_exfat_sector_size=512
-# md_ufs_sector_size=512
+# md_ufs_sector_size=4096
 
 # Optional custom scan roots (can be repeated):
 # If at least one scanpath=... is present, only these paths are used.
@@ -170,7 +174,7 @@
 ## Examples:
 ## image_ro=PPSA12345.ffpfs
 ## image_rw=My Game Dump.exfat
-## image_sector=My Game Dump.exfat:65536
+## image_sector=Legacy 512 Sector.exfat:512
 
 ## Keep kstuff enabled for specific title IDs (repeatable):
 ## kstuff_no_pause=PPSA12345

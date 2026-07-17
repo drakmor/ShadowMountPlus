@@ -29,8 +29,7 @@ fi
 
 # ── sizing constants ──────────────────────────────────────────────────────────
 
-CLUSTER_SIZE=32768
-LARGE_FILE_THRESHOLD=$((1024 * 1024))
+CLUSTER_SIZE=65536
 META_FIXED=$((32 * 1024 * 1024))   # boot region, upcase, root and misc
 MIN_SLACK=$((64 * 1024 * 1024))    # minimum copy/runtime safety margin
 SPARE_MIN=$((64 * 1024 * 1024))    # lower bound for dynamic headroom
@@ -66,18 +65,6 @@ EOF
 
 DIR_COUNT=$(find "$INPUT_DIR" -type d | wc -l | tr -d ' ')
 
-AVG_FILE_BYTES=0
-if [ "$FILE_COUNT" -gt 0 ]; then
-    AVG_FILE_BYTES=$((RAW_FILE_BYTES / FILE_COUNT))
-fi
-
-# exFAT profile selection:
-# - large-file sets: 64K cluster
-# - small/mixed-file sets: 32K cluster
-if [ "$AVG_FILE_BYTES" -ge "$LARGE_FILE_THRESHOLD" ]; then
-    CLUSTER_SIZE=65536
-fi
-
 # DATA_BYTES re-reads the already-collected sizes from the temp file — no second traversal
 DATA_BYTES=$(awk -v cls="$CLUSTER_SIZE" \
   '{s += int(($1 + cls - 1) / cls) * cls} END {print s + 0}' "$SIZES_FILE")
@@ -102,7 +89,7 @@ MB=$(( (TOTAL + 1024*1024 - 1) / (1024*1024) ))
 echo "Input size (raw files): $RAW_FILE_BYTES bytes"
 echo "Input size (exFAT alloc): $DATA_BYTES bytes"
 echo "Files: $FILE_COUNT, Dirs: $DIR_COUNT"
-echo "exFAT profile: -b ${CLUSTER_SIZE} (avg file=$AVG_FILE_BYTES bytes)"
+echo "exFAT LVD/BFS profile: -b ${CLUSTER_SIZE} (fixed 64 KiB cluster)"
 echo "Image size: ${MB}MB"
 
 # ── create, attach, format, mount ────────────────────────────────────────────

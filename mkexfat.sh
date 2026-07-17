@@ -1,6 +1,6 @@
 #!/bin/sh
 # For WSL2/Ubuntu/Debian: sudo apt-get install -y exfatprogs exfat-fuse fuse3 rsync
-# Create an exFAT image from a directory
+# Create a 64 KiB-cluster exFAT image for the LVD type-5/BFS sdimg profile.
 # Usage: mkexfat.sh <input_dir> [output_file]
 
 set -e
@@ -28,9 +28,8 @@ fi
 # - FAT + allocation bitmap estimates from cluster count
 # - directory/entry metadata estimate
 # - fixed metadata and runtime headroom
-CLUSTER_SIZE=32768
-MKFS_CLUSTER_ARG="32K"
-LARGE_FILE_THRESHOLD=$((1024 * 1024))
+CLUSTER_SIZE=65536
+MKFS_CLUSTER_ARG="64K"
 META_FIXED=$((32 * 1024 * 1024))   # boot region, upcase, root and misc
 MIN_SLACK=$((64 * 1024 * 1024))    # minimum copy/runtime safety margin
 SPARE_MIN=$((64 * 1024 * 1024))    # lower bound for dynamic headroom
@@ -41,19 +40,6 @@ FILE_COUNT=$(find "$INPUT_DIR" -type f | wc -l | tr -d ' ')
 DIR_COUNT=$(find "$INPUT_DIR" -type d | wc -l | tr -d ' ')
 RAW_FILE_BYTES=$(find "$INPUT_DIR" -type f -printf '%s\n' | \
   awk '{s += $1} END {print s + 0}')
-
-AVG_FILE_BYTES=0
-if [ "$FILE_COUNT" -gt 0 ]; then
-    AVG_FILE_BYTES=$((RAW_FILE_BYTES / FILE_COUNT))
-fi
-
-# exFAT profile selection (same idea as UFS2 profile):
-# - large-file sets: 64K cluster
-# - small/mixed-file sets: 32K cluster
-if [ "$AVG_FILE_BYTES" -ge "$LARGE_FILE_THRESHOLD" ]; then
-    CLUSTER_SIZE=65536
-    MKFS_CLUSTER_ARG="64K"
-fi
 
 DATA_BYTES=$(find "$INPUT_DIR" -type f -printf '%s\n' | \
   awk -v cls="$CLUSTER_SIZE" '{s += int(($1 + cls - 1) / cls) * cls} END {print s + 0}')
@@ -82,7 +68,7 @@ MB=$(( (TOTAL + 1024*1024 - 1) / (1024*1024) ))
 echo "Input size (raw files): $RAW_FILE_BYTES bytes"
 echo "Input size (exFAT alloc): $DATA_BYTES bytes"
 echo "Files: $FILE_COUNT, Dirs: $DIR_COUNT"
-echo "exFAT profile: -c $MKFS_CLUSTER_ARG (avg file=$AVG_FILE_BYTES bytes)"
+echo "exFAT LVD/BFS profile: -c $MKFS_CLUSTER_ARG (fixed 64 KiB cluster)"
 echo "Image size: ${MB}MB"
 
 truncate -s "${MB}M" "$OUTPUT"

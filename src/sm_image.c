@@ -42,7 +42,7 @@ static uint16_t pfs_lvd_game_image_type_from_selector(uint8_t selector) {
 
   idx ^= 1u;
   if (idx >= 8u)
-    return LVD_ATTACH_IMAGE_TYPE_PFS_SAVE_DATA;
+    return LVD_ATTACH_IMAGE_TYPE_SAVE_DATA;
   return table[idx];
 }
 
@@ -94,11 +94,15 @@ static uint32_t get_lvd_sector_size(const char *path, image_fs_type_t fs_type) {
   return (uint32_t)fs_cluster_size;
 }
 
-static uint32_t get_lvd_secondary_unit(const char *path,
-                                       image_fs_type_t fs_type) {
-  if (fs_type == IMAGE_FS_EXFAT)
-    return LVD_SECONDARY_UNIT_SINGLE_IMAGE;
-  return get_lvd_sector_size(path, fs_type);
+static uint32_t get_lvd_secondary_unit(image_fs_type_t fs_type,
+                                       uint32_t sector_size) {
+  if (fs_type == IMAGE_FS_EXFAT || fs_type == IMAGE_FS_UFS ||
+      image_fs_type_is_pfs(fs_type)) {
+    if (LVD_SECONDARY_UNIT_IMAGE_IO % sector_size != 0u)
+      return sector_size;
+    return LVD_SECONDARY_UNIT_IMAGE_IO;
+  }
+  return sector_size;
 }
 
 static uint32_t get_md_sector_size(image_fs_type_t fs_type) {
@@ -129,62 +133,112 @@ static unsigned int get_md_attach_options(bool mount_read_only) {
   return options;
 }
 
-static uint16_t get_lvd_attach_raw_flags(image_fs_type_t fs_type,
-                                         bool mount_read_only) {
-  if (fs_type == IMAGE_FS_UFS) {
-    return mount_read_only ? LVD_ATTACH_RAW_FLAGS_DD_RO
-                           : LVD_ATTACH_RAW_FLAGS_DD_RW;
-  }
+static uint16_t get_lvd_attach_raw_flags(bool mount_read_only) {
   return mount_read_only ? LVD_ATTACH_RAW_FLAGS_SINGLE_RO
                          : LVD_ATTACH_RAW_FLAGS_SINGLE_RW;
 }
 
-static unsigned int get_nmount_flags(image_fs_type_t fs_type,
-                                     bool mount_read_only,
+static unsigned int get_nmount_flags(bool mount_read_only,
                                      const char **mount_mode_out) {
-  if (fs_type == IMAGE_FS_UFS) {
-    if (mount_mode_out)
-      *mount_mode_out = mount_read_only ? "dd_ro" : "dd_rw";
-    return mount_read_only ? UFS_NMOUNT_FLAG_RO : UFS_NMOUNT_FLAG_RW;
-  }
   if (mount_mode_out)
     *mount_mode_out = mount_read_only ? "rdonly" : "rw";
   return mount_read_only ? MNT_RDONLY : 0;
 }
 
 static uint16_t normalize_lvd_raw_flags(uint16_t raw_flags) {
-  if ((raw_flags & 0x800Eu) != 0u) {
-    uint32_t raw = (uint32_t)raw_flags;
-    uint32_t len = (raw & 0xFFFF8000u) + ((raw & 2u) << 6) +
-                   (8u * (raw & 1u)) + (2u * ((raw >> 2) & 1u)) +
-                   (2u * (raw & 8u)) + 4u;
-    return (uint16_t)len;
-  }
-  return (uint16_t)(8u * ((uint32_t)raw_flags & 1u) + 4u);
+  uint16_t flags = LVD_ATTACH_FLAG_BASE;
+
+  flags |= raw_flags & LVD_ATTACH_RAW_PASSTHROUGH_MASK;
+  if ((raw_flags & LVD_ATTACH_RAW_BIT_RO_VARIANT) != 0u)
+    flags |= LVD_ATTACH_FLAG_RO_VARIANT;
+  if ((raw_flags & LVD_ATTACH_RAW_BIT_INNER_PROFILE) != 0u)
+    flags |= LVD_ATTACH_FLAG_INNER_PROFILE;
+  if ((raw_flags & LVD_ATTACH_RAW_BIT_DOWNLOAD_DATA_PROFILE) != 0u)
+    flags |= LVD_ATTACH_FLAG_DOWNLOAD_DATA_PROFILE;
+  if ((raw_flags & LVD_ATTACH_RAW_BIT_SINGLE_SAVE_PROFILE) != 0u)
+    flags |= LVD_ATTACH_FLAG_SINGLE_SAVE_PROFILE;
+
+  return flags;
 }
 
 static uint16_t get_lvd_image_type(const char *path, image_fs_type_t fs_type) {
-  if (fs_type == IMAGE_FS_UFS)
-    return LVD_ATTACH_IMAGE_TYPE_UFS_DOWNLOAD_DATA;
+  if (fs_type == IMAGE_FS_UFS || fs_type == IMAGE_FS_EXFAT)
+    return LVD_ATTACH_IMAGE_TYPE_SAVE_DATA;
   if (pfs_path_uses_nested_profile(path, fs_type)) {
     return pfs_lvd_game_image_type_from_selector(
         get_nested_pfs_img_type(path, fs_type));
   }
   if (image_fs_type_is_pfs(fs_type))
-    return LVD_ATTACH_IMAGE_TYPE_PFS_SAVE_DATA;
+    return LVD_ATTACH_IMAGE_TYPE_SAVE_DATA;
   return LVD_ATTACH_IMAGE_TYPE_SINGLE;
 }
 
 static uint16_t get_lvd_source_type(const char *path) {
-  if (strncmp(path, "/dev/sbram0", strlen("/dev/sbram0")) == 0)
-    return LVD_ENTRY_TYPE_SPECIAL;
-
   struct stat st;
   if (stat(path, &st) == 0) {
     if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode))
       return LVD_ENTRY_TYPE_SPECIAL;
   }
   return LVD_ENTRY_TYPE_FILE;
+}
+
+static bool backing_fs_supports_pfs_metadata_cache(const char *fs_name) {
+  if (!fs_name)
+    return false;
+  return strcmp(fs_name, "pfs") == 0 || strcmp(fs_name, "ppr_pfs") == 0 ||
+         strcmp(fs_name, "transaction_pfs") == 0 ||
+         strcmp(fs_name, "nullfs") == 0 || strcmp(fs_name, "unionfs") == 0;
+}
+
+static void prepare_nested_image_backing_cache(const char *file_path) {
+  int fd = open(file_path, O_RDONLY);
+  if (fd < 0) {
+    log_debug("  [IMG][LVD] PFS backing cache open failed for %s: %s",
+              file_path, strerror(errno));
+    return;
+  }
+
+  struct statfs sfs;
+  memset(&sfs, 0, sizeof(sfs));
+  if (fstatfs(fd, &sfs) != 0) {
+    log_debug("  [IMG][LVD] PFS backing cache statfs failed for %s: %s",
+              file_path, strerror(errno));
+    close(fd);
+    return;
+  }
+
+  if (!backing_fs_supports_pfs_metadata_cache(sfs.f_fstypename)) {
+    log_debug("  [IMG][LVD] PFS backing cache skipped for %s: backing fs=%s",
+              file_path,
+              sfs.f_fstypename[0] != '\0' ? sfs.f_fstypename : "unknown");
+    close(fd);
+    return;
+  }
+
+  pfs_gddr5_cache_request_t request;
+  memset(&request, 0, sizeof(request));
+  request.cache_cmp_offsets = 1;
+  request.cache_full_icv = PFS_MOUNT_SIGVERIFY ? 1 : 0;
+
+  if (ioctl(fd, PFS_GDDR5_CACHE_IOCTL, &request) != 0) {
+    int cache_errno = errno;
+    close(fd);
+    if (cache_errno == EBUSY) {
+      log_debug("  [IMG][LVD] PFS backing metadata cache busy for %s "
+                "(already active or no free slot); continuing",
+                file_path);
+      return;
+    }
+    log_debug("  [IMG][LVD] PFS backing metadata cache unavailable for %s "
+              "(fs=%s): %s",
+              file_path, sfs.f_fstypename, strerror(cache_errno));
+    return;
+  }
+
+  close(fd);
+  log_debug("  [IMG][LVD] PFS backing metadata cache request accepted for %s "
+            "(fs=%s cmp=1 icv=%d)",
+            file_path, sfs.f_fstypename, PFS_MOUNT_SIGVERIFY ? 1 : 0);
 }
 
 // --- Image Path and Naming Helpers ---
@@ -402,35 +456,11 @@ static bool attach_lvd_backend(const char *file_path, image_fs_type_t fs_type,
                                bool mount_read_only, off_t file_size,
                                int *unit_id_out, char *devname_out,
                                size_t devname_size) {
-/*  if (pfs_path_is_nested_inner(file_path, fs_type)) {
-    struct stat req;
-    memset(&req, 0, sizeof(req));
-    req.st_dev = 1;
-    req.st_mode = 0;
-    req.st_gid = 1;
-    req.st_atim.tv_sec = 0;
+  // This ioctl caches metadata of the PFS vnode containing the image file.
+  // The filesystem stored inside that file can be PFS, UFS, or exFAT.
+  if (is_pfsc_image_mount_base_or_child(file_path))
+    prepare_nested_image_backing_cache(file_path);
 
-    int cache_fd = open(file_path, O_RDONLY);
-    if (cache_fd < 0) {
-      log_debug("  [IMG][%s] GDDR5 cache open failed for %s: %s",
-                attach_backend_name(ATTACH_BACKEND_LVD), file_path,
-                strerror(errno));
-      return false;
-    }
-    int cache_ret = ioctl(cache_fd, PFS_GDDR5_CACHE_IOCTL, &req);
-    int cache_errno = cache_ret != 0 ? errno : 0;
-    close(cache_fd);
-    if (cache_ret != 0) {
-      errno = cache_errno;
-      log_debug("  [IMG][%s] GDDR5 cache ioctl failed for %s: %s",
-                attach_backend_name(ATTACH_BACKEND_LVD), file_path,
-                strerror(errno));
-      return false;
-    }
-    log_debug("  [IMG][%s] GDDR5 cache enabled for nested PFS: %s",
-              attach_backend_name(ATTACH_BACKEND_LVD), file_path);
-  }
-*/
   int lvd_fd = open(LVD_CTRL_PATH, O_RDWR);
   if (lvd_fd < 0) {
     log_debug("  [IMG][%s] open %s failed: %s",
@@ -448,8 +478,8 @@ static bool attach_lvd_backend(const char *file_path, image_fs_type_t fs_type,
   layers[0].size = (uint64_t)file_size;
 
   uint32_t sector_size = get_lvd_sector_size(file_path, fs_type);
-  uint32_t secondary_unit = get_lvd_secondary_unit(file_path, fs_type);
-  uint16_t raw_flags = get_lvd_attach_raw_flags(fs_type, mount_read_only);
+  uint32_t secondary_unit = get_lvd_secondary_unit(fs_type, sector_size);
+  uint16_t raw_flags = get_lvd_attach_raw_flags(mount_read_only);
   uint16_t normalized_flags = normalize_lvd_raw_flags(raw_flags);
 
   lvd_ioctl_attach_v0_t req;
@@ -875,8 +905,7 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   }
 
   const char *mount_mode = NULL;
-  unsigned int mount_flags =
-      get_nmount_flags(fs_type, mount_read_only, &mount_mode);
+  unsigned int mount_flags = get_nmount_flags(mount_read_only, &mount_mode);
   if (nmount(iov, iovlen, (int)mount_flags) == 0)
     return true;
 

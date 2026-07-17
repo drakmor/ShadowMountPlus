@@ -46,9 +46,9 @@
     -----
     - This script does NOT auto-elevate. Start PowerShell as Administrator.
     - Filesystem is always exFAT.
-    - Cluster size is auto-selected:
-      - large-file sets: 65536
-      - small/mixed-file sets: 32768
+    - Cluster size is fixed at 65536 bytes for the LVD type-5/BFS sdimg path.
+    - Keep ShadowMount's LVD exFAT logical sector at 512 bytes; 65536 is the
+      filesystem allocation unit and LVD secondary unit, not sector_size.
 #>
 
 [CmdletBinding()]
@@ -197,22 +197,6 @@ function Get-LogicalDriveFileSystem([string]$driveLetter) {
   return ""
 }
 
-function Get-OptimalExfatClusterSize([string]$dir) {
-  [Int64]$largeFileThreshold = 1MB
-
-  $files = @(Get-ChildItem -LiteralPath $dir -Recurse -File -Force)
-  if ($files.Count -eq 0) { return 32768 }
-
-  [Int64]$rawFileBytes = 0
-  foreach ($f in $files) {
-    $rawFileBytes += [Int64]$f.Length
-  }
-
-  [Int64]$avgFileBytes = [Int64]($rawFileBytes / [Int64]$files.Count)
-  if ($avgFileBytes -ge $largeFileThreshold) { return 65536 }
-  return 32768
-}
-
 function Format-AllocationUnitArg([int]$clusterSize) {
   if ($clusterSize -ge 1MB -and ($clusterSize % 1MB) -eq 0) {
     return "{0}M" -f ($clusterSize / 1MB)
@@ -308,7 +292,7 @@ if (Test-Path $ImagePath) {
 
 [Int64]$expectedBytes = 0
 [string]$osfSizeArg = $null
-[int]$ExfatClusterSize = Get-OptimalExfatClusterSize -dir $SourceDir
+[int]$ExfatClusterSize = 65536
 [bool]$sizeProvided = -not [string]::IsNullOrWhiteSpace($Size)
 [int]$TargetClusterSize = $ExfatClusterSize
 
@@ -354,7 +338,7 @@ try {
   if ($CreateEmptyAndMount) {
     Write-Host "[2/2] Done. Empty image is mounted at $dest."
     Write-Host "Manual steps:"
-    Write-Host "  1) Format $dest as exFAT (recommended cluster: 64KB for large-file sets, 32KB for small/mixed sets)."
+    Write-Host "  1) Format $dest as exFAT with a 64KB allocation unit (required for the LVD/BFS fast-path profile)."
     Write-Host "  2) Copy contents of '$SourceDir' to $dest."
     Write-Host "  3) Dismount: `"$osf`" -d -m $MountPoint"
     return
