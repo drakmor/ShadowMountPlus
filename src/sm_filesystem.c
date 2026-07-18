@@ -741,6 +741,88 @@ bool reconcile_title_backport_mount(const char *title_id, const char *src_path,
   return backport_present;
 }
 
+static void log_backport_overlay_path(const char *label, const char *path,
+                                      const struct stat *known_stat,
+                                      const struct statfs *known_statfs) {
+  struct stat path_stat;
+  const struct stat *st = known_stat;
+  if (!st) {
+    if (stat(path, &path_stat) != 0) {
+      int stat_errno = errno;
+      log_debug("  [IMG][UNIONFS] %s stat failed: path=%s error=%d (%s)",
+                label, path, stat_errno, strerror(stat_errno));
+    } else {
+      st = &path_stat;
+    }
+  }
+  if (st) {
+    log_debug("  [IMG][UNIONFS] %s stat: path=%s mode=0%o uid=%lu gid=%lu "
+              "dev=0x%llX ino=0x%llX",
+              label, path, (unsigned)st->st_mode,
+              (unsigned long)st->st_uid, (unsigned long)st->st_gid,
+              (unsigned long long)st->st_dev,
+              (unsigned long long)st->st_ino);
+  }
+
+  struct statfs path_statfs;
+  const struct statfs *sfs = known_statfs;
+  if (!sfs) {
+    if (statfs(path, &path_statfs) != 0) {
+      int statfs_errno = errno;
+      log_debug("  [IMG][UNIONFS] %s statfs failed: path=%s error=%d (%s)",
+                label, path, statfs_errno, strerror(statfs_errno));
+    } else {
+      sfs = &path_statfs;
+    }
+  }
+  if (sfs) {
+    log_debug("  [IMG][UNIONFS] %s fs: type=%s from=%s on=%s "
+              "flags=0x%lX bsize=%lu iosize=%ld",
+              label, sfs->f_fstypename, sfs->f_mntfromname,
+              sfs->f_mntonname, (unsigned long)sfs->f_flags,
+              (unsigned long)sfs->f_bsize, (long)sfs->f_iosize);
+  }
+}
+
+static void log_backport_overlay_failure(const char *mount_point,
+                                         const char *backport_path,
+                                         const struct stat *backport_stat,
+                                         const struct statfs *mounted_sfs,
+                                         int overlay_flags,
+                                         int overlay_errno) {
+  log_debug("  [IMG][UNIONFS] nmount failed: error=%d (%s) "
+            "mount_flags=0x%X read_only=%d euid=%lu egid=%lu "
+            "options=copymode:transparent,noatime,fnodup",
+            overlay_errno, strerror(overlay_errno), overlay_flags,
+            (overlay_flags & MNT_RDONLY) != 0 ? 1 : 0,
+            (unsigned long)geteuid(), (unsigned long)getegid());
+  log_backport_overlay_path("upper", backport_path, backport_stat, NULL);
+  log_backport_overlay_path("covered", mount_point, NULL, mounted_sfs);
+
+  struct statfs *mounts = NULL;
+  int mount_count = getmntinfo(&mounts, MNT_NOWAIT);
+  if (mount_count <= 0 || !mounts) {
+    int table_errno = errno;
+    log_debug("  [IMG][UNIONFS] mount table unavailable: error=%d (%s)",
+              table_errno, strerror(table_errno));
+    return;
+  }
+  int exact_count = 0;
+  for (int i = 0; i < mount_count; ++i) {
+    if (strcmp(mounts[i].f_mntonname, mount_point) != 0)
+      continue;
+    exact_count++;
+    log_debug("  [IMG][UNIONFS] covered layer[%d]: type=%s from=%s "
+              "flags=0x%lX",
+              exact_count - 1, mounts[i].f_fstypename,
+              mounts[i].f_mntfromname, (unsigned long)mounts[i].f_flags);
+  }
+  if (exact_count == 0) {
+    log_debug("  [IMG][UNIONFS] no exact mount-table entry for %s",
+              mount_point);
+  }
+}
+
 bool mount_backport_overlay(const char *mount_point,
                             const char *backport_path,
                             const char *title_id) {
@@ -776,8 +858,11 @@ bool mount_backport_overlay(const char *mount_point,
   int overlay_err = errno;
   log_debug("  [IMG] backport overlay failed: %s -> %s (%s)", backport_path,
             mount_point, strerror(overlay_err));
+  log_backport_overlay_failure(mount_point, backport_path, &backport_st,
+                               &mounted_sfs, overlay_flags, overlay_err);
   notify_system_l10n(SM_L10N_BACKPORT_OVERLAY_FAILED, title_id, backport_path,
                      (uint32_t)overlay_err);
+  errno = overlay_err;
   return false;
 }
 
