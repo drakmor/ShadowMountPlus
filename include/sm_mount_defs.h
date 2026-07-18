@@ -119,6 +119,83 @@
  * transaction_pfs, or a forwarding overlay; the filesystem inside the image
  * does not need to be PFS.
  *
+ * PFS/PPR compression dispatch
+ * ----------------------------
+ * Classic pfs and ppr_pfs are distinct kernel read paths. A classic compressed
+ * PFS block uses the classic PFSC header/table interpretation and the pfs path
+ * dispatches its compressed payload to zlib. The PPR variant interprets the
+ * PPR block metadata and can dispatch Kraken. LVD image_type, the nested
+ * selector and PFS_GDDR5_CACHE_IOCTL do not select a decompressor and cannot
+ * turn a classic zlib block header into a PPR/Kraken block. The image creator
+ * must emit the matching on-disk block records and offset table.
+ *
+ * Compression is decided per block. Files excluded from compression and blocks
+ * that are not smaller after compression are stored as raw blocks but remain
+ * represented in the same image offset mapping. This is independent of the
+ * mount-time caches described below.
+ *
+ * PFS compression caches and big-app reserve
+ * ------------------------------------------
+ * Three independent mechanisms have similar historical GDDR5/SBRAM cache
+ * names and must not be treated as one allocation:
+ *
+ *  1. A compressed PFS/PFSC mount can allocate its own cmp_offtbl cache. The
+ *     kernel message
+ *
+ *       pfs_allocate_cmp_offtbl_cache(): cmp_offtbl is cached
+ *
+ *     confirms this mount-local compressed-block offset table. It is created
+ *     by the PFS mount path and is not evidence that a big-app memory reserve
+ *     exists.
+ *
+ *  2. PFS_GDDR5_CACHE_IOCTL is issued on a nested image's backing vnode before
+ *     LVD attach. It requests the containing PFS/PPR read path to cache the
+ *     compressed-offset table used to reach that vnode's data; it does not
+ *     inspect or impose a format on the bytes stored inside the file. Thus the
+ *     nested file may contain PFS, UFS, exFAT or arbitrary block data and need
+ *     not itself be compressed. The hard requirement for the offset request is
+ *     that the containing PFS/PPR image has its compressed-image flag set. On
+ *     an uncompressed containing image the kernel logs "NOT a compressed
+ *     image" and accepts the request as a compatibility no-op.
+ *
+ *     cmp_cache_units is a count of shared-cache allocation units, not bytes.
+ *     The compressed-offset pool uses 0x10000-byte units and has 600 units
+ *     (37.5 MiB) with at most eight simultaneous slots. A zero count makes the
+ *     kernel derive the required count from the on-disk offset-table geometry;
+ *     this is the preferred full-table/default request. An explicit nonzero
+ *     count limits the reservation and can force more LRU refills. EBUSY is
+ *     non-fatal: it means that this vnode already has a cache or that all eight
+ *     slots are occupied. ENOMEM means that the requested units exceed the
+ *     remaining total or contiguous shared-cache space.
+ *
+ *     The optional full-ICV request is independent. It requires the containing
+ *     image's signed-image flag and usable ICV metadata; otherwise the kernel
+ *     rejects that half of the request. It also has its own eight-slot pool.
+ *     Neither half selects zlib/Kraken or changes the block-record format.
+ *
+ *  3. The 180-MiB big-app reserve is application-lifecycle memory. It is not
+ *     allocated by the ioctl, LVD, PFS nmount, EnsureBigAppBudget, or a visible
+ *     /dev/sbram device. During BEGIN_APP_MOUNT_EVENT the kernel allocates
+ *     0x0B400000 bytes aligned to 0x200000 for selected category values:
+ *
+ *       0x0000F000, 0x0000F100, 0x0001F000, 0x0001F300,
+ *       0x0002F000, 0x0200F100.
+ *
+ *     The allocation belongs to the big-app/application context. PFS can bind
+ *     to it through the application lifecycle callbacks; userland is not given
+ *     a buffer pointer. EndAppMount tears the context down and releases the
+ *     reserve after the application pre-delete path. Consequently a managed
+ *     image stack must remain mounted until the matching EndAppMount hook, and
+ *     no explicit metadata-cache clear should run while its PFS vnode is live.
+ *
+ * For unsigned ShadowMount PFS profiles sigverify=0, so request only compressed
+ * offsets (cache_full_icv=0). Signing does not make ordinary reads faster: it
+ * enables integrity verification and can add work; a cached full ICV table
+ * only reduces metadata lookup cost when verification is actually enabled.
+ * Both compressed-offset caches are properties of the outer PFS read path.
+ * They can accelerate an LVD-backed nested exFAT/UFS/PFS image because the
+ * inner filesystem format is irrelevant at that layer.
+ *
  * Backend and nmount policy
  * -------------------------
  * LVD is the default for every format. MD is a compatibility backend for
@@ -214,18 +291,21 @@ _Static_assert(LVD_SECONDARY_UNIT_IMAGE_IO % LVD_SECTOR_SIZE_PFS == 0,
 #define PFS_MOUNT_DISC 0
 #define PFS_GDDR5_CACHE_IOCTL 0x80209168
 
-// 0x80209168 is an IOC_IN request with a 0x20-byte payload. Despite the
-// userland "GDDR5 cache" name, the PFS vnode handler uses it to populate two
-// metadata caches for a nested-image backing file: its PFSC offset table and,
-// optionally, the containing signed PFS mount's full ICV table. A zero unit
-// count asks the kernel to size the corresponding cache automatically.
+// 0x80209168 is an IOC_IN request with a 0x20-byte payload and is accepted on a
+// read-only fd. Despite the userland "GDDR5 cache" name, the pfs and ppr_pfs
+// vnode handlers use it for two metadata caches belonging to the containing
+// filesystem: compressed offsets (only when its compressed-image flag is set)
+// and, optionally, full ICV (only for a signed image). The nested file's own
+// magic, filesystem and compression method are not inspected. Counts are
+// allocation units rather than bytes; zero asks the kernel to derive the full
+// size. The caller must have the kernel privilege checked as privilege 0x2ab.
 typedef struct pfs_gddr5_cache_request {
   uint8_t cache_cmp_offsets;
   uint8_t reserved01[7];
-  uint64_t cmp_cache_units;
+  uint64_t cmp_cache_units; // 0 = auto; each cmp unit is 0x10000 bytes
   uint8_t cache_full_icv;
   uint8_t reserved11[7];
-  uint64_t icv_cache_units;
+  uint64_t icv_cache_units; // 0 = auto; independent signed-image ICV pool
 } pfs_gddr5_cache_request_t;
 
 _Static_assert(sizeof(pfs_gddr5_cache_request_t) == 0x20,
