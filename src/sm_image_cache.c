@@ -9,11 +9,42 @@ struct ImageCache {
   char mount_point[MAX_PATH];
   int unit_id;
   attach_backend_t backend;
+  attached_unit_detach_state_t detach_state;
   bool valid;
 };
 
 static struct ImageCache g_image_cache[MAX_IMAGE_MOUNTS];
 static pthread_mutex_t g_image_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static bool device_identity_matches(
+    const attached_unit_detach_state_t *left,
+    const attached_unit_detach_state_t *right) {
+  if (!left->node_identity_valid || !right->node_identity_valid)
+    return true;
+  return left->node_device == right->node_device &&
+         left->node_inode == right->node_inode &&
+         left->node_rdev == right->node_rdev;
+}
+
+static void capture_attached_unit_identity(struct ImageCache *entry) {
+  memset(&entry->detach_state, 0, sizeof(entry->detach_state));
+  if (entry->backend == ATTACH_BACKEND_NONE || entry->unit_id < 0)
+    return;
+
+  const char *prefix =
+      entry->backend == ATTACH_BACKEND_MD ? "/dev/md" : "/dev/lvd";
+  char devname[64];
+  snprintf(devname, sizeof(devname), "%s%d", prefix, entry->unit_id);
+
+  struct stat st;
+  if (stat(devname, &st) != 0)
+    return;
+
+  entry->detach_state.node_identity_valid = true;
+  entry->detach_state.node_device = (uint64_t)st.st_dev;
+  entry->detach_state.node_inode = (uint64_t)st.st_ino;
+  entry->detach_state.node_rdev = (uint64_t)st.st_rdev;
+}
 
 static void copy_cache_entry(int index, image_cache_entry_t *entry_out) {
   memset(entry_out, 0, sizeof(*entry_out));
@@ -23,6 +54,7 @@ static void copy_cache_entry(int index, image_cache_entry_t *entry_out) {
                 sizeof(entry_out->mount_point));
   entry_out->unit_id = g_image_cache[index].unit_id;
   entry_out->backend = g_image_cache[index].backend;
+  entry_out->detach_state = g_image_cache[index].detach_state;
 }
 
 static int find_cache_index(const char *path, const char *mount_point) {
@@ -94,6 +126,7 @@ bool cache_image_mount(const char *path, const char *mount_point, int unit_id,
   struct ImageCache *entry = &g_image_cache[entry_index];
   entry->unit_id = unit_id;
   entry->backend = backend;
+  capture_attached_unit_identity(entry);
   pthread_mutex_unlock(&g_image_cache_mutex);
   return true;
 }
@@ -124,6 +157,28 @@ bool find_image_cache_entry(const char *path, image_cache_entry_t *entry_out,
   copy_cache_entry(index, entry_out);
   if (index_out)
     *index_out = index;
+  pthread_mutex_unlock(&g_image_cache_mutex);
+  return true;
+}
+
+bool update_image_cache_detach_state(
+    const char *path, int unit_id, attach_backend_t backend,
+    const attached_unit_detach_state_t *detach_state) {
+  if (!path || !detach_state)
+    return false;
+
+  pthread_mutex_lock(&g_image_cache_mutex);
+  int index = find_cache_index(path, NULL);
+  if (index < 0 ||
+      g_image_cache[index].unit_id != unit_id ||
+      g_image_cache[index].backend != backend ||
+      !device_identity_matches(&g_image_cache[index].detach_state,
+                               detach_state)) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    return false;
+  }
+
+  g_image_cache[index].detach_state = *detach_state;
   pthread_mutex_unlock(&g_image_cache_mutex);
   return true;
 }

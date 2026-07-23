@@ -10,6 +10,7 @@ typedef struct {
   char mount_point[MAX_PATH];
   int unit_id;
   attach_backend_t backend;
+  attached_unit_detach_state_t detach_state;
 } image_cache_entry_t;
 
 // Cache a successful image mount and its attached device.
@@ -22,7 +23,11 @@ bool cache_image_source_mapping(const char *path, const char *mount_point);
 bool get_image_cache_entry(int index, image_cache_entry_t *entry_out);
 // Find a cached source path with one cache lock acquisition.
 bool find_image_cache_entry(const char *path, image_cache_entry_t *entry_out,
-                            int *index_out);
+                             int *index_out);
+// Publish an accepted asynchronous detach for the same cached device.
+bool update_image_cache_detach_state(
+    const char *path, int unit_id, attach_backend_t backend,
+    const attached_unit_detach_state_t *detach_state);
 // Mark a cached image mount entry as invalid.
 void invalidate_image_cache_entry(int index);
 // Resolve a device mapping from the in-memory mount cache.

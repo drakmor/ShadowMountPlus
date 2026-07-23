@@ -103,6 +103,17 @@ typedef enum {
   ATTACH_BACKEND_MD,
 } attach_backend_t;
 
+typedef struct {
+  // A detach ioctl was accepted for this specific device instance. Once set,
+  // the same unit number must not receive another detach request because the
+  // kernel may already have reused it for a different application.
+  bool requested;
+  bool node_identity_valid;
+  uint64_t node_device;
+  uint64_t node_inode;
+  uint64_t node_rdev;
+} attached_unit_detach_state_t;
+
 typedef struct runtime_config {
   bool debug_enabled;
   bool quiet_mode;

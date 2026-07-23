@@ -19,7 +19,13 @@ bool resolve_device_from_mount(const char *mount_point,
 bool is_active_image_mount_point(const char *path);
 // Wait until /dev/lvd2 is no longer mounted during startup.
 bool wait_for_lvd_release(void);
-// Detach a previously attached MD or LVD unit.
-bool detach_attached_unit(attach_backend_t backend, int unit_id);
+// Detach a previously attached MD or LVD unit. A non-NULL state makes an
+// accepted asynchronous detach idempotent across later cleanup attempts.
+bool detach_attached_unit(attach_backend_t backend, int unit_id,
+                          attached_unit_detach_state_t *state);
+// Wait for an accepted detach to remove its node, or detect unit reuse.
+bool wait_for_attached_unit_release(
+    attach_backend_t backend, int unit_id,
+    const attached_unit_detach_state_t *state);
 
 #endif

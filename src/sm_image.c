@@ -442,7 +442,7 @@ static bool attach_md_backend(const char *file_path, image_fs_type_t fs_type,
   if (!wait_for_dev_node_state(devname_out, true)) {
     log_debug("  [IMG][%s] device node did not appear: %s",
               attach_backend_name(ATTACH_BACKEND_MD), devname_out);
-    (void)detach_attached_unit(ATTACH_BACKEND_MD, unit_id);
+    (void)detach_attached_unit(ATTACH_BACKEND_MD, unit_id, NULL);
     return false;
   }
 
@@ -525,7 +525,7 @@ static bool attach_lvd_backend(const char *file_path, image_fs_type_t fs_type,
   if (!wait_for_dev_node_state(devname_out, true)) {
     log_debug("  [IMG][%s] device node did not appear: %s",
               attach_backend_name(ATTACH_BACKEND_LVD), devname_out);
-    (void)detach_attached_unit(ATTACH_BACKEND_LVD, unit_id);
+    (void)detach_attached_unit(ATTACH_BACKEND_LVD, unit_id, NULL);
     return false;
   }
 
@@ -899,7 +899,7 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   } else {
     log_debug("  [IMG][%s] unsupported fstype=%s",
               attach_backend_name(attach_backend), image_fs_name(fs_type));
-    (void)detach_attached_unit(attach_backend, unit_id);
+    (void)detach_attached_unit(attach_backend, unit_id, NULL);
     errno = EINVAL;
     return false;
   }
@@ -918,7 +918,7 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   log_debug("  [IMG][%s] nmount %s failed: %s",
             attach_backend_name(attach_backend), mount_mode,
             strerror(mount_errno));
-  (void)detach_attached_unit(attach_backend, unit_id);
+  (void)detach_attached_unit(attach_backend, unit_id, NULL);
   errno = mount_errno;
   return false;
 }
@@ -1045,7 +1045,7 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
     return false;
   }
   if (runtime_sleep_mode_active()) {
-    (void)detach_attached_unit(attach_backend, unit_id);
+    (void)detach_attached_unit(attach_backend, unit_id, NULL);
     runtime_mount_state_unlock();
     return false;
   }
@@ -1123,6 +1123,49 @@ static bool unmount_child_image_mounts_for_container(
   return all_unmounted;
 }
 
+static bool detach_cached_image_device(const char *file_path,
+                                       attach_backend_t backend, int unit_id) {
+  image_cache_entry_t cached_entry;
+  bool cached_device =
+      find_image_cache_entry(file_path, &cached_entry, NULL) &&
+      cached_entry.backend == backend && cached_entry.unit_id == unit_id;
+
+  attached_unit_detach_state_t detach_state;
+  memset(&detach_state, 0, sizeof(detach_state));
+  if (cached_device)
+    detach_state = cached_entry.detach_state;
+
+  if (detach_state.requested)
+    return detach_attached_unit(backend, unit_id, &detach_state);
+
+  bool detached = detach_attached_unit(
+      backend, unit_id, cached_device ? &detach_state : NULL);
+  if (detached || !cached_device || !detach_state.requested)
+    return detached;
+
+  if (!update_image_cache_detach_state(file_path, unit_id, backend,
+                                       &detach_state)) {
+    log_debug("  [IMG][%s] failed to publish pending detach: unit=%d "
+              "source=%s",
+              attach_backend_name(backend), unit_id, file_path);
+    return false;
+  }
+
+  return wait_for_attached_unit_release(backend, unit_id, &detach_state);
+}
+
+static void log_image_unmount_result(const char *file_path,
+                                     const char *mount_point,
+                                     attach_backend_t backend, int unit_id,
+                                     bool detached) {
+  const char *result =
+      detached ? "unmount complete"
+               : "filesystem unmounted; device detach pending";
+  log_debug("  [IMG][%s] %s: source=%s mount=%s unit=%d",
+            attach_backend_name(backend), result, file_path, mount_point,
+            unit_id);
+}
+
 static bool unmount_image_impl(const char *file_path, int unit_id,
                                attach_backend_t backend,
                                bool cleanup_source_state) {
@@ -1181,21 +1224,20 @@ static bool unmount_image_impl(const char *file_path, int unit_id,
 
   bool detach_ok = true;
   if (resolved_backend != ATTACH_BACKEND_NONE && resolved_unit >= 0)
-    detach_ok = detach_attached_unit(resolved_backend, resolved_unit);
+    detach_ok = detach_cached_image_device(file_path, resolved_backend,
+                                           resolved_unit);
 
   if (rmdir(mount_point) == 0) {
     log_debug("  [IMG] Removed mount directory: %s", mount_point);
-    log_debug("  [IMG][%s] unmount complete: source=%s mount=%s unit=%d",
-              attach_backend_name(resolved_backend), file_path, mount_point,
-              resolved_unit);
+    log_image_unmount_result(file_path, mount_point, resolved_backend,
+                             resolved_unit, detach_ok);
     return detach_ok;
   }
 
   int err = errno;
   if (err == ENOENT) {
-    log_debug("  [IMG][%s] unmount complete: source=%s mount=%s unit=%d",
-              attach_backend_name(resolved_backend), file_path, mount_point,
-              resolved_unit);
+    log_image_unmount_result(file_path, mount_point, resolved_backend,
+                             resolved_unit, detach_ok);
     return detach_ok;
   }
   if (err == ENOTEMPTY || err == EBUSY) {
@@ -1264,6 +1306,16 @@ bool release_runtime_image_mounts(void) {
   return all_released;
 }
 
+static bool service_pending_image_detach(
+    int cache_index, const image_cache_entry_t *entry) {
+  if (!entry->detach_state.requested)
+    return false;
+
+  if (detach_cached_image_device(entry->path, entry->backend, entry->unit_id))
+    invalidate_image_cache_entry(cache_index);
+  return true;
+}
+
 void cleanup_stale_image_mounts(void) {
   if (should_stop_requested())
     return;
@@ -1304,6 +1356,8 @@ void cleanup_stale_image_mounts(void) {
         invalidate_image_cache_entry(k);
       continue;
     }
+    if (service_pending_image_detach(k, &cached_entry))
+      continue;
 
     image_fs_type_t fs_type =
         detect_image_fs_type_for_path(cached_entry.path, NULL);
@@ -1358,6 +1412,8 @@ void cleanup_stale_image_mounts_for_root(const char *root) {
         invalidate_image_cache_entry(k);
       continue;
     }
+    if (service_pending_image_detach(k, &cached_entry))
+      continue;
 
     image_fs_type_t fs_type =
         detect_image_fs_type_for_path(cached_entry.path, NULL);
