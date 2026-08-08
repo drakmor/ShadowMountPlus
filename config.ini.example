@@ -142,6 +142,13 @@
 # Default: 1
 # kstuff_crash_detection=1
 
+# Automatic fan-controller target for games:
+# auto   -> leave the system-managed target unchanged (default)
+# 50..91 -> apply this target when a game starts
+# The stock automatic fan controller remains enabled.
+# Default: auto
+# fan_target_temperature=auto
+
 # Delay before pausing kstuff for image-backed titles.
 # Default: 25
 # kstuff_pause_delay_image_seconds=25

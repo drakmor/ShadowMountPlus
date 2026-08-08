@@ -265,6 +265,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
       DEFAULT_KSTUFF_PAUSE_DELAY_IMAGE_SECONDS;
   state->cfg.kstuff_pause_delay_direct_seconds =
       DEFAULT_KSTUFF_PAUSE_DELAY_DIRECT_SECONDS;
+  state->cfg.fan_target_temperature_c = FAN_TARGET_TEMPERATURE_AUTO;
   state->cfg.language_id = SM_LANGUAGE_AUTO;
   state->cfg.exfat_backend = default_exfat_backend();
   state->cfg.ufs_backend = default_ufs_backend();
@@ -1387,6 +1388,24 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "fan_target_temperature") == 0) {
+      if (strcasecmp(value, "auto") == 0) {
+        state->cfg.fan_target_temperature_c = FAN_TARGET_TEMPERATURE_AUTO;
+      } else if (!parse_u32_ini(value, &u32) ||
+                 u32 < MIN_FAN_TARGET_TEMPERATURE_C ||
+                 u32 > MAX_FAN_TARGET_TEMPERATURE_C) {
+        log_debug("  [CFG] invalid fan target at line %d: %s=%s "
+                  "(use auto or %u..%u C)",
+                  line_no, key, value,
+                  (unsigned)MIN_FAN_TARGET_TEMPERATURE_C,
+                  (unsigned)MAX_FAN_TARGET_TEMPERATURE_C);
+        continue;
+      } else {
+        state->cfg.fan_target_temperature_c = u32;
+      }
+      continue;
+    }
+
     if (strcasecmp(key, "kstuff_no_pause") == 0) {
       if (!add_kstuff_no_pause_title_rule(state, value)) {
         log_debug("  [CFG] invalid kstuff no-pause title rule at line %d: "
@@ -1568,6 +1587,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
             "kstuff_game_auto_toggle=%d kstuff_crash_detection=%d "
+            "fan_target_temperature=%u (0=auto) "
             "kstuff_pause_delay_image_s=%u kstuff_pause_delay_direct_s=%u "
             "exfat_backend=%s ufs_backend=%s "
             "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u) "
@@ -1592,6 +1612,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.global_fakelib_exclude_title_count,
             state->cfg.kstuff_game_auto_toggle ? 1 : 0,
             state->cfg.kstuff_crash_detection_enabled ? 1 : 0,
+            state->cfg.fan_target_temperature_c,
             state->cfg.kstuff_pause_delay_image_seconds,
             state->cfg.kstuff_pause_delay_direct_seconds,
             attach_backend_name(state->cfg.exfat_backend),

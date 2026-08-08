@@ -6,6 +6,7 @@
 #include <sys/select.h>
 
 #include "sm_appdb.h"
+#include "sm_fan.h"
 #include "sm_fakelib.h"
 #include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
@@ -44,8 +45,11 @@ static pthread_cond_t g_game_lifecycle_start_cond = PTHREAD_COND_INITIALIZER;
 static bool g_game_lifecycle_start_ready = false;
 static bool g_game_lifecycle_start_success = false;
 static _Atomic pid_t g_active_game_pid = 0;
+static uint32_t g_active_game_app_id = 0;
+static _Atomic uint32_t g_pending_app_focus_id;
+static _Atomic bool g_pending_app_focus_valid;
 // Title storage is owned exclusively by the lifecycle thread. Other threads
-// consume only the atomically published pid through the public state helper.
+// consume only atomically published state through public helpers.
 static char g_active_game_title_id[MAX_TITLE_ID];
 
 static bool register_game_exit_watch(int kq, pid_t pid);
@@ -58,12 +62,16 @@ static void publish_active_game_pid(pid_t pid) {
   sm_scanner_wake();
 }
 
-static void publish_active_game(pid_t pid, const char *title_id) {
-  if (pid > 0 && title_id && title_id[0] != '\0')
+static void publish_active_game(pid_t pid, const char *title_id,
+                                uint32_t app_id) {
+  if (pid > 0 && title_id && title_id[0] != '\0') {
     (void)strlcpy(g_active_game_title_id, title_id,
                   sizeof(g_active_game_title_id));
-  else
+    g_active_game_app_id = app_id;
+  } else {
     g_active_game_title_id[0] = '\0';
+    g_active_game_app_id = 0;
+  }
   publish_active_game_pid(pid);
 }
 
@@ -74,12 +82,30 @@ static bool consume_active_game_title(pid_t pid,
     return false;
   (void)strlcpy(title_id_out, g_active_game_title_id, MAX_TITLE_ID);
   g_active_game_title_id[0] = '\0';
+  g_active_game_app_id = 0;
   return true;
+}
+
+static void handle_pending_app_focus(void) {
+  if (!atomic_exchange(&g_pending_app_focus_valid, false))
+    return;
+
+  uint32_t focused_app_id = atomic_load(&g_pending_app_focus_id);
+  if (atomic_load(&g_active_game_pid) <= 0 || g_active_game_app_id == 0 ||
+      g_active_game_title_id[0] == '\0') {
+    atomic_store(&g_pending_app_focus_valid, true);
+    return;
+  }
+  if (focused_app_id == 0 || focused_app_id != g_active_game_app_id)
+    return;
+
+  sm_fan_apply_game_target(g_active_game_title_id);
 }
 
 static bool snapshot_active_game(pid_t pid, char title_id[MAX_TITLE_ID]) {
   title_id[0] = '\0';
-  if (pid <= 0 || g_active_game_title_id[0] == '\0')
+  if (pid <= 0 || atomic_load(&g_active_game_pid) != pid ||
+      g_active_game_title_id[0] == '\0')
     return false;
   (void)strlcpy(title_id, g_active_game_title_id, MAX_TITLE_ID);
   return true;
@@ -198,7 +224,7 @@ static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
 
   log_debug("  [GAME] started: %s pid=%ld app_id=0x%08X", title_id,
             (long)pid, app_id);
-  publish_active_game(pid, title_id);
+  publish_active_game(pid, title_id, app_id);
   sm_kstuff_game_on_exec(pid, title_id, app_id, exec_time_us);
   sm_fakelib_game_on_exec(pid, title_id);
   return true;
@@ -424,6 +450,7 @@ static void poll_game_modules(int kq) {
     }
   }
 
+  handle_pending_app_focus();
   sm_kstuff_game_poll();
   sm_mdbg_poll();
 }
@@ -604,23 +631,24 @@ static void *game_lifecycle_watcher_main(void *arg) {
     if (runtime_sleep_mode_active()) {
       if (!sleep_cleanup_done && sm_scanner_usb_watches_suspended()) {
         suspended_game_pid = atomic_load(&g_active_game_pid);
-        char usb_game_title_id[MAX_TITLE_ID];
+        char suspended_game_title_id[MAX_TITLE_ID];
         bool active_game = snapshot_active_game(suspended_game_pid,
-                                                usb_game_title_id);
+                                                suspended_game_title_id);
         char source_path[MAX_PATH];
         bool has_mount_link =
-            active_game && read_mount_link(usb_game_title_id, source_path,
+            active_game && read_mount_link(suspended_game_title_id, source_path,
                                            sizeof(source_path));
         bool usb_game =
             active_game && title_is_usb_backed(
-                               usb_game_title_id, source_path, has_mount_link);
+                               suspended_game_title_id, source_path,
+                               has_mount_link);
         clear_all_pending_game_launches();
         sm_fakelib_game_shutdown();
         sm_kstuff_sleep_enter();
         bool usb_cleanup_allowed = true;
         if (usb_game) {
           usb_cleanup_allowed = terminate_usb_game_for_sleep(
-              kq, suspended_game_pid, usb_game_title_id);
+              kq, suspended_game_pid, suspended_game_title_id);
           if (usb_cleanup_allowed) {
             suspended_game_pid = 0;
           }
@@ -657,8 +685,11 @@ static void *game_lifecycle_watcher_main(void *arg) {
       sleep_cleanup_done = false;
       if (runtime_sleep_mode_active())
         continue;
-      if (suspended_game_pid > 0 && is_process_alive(suspended_game_pid))
+      if (suspended_game_pid > 0 &&
+          atomic_load(&g_active_game_pid) == suspended_game_pid &&
+          is_process_alive(suspended_game_pid)) {
         handle_game_exec(kq, suspended_game_pid);
+      }
       sm_kstuff_sleep_leave();
       suspended_game_pid = 0;
     }
@@ -698,7 +729,7 @@ static void *game_lifecycle_watcher_main(void *arg) {
   clear_all_pending_game_launches();
   sm_fakelib_game_shutdown();
   sm_kstuff_game_shutdown();
-  publish_active_game(0, NULL);
+  publish_active_game(0, NULL, 0);
   close(kq);
   log_debug("  [GAME] lifecycle watcher stopped");
   return NULL;
@@ -721,6 +752,8 @@ bool start_game_lifecycle_watcher(void) {
 
   atomic_store_explicit(&g_game_lifecycle_stop_requested, false,
                         memory_order_relaxed);
+  atomic_store(&g_pending_app_focus_id, 0);
+  atomic_store(&g_pending_app_focus_valid, false);
   pthread_mutex_lock(&g_game_lifecycle_start_mutex);
   g_game_lifecycle_start_ready = false;
   g_game_lifecycle_start_success = false;
@@ -774,12 +807,19 @@ void stop_game_lifecycle_watcher(void) {
   g_game_lifecycle_thread_started = false;
   atomic_store_explicit(&g_game_lifecycle_stop_requested, false,
                         memory_order_relaxed);
-  publish_active_game(0, NULL);
+  atomic_store(&g_pending_app_focus_id, 0);
+  atomic_store(&g_pending_app_focus_valid, false);
+  publish_active_game(0, NULL, 0);
   close_game_lifecycle_wake_pipe();
 }
 
 bool sm_game_lifecycle_has_active_game(void) {
   return atomic_load(&g_active_game_pid) > 0;
+}
+
+void sm_game_lifecycle_note_app_focus(uint32_t app_id) {
+  atomic_store(&g_pending_app_focus_id, app_id);
+  atomic_store(&g_pending_app_focus_valid, true);
 }
 
 bool refresh_game_lifecycle_watcher(void) {

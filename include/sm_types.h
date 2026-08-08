@@ -140,6 +140,7 @@ typedef struct runtime_config {
   uint32_t auto_remove_missing_delay_seconds;
   uint32_t kstuff_pause_delay_image_seconds;
   uint32_t kstuff_pause_delay_direct_seconds;
+  uint32_t fan_target_temperature_c;
   int32_t language_id;
   attach_backend_t exfat_backend;
   attach_backend_t ufs_backend;

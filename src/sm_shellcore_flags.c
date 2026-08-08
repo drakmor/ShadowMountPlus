@@ -683,6 +683,7 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
   flag->has_last_rc = true;
 
   if (changed && strcmp(flag->name, "SceShellCoreUtilAppFocus") == 0) {
+    sm_game_lifecycle_note_app_focus((uint32_t)result_pattern);
     sm_kstuff_note_app_focus((uint32_t)result_pattern);
     wake_game_lifecycle_watcher();
   }
