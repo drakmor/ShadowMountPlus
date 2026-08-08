@@ -1205,15 +1205,14 @@ static bool unmount_image_impl(const char *file_path, int unit_id,
       break;
     if (unmount(mount_point, 0) == 0)
       continue;
-    if (errno == ENOENT || errno == EINVAL)
+    int unmount_errno = errno;
+    if (unmount_errno == ENOENT || unmount_errno == EINVAL)
       break;
-    if (unmount(mount_point, MNT_FORCE) != 0 && errno != ENOENT &&
-        errno != EINVAL) {
-      log_debug("  [IMG][%s] unmount failed for %s: %s",
-                attach_backend_name(resolved_backend), mount_point,
-                strerror(errno));
-      return false;
-    }
+    log_debug("  [IMG][%s] unmount deferred for %s: %s",
+              attach_backend_name(resolved_backend), mount_point,
+              strerror(unmount_errno));
+    errno = unmount_errno;
+    return false;
   }
 
   if (is_active_image_mount_point(mount_point)) {
