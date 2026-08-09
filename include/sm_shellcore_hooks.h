@@ -6,8 +6,6 @@
 // Install/remove the fail-open SceShellCore lifecycle bridge.
 bool sm_shellcore_hooks_start(void);
 void sm_shellcore_hooks_stop(void);
-// Return whether the post-onAppExit lifecycle hook is installed.
-bool sm_shellcore_app_exit_hook_active(void);
 
 // Return whether this firmware uses the internal TitleDir bridge.
 bool sm_shellcore_install_bridge_enabled(void);

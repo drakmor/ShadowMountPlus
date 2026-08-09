@@ -10,8 +10,8 @@
 #include "sm_shellcore_hooks.h"
 #include "sm_shellcore_remote.h"
 
-#define SHELLCORE_BASE_HOOK_COUNT 2u
-#define SHELLCORE_MAX_HOOK_COUNT 3u
+#define SHELLCORE_BASE_HOOK_COUNT 1u
+#define SHELLCORE_MAX_HOOK_COUNT 2u
 #define MAX_HOOK_PROLOGUE_SIZE 32u
 #define ABSOLUTE_JUMP_SIZE 12u
 
@@ -71,10 +71,8 @@ int kernel_dynlib_obj(pid_t pid, uint32_t handle, shellcore_dynlib_obj_t *obj);
 extern const uint8_t sm_shellcore_bridge_blob_start[];
 extern const uint8_t sm_shellcore_bridge_blob_end[];
 extern const uint8_t sm_shellcore_bridge_launch_hook[];
-extern const uint8_t sm_shellcore_bridge_app_exit_hook[];
 extern const uint8_t sm_shellcore_bridge_install_all_hook[];
 extern const uint8_t sm_shellcore_bridge_launch_trampoline[];
-extern const uint8_t sm_shellcore_bridge_app_exit_trampoline[];
 extern const uint8_t sm_shellcore_bridge_install_all_trampoline[];
 extern const uint8_t sm_shellcore_bridge_install_title_dir[];
 extern const uint8_t sm_shellcore_bridge_install_armed[];
@@ -260,12 +258,10 @@ static bool install_hooks_for_pid(pid_t pid) {
                                 : SHELLCORE_BASE_HOOK_COUNT;
   uintptr_t targets[SHELLCORE_MAX_HOOK_COUNT] = {
       remote.targets[SM_SHELLCORE_TARGET_LAUNCH_APP],
-      remote.targets[SM_SHELLCORE_TARGET_APP_EXIT],
       remote.targets[SM_SHELLCORE_TARGET_INSTALL_ALL],
   };
   sm_shellcore_target_t target_ids[SHELLCORE_MAX_HOOK_COUNT] = {
       SM_SHELLCORE_TARGET_LAUNCH_APP,
-      SM_SHELLCORE_TARGET_APP_EXIT,
       SM_SHELLCORE_TARGET_INSTALL_ALL,
   };
 
@@ -290,7 +286,6 @@ static bool install_hooks_for_pid(pid_t pid) {
 
   size_t cursor = blob_size;
   uintptr_t launch_trampoline = 0;
-  uintptr_t app_exit_trampoline = 0;
   uintptr_t install_all_trampoline = 0;
   if (!append_trampoline(bridge, bridge_capacity, &cursor, g_hooks.original[0],
                          g_hooks.original_size[0],
@@ -300,18 +295,10 @@ static bool install_hooks_for_pid(pid_t pid) {
   }
   set_bridge_pointer(bridge, sm_shellcore_bridge_launch_trampoline,
                      launch_trampoline);
-  if (!append_trampoline(bridge, bridge_capacity, &cursor, g_hooks.original[1],
-                         g_hooks.original_size[1],
-                         targets[1] + g_hooks.original_size[1], object.eh_frame,
-                         &app_exit_trampoline)) {
-    goto done;
-  }
-  set_bridge_pointer(bridge, sm_shellcore_bridge_app_exit_trampoline,
-                     app_exit_trampoline);
   if (install_hook_enabled) {
     if (!append_trampoline(bridge, bridge_capacity, &cursor,
-                           g_hooks.original[2], g_hooks.original_size[2],
-                           targets[2] + g_hooks.original_size[2],
+                           g_hooks.original[1], g_hooks.original_size[1],
+                           targets[1] + g_hooks.original_size[1],
                            object.eh_frame, &install_all_trampoline)) {
       goto done;
     }
@@ -335,20 +322,15 @@ static bool install_hooks_for_pid(pid_t pid) {
   uintptr_t launch_hook =
       object.eh_frame + (uintptr_t)(sm_shellcore_bridge_launch_hook -
                                     sm_shellcore_bridge_blob_start);
-  uintptr_t app_exit_hook =
-      object.eh_frame + (uintptr_t)(sm_shellcore_bridge_app_exit_hook -
-                                    sm_shellcore_bridge_blob_start);
   uintptr_t install_all_hook =
       object.eh_frame +
       (uintptr_t)(sm_shellcore_bridge_install_all_hook -
                   sm_shellcore_bridge_blob_start);
   if (!patch_remote_jump(pid, targets[0], launch_hook,
                          g_hooks.original_size[0]) ||
-      !patch_remote_jump(pid, targets[1], app_exit_hook,
-                         g_hooks.original_size[1]) ||
       (install_hook_enabled &&
-       !patch_remote_jump(pid, targets[2], install_all_hook,
-                          g_hooks.original_size[2]))) {
+       !patch_remote_jump(pid, targets[1], install_all_hook,
+                          g_hooks.original_size[1]))) {
     goto rollback;
   }
 
@@ -359,8 +341,7 @@ static bool install_hooks_for_pid(pid_t pid) {
          hook_count * sizeof(g_hooks.target_ids[0]));
   g_hooks.installed = true;
   ok = true;
-  log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld lifecycle=1 "
-            "app_exit=1 install=%d",
+  log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld launch=1 install=%d",
             remote.offsets->name, (long)pid, install_hook_enabled ? 1 : 0);
   goto done;
 
@@ -415,17 +396,6 @@ void sm_shellcore_hooks_stop(void) {
   }
   memset(&g_hooks, 0, sizeof(g_hooks));
   pthread_mutex_unlock(&g_install_mutex);
-}
-
-bool sm_shellcore_app_exit_hook_active(void) {
-  int saved_errno = errno;
-  pthread_mutex_lock(&g_install_mutex);
-  bool active = g_hooks.installed && g_hooks.remote.pid > 0;
-  if (active && kill(g_hooks.remote.pid, 0) != 0 && errno == ESRCH)
-    active = false;
-  pthread_mutex_unlock(&g_install_mutex);
-  errno = saved_errno;
-  return active;
 }
 
 bool sm_shellcore_install_title_dir(const char *title_id,

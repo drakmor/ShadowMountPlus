@@ -4,10 +4,8 @@
     .global sm_shellcore_bridge_blob_start
     .global sm_shellcore_bridge_blob_end
     .global sm_shellcore_bridge_launch_hook
-    .global sm_shellcore_bridge_app_exit_hook
     .global sm_shellcore_bridge_install_all_hook
     .global sm_shellcore_bridge_launch_trampoline
-    .global sm_shellcore_bridge_app_exit_trampoline
     .global sm_shellcore_bridge_install_all_trampoline
     .global sm_shellcore_bridge_install_title_dir
     .global sm_shellcore_bridge_install_armed
@@ -36,7 +34,6 @@ sm_shellcore_bridge_launch_hook:
     pushq %r11
     subq $8, %rsp
     movl $1, %edi
-    xorl %edx, %edx
     /* RSI still contains title_id. */
     call sm_shellcore_bridge_exchange
     addq $8, %rsp
@@ -58,7 +55,6 @@ sm_shellcore_bridge_launch_hook:
     jns 1f
     movl $2, %edi
     movq %r12, %rsi
-    xorl %edx, %edx
     subq $8, %rsp
     call sm_shellcore_bridge_exchange
     addq $8, %rsp
@@ -68,28 +64,6 @@ sm_shellcore_bridge_launch_hook:
     popq %rbx
     ret
 
-    .p2align 4
-/*
- * LncManager::onAppExit(uint32_t app_id) owns the SysCore application-exit
- * event. Notify ShadowMount only after the original method returns, after its
- * firmware-specific exit cleanup. The app id is the second argument.
- */
-sm_shellcore_bridge_app_exit_hook:
-    pushq %rbx
-    movl %esi, %ebx
-    call *sm_shellcore_bridge_app_exit_trampoline(%rip)
-    pushq %rax
-    subq $8, %rsp
-    movl $3, %edi
-    xorl %esi, %esi
-    movl %ebx, %edx
-    call sm_shellcore_bridge_exchange
-    addq $8, %rsp
-    popq %rax
-    popq %rbx
-    ret
-
-    .p2align 4
 /*
  * FW 12+ removed the public AppInstallTitleDir RPC. AppInstallAll still
  * reaches this internal dispatcher, so one explicitly armed request is
@@ -109,7 +83,7 @@ sm_shellcore_bridge_install_all_hook:
 1:
     jmp *sm_shellcore_bridge_install_all_trampoline(%rip)
 
-/* int exchange(uint16_t operation, const char *title_id, uint32_t app_id) */
+/* int exchange(uint16_t operation, const char *title_id) */
     .p2align 4
 sm_shellcore_bridge_exchange:
     pushq %rbp
@@ -127,7 +101,6 @@ sm_shellcore_bridge_exchange:
     movl $0x534d5343, -64(%rbp)
     movw $1, -60(%rbp)
     movw %di, -58(%rbp)
-    movl %edx, -56(%rbp)
     testq %rsi, %rsi
     je 2f
     leaq -56(%rbp), %rdi
@@ -194,8 +167,6 @@ sm_shellcore_bridge_exchange:
 
     .p2align 3
 sm_shellcore_bridge_launch_trampoline:
-    .quad 0
-sm_shellcore_bridge_app_exit_trampoline:
     .quad 0
 sm_shellcore_bridge_install_all_trampoline:
     .quad 0

@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
-"""Generate SceShellCore lifecycle offsets from unpacked firmware files.
+"""Generate SceShellCore bridge offsets from unpacked firmware files.
 
 The generator identifies functions through semantic log strings, finds the
 containing function prologue and emits a compact firmware offset table.  It is
 intentionally independent from IDA databases so the checked-in table can be
 reproduced from unpacked firmware files.
-
-The runtime-release hook targets ``LncManager::onAppExit`` rather than an
-application/workspace destructor.  ShellCore can destroy a launch-time
-``LncApplication`` object with the live app id, so destructor hooks produce a
-false exit event while the game is still running.  ``onAppExit`` is the
-SysCore exit-event owner and returns after the firmware-specific exit cleanup
-path has run.
 """
 
 from __future__ import annotations
@@ -26,7 +19,6 @@ from capstone import CS_ARCH_X86, CS_MODE_64, Cs
 PROLOGUE = b"\x55\x48\x89\xe5"
 TARGET_NAMES = (
     "launch_app",
-    "app_exit",
     "install_title_dir",
     "install_all",
 )
@@ -145,33 +137,6 @@ class ShellCore:
             raise ValueError(f"launchApp xrefs: {launch_xrefs!r}")
         launch = self.preceding_prologue(launch_xrefs[0])
 
-        app_exit_strings = self.string_addresses(
-            b"[SceLncService] onAppExit() appId={0x%08x}", False
-        )
-        app_exit_groups = {
-            self.preceding_prologue(xref)
-            for xref in self.rip_xrefs(app_exit_strings, slop=8)
-        }
-        if len(app_exit_groups) != 1:
-            raise ValueError(f"onAppExit candidates: {app_exit_groups!r}")
-        app_exit = next(iter(app_exit_groups))
-
-        # Validate the candidate with an independent source-expression log.
-        # This prevents a changed format string from silently selecting an
-        # unrelated function that also logs an app id.
-        app_remove_strings = self.string_addresses(
-            b"m_app_list.remove(app);", False
-        )
-        app_remove_groups = {
-            self.preceding_prologue(xref)
-            for xref in self.rip_xrefs(app_remove_strings, slop=8)
-        }
-        if app_exit not in app_remove_groups:
-            raise ValueError(
-                "onAppExit candidate does not remove the application: "
-                f"0x{app_exit:x}, remove candidates {app_remove_groups!r}"
-            )
-
         install_strings = self.string_addresses(b"AppInstallTitleDirMain", False)
         install_groups: dict[int, int] = {}
         for xref in self.rip_xrefs(install_strings, slop=8):
@@ -202,7 +167,6 @@ class ShellCore:
 
         return {
             "launch_app": launch,
-            "app_exit": app_exit,
             "install_title_dir": best[0],
             "install_all": app_install_all,
         }

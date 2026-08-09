@@ -19,7 +19,7 @@ def verify_firmware(path: Path, firmware: int) -> None:
     decoder = Cs(CS_ARCH_X86, CS_MODE_64)
     decoder.detail = True
 
-    names = ["launch_app", "app_exit"]
+    names = ["launch_app"]
     # AppInstallAll is hooked after the public TitleDir RPC disappeared.
     if firmware >= 0x1200:
         names.append("install_all")

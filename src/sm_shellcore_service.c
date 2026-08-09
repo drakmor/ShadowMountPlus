@@ -5,7 +5,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include "sm_config_mount.h"
 #include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
 #include "sm_gameinfo.h"
@@ -22,16 +21,15 @@
 
 _Static_assert(sizeof(sm_shellcore_request_t) == 40,
                "unexpected ShellCore request size");
-_Static_assert(offsetof(sm_shellcore_request_t, payload) == 8,
-               "unexpected ShellCore request payload offset");
-_Static_assert(offsetof(sm_shellcore_request_t, payload.app_exit.app_id) == 8,
-               "unexpected ShellCore app-exit app id offset");
+_Static_assert(offsetof(sm_shellcore_request_t, title_id) == 8,
+               "unexpected ShellCore request title id offset");
 _Static_assert(sizeof(sm_shellcore_response_t) == 4,
                "unexpected ShellCore response size");
 
 typedef struct {
   char title_id[MAX_TITLE_ID];
   uint32_t app_id;
+  pid_t pid;
   bool game_exited;
 } shellcore_mount_owner_t;
 
@@ -554,7 +552,7 @@ static bool release_title_runtime(const char *title_id,
     released = diagnose_busy
                    ? unmount_title_runtime_layers(title_id)
                    : unmount_title_runtime_layers_quiet(title_id);
-    if (released && !runtime_config()->persistent_image_mounts)
+    if (released)
       released = release_backing_image(title_id);
     release_errno = released ? 0 : errno;
     runtime_mount_state_unlock();
@@ -576,10 +574,9 @@ static bool release_title_runtime(const char *title_id,
               "attempt=%u",
               title_id, attempt + 1u);
   }
-  // The lifecycle owner is gone even when a short-lived ShellCore sandbox
-  // nullfs still pins the title stack. Leaving the title marked as prepared
-  // would block scanner cleanup forever. The intact stack remains discoverable
-  // through mount.lnk and is retried by the normal full-scan cleanup cycle.
+  // Do not leave a failed release marked as prepared forever. The intact stack
+  // remains discoverable through mount.lnk and normal scanner cleanup retries
+  // it after any remaining transient reference disappears.
   clear_owned_title(title_id);
   end_runtime_release(title_id);
   if (!released && release_errno != 0)
@@ -592,13 +589,14 @@ bool sm_shellcore_release_title_runtime(const char *title_id) {
 }
 
 void sm_shellcore_service_bind_prepared_app(const char *title_id,
-                                            uint32_t app_id) {
-  if (!title_id || title_id[0] == '\0' || app_id == 0)
+                                            uint32_t app_id, pid_t pid) {
+  if (!title_id || title_id[0] == '\0' || pid <= 0)
     return;
 
   pthread_mutex_lock(&g_service.mutex);
   if (mount_owner_matches(&g_service.prepared, title_id)) {
     g_service.prepared.app_id = app_id;
+    g_service.prepared.pid = pid;
     g_service.prepared.game_exited = false;
     g_service.prepare_in_progress = false;
     g_service.launch_pending = false;
@@ -606,26 +604,119 @@ void sm_shellcore_service_bind_prepared_app(const char *title_id,
   pthread_mutex_unlock(&g_service.mutex);
 }
 
-bool sm_shellcore_service_note_game_exit(const char *title_id) {
-  if (!title_id || title_id[0] == '\0')
+bool sm_shellcore_service_note_game_exit(pid_t pid,
+                                         char title_id_out[MAX_TITLE_ID]) {
+  if (title_id_out)
+    title_id_out[0] = '\0';
+  if (pid <= 0)
     return false;
 
   bool changed = false;
   pthread_mutex_lock(&g_service.mutex);
-  shellcore_mount_owner_t *owner = find_mount_owner_locked(title_id);
+  shellcore_mount_owner_t *owner = NULL;
+  if (g_service.outgoing.pid == pid)
+    owner = &g_service.outgoing;
+  else if (g_service.prepared.pid == pid)
+    owner = &g_service.prepared;
   if (owner && !owner->game_exited) {
     owner->game_exited = true;
+    if (title_id_out)
+      (void)strlcpy(title_id_out, owner->title_id, MAX_TITLE_ID);
     changed = true;
   }
   pthread_mutex_unlock(&g_service.mutex);
   return changed;
 }
 
+static bool title_sandbox_exists(const char *title_id) {
+  DIR *dir = opendir("/mnt/sandbox");
+  if (!dir) {
+    if (errno != ENOENT) {
+      log_debug("  [SHELLCORE] sandbox lookup failed for %s: %s", title_id,
+                strerror(errno));
+      return true;
+    }
+    return false;
+  }
+
+  size_t title_len = strlen(title_id);
+  bool found = false;
+  struct dirent *entry;
+  errno = 0;
+  while ((entry = readdir(dir)) != NULL) {
+    if (strncmp(entry->d_name, title_id, title_len) != 0 ||
+        entry->d_name[title_len] != '_' ||
+        entry->d_name[title_len + 1u] == '\0') {
+      continue;
+    }
+    found = true;
+    break;
+  }
+  int read_errno = errno;
+  closedir(dir);
+  if (!found && read_errno != 0) {
+    log_debug("  [SHELLCORE] sandbox scan failed for %s: %s", title_id,
+              strerror(read_errno));
+    return true;
+  }
+  return found;
+}
+
+int sm_shellcore_service_release_exited_titles(void) {
+  char exited_titles[2][MAX_TITLE_ID] = {{0}};
+  size_t exited_count = 0;
+
+  pthread_mutex_lock(&g_service.mutex);
+  if (g_service.outgoing.title_id[0] != '\0' &&
+      g_service.outgoing.game_exited) {
+    (void)strlcpy(exited_titles[exited_count++],
+                  g_service.outgoing.title_id, MAX_TITLE_ID);
+  }
+  if (g_service.prepared.title_id[0] != '\0' &&
+      g_service.prepared.game_exited &&
+      (exited_count == 0 ||
+       strcmp(exited_titles[0], g_service.prepared.title_id) != 0)) {
+    (void)strlcpy(exited_titles[exited_count++],
+                  g_service.prepared.title_id, MAX_TITLE_ID);
+  }
+  pthread_mutex_unlock(&g_service.mutex);
+
+  bool waiting = false;
+  int release_error = 0;
+  for (size_t i = 0; i < exited_count; ++i) {
+    const char *title_id = exited_titles[i];
+    if (title_sandbox_exists(title_id)) {
+      waiting = true;
+      continue;
+    }
+
+    log_debug("  [SHELLCORE] title sandbox gone; releasing runtime: %s",
+              title_id);
+    if (!release_title_runtime(title_id, false)) {
+      release_error = errno != 0 ? errno : EIO;
+      log_debug("  [SHELLCORE] sandbox-triggered release incomplete; scanner "
+                "cleanup will retry: %s (%s)",
+                title_id, strerror(release_error));
+    }
+  }
+  if (release_error != 0)
+    return release_error;
+  if (waiting)
+    return EAGAIN;
+
+  pthread_mutex_lock(&g_service.mutex);
+  bool exit_pending = g_service.prepared.game_exited ||
+                      g_service.outgoing.game_exited;
+  pthread_mutex_unlock(&g_service.mutex);
+  if (exit_pending)
+    return EAGAIN;
+  return 0;
+}
+
 bool sm_shellcore_service_has_prepared_mount(void) {
   pthread_mutex_lock(&g_service.mutex);
-  // Keep scanner cleanup blocked after process exit as well. Only the
-  // post-onAppExit event (or the explicit no-hook fallback) owns the
-  // transition that clears this state and releases the runtime stack.
+  // Keep scanner cleanup blocked after process exit until ShellCore removes
+  // every sandbox for the title and the lifecycle watcher releases its stack.
   bool prepared = g_service.prepared.title_id[0] != '\0' ||
                   g_service.outgoing.title_id[0] != '\0';
   pthread_mutex_unlock(&g_service.mutex);
@@ -679,56 +770,26 @@ static int handle_launch_failed_request(const char *title_id) {
   return sm_shellcore_release_title_runtime(title_id) ? 0 : EBUSY;
 }
 
-static bool resolve_app_exit_title(uint32_t app_id,
-                                   char title_id[MAX_TITLE_ID]) {
-  if (app_id == 0)
-    return false;
-
-  pthread_mutex_lock(&g_service.mutex);
-  // During a game switch the outgoing app owns the first exit notification,
-  // even if ShellCore quickly reuses an application id for the incoming game.
-  if (g_service.outgoing.app_id == app_id &&
-      g_service.outgoing.title_id[0] != '\0')
-    (void)strlcpy(title_id, g_service.outgoing.title_id, MAX_TITLE_ID);
-  else if (g_service.prepared.app_id == app_id &&
-           g_service.prepared.title_id[0] != '\0')
-    (void)strlcpy(title_id, g_service.prepared.title_id, MAX_TITLE_ID);
-  pthread_mutex_unlock(&g_service.mutex);
-  if (title_id[0] == '\0')
-    return false;
-
-  log_debug("  [SHELLCORE] onAppExit cleanup complete: %s app_id=0x%08X",
-            title_id, app_id);
-  return true;
-}
-
 static void handle_client(int fd) {
   sm_shellcore_request_t request;
   sm_shellcore_response_t response;
-  char release_title_id[MAX_TITLE_ID] = {0};
   if (!sm_socket_read_full(fd, &request, sizeof(request)))
     return;
   if (request.magic != SM_SHELLCORE_PROTOCOL_MAGIC ||
       request.version != SM_SHELLCORE_PROTOCOL_VERSION ||
       ((request.operation == SM_SHELLCORE_REQUEST_LAUNCH ||
         request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED) &&
-       strnlen(request.payload.title_id, sizeof(request.payload.title_id)) ==
-           sizeof(request.payload.title_id))) {
+       strnlen(request.title_id, sizeof(request.title_id)) ==
+           sizeof(request.title_id))) {
     response.status = EPROTO;
   } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH) {
-    response.status = handle_launch_request(request.payload.title_id);
+    response.status = handle_launch_request(request.title_id);
   } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED) {
-    response.status = handle_launch_failed_request(request.payload.title_id);
-  } else if (request.operation == SM_SHELLCORE_REQUEST_APP_EXITED) {
-    (void)resolve_app_exit_title(request.payload.app_exit.app_id,
-                                 release_title_id);
-    response.status = 0;
+    response.status = handle_launch_failed_request(request.title_id);
   } else {
     response.status = ENOTSUP;
   }
   (void)sm_socket_write_full(fd, &response, sizeof(response));
-  if (release_title_id[0] != '\0')
-    (void)sm_shellcore_release_title_runtime(release_title_id);
 }
 
 static void *service_thread_main(void *arg) {

@@ -11,21 +11,14 @@
 
 typedef enum {
   SM_SHELLCORE_REQUEST_LAUNCH = 1,
-  SM_SHELLCORE_REQUEST_LAUNCH_FAILED = 2,
-  SM_SHELLCORE_REQUEST_APP_EXITED = 3
+  SM_SHELLCORE_REQUEST_LAUNCH_FAILED = 2
 } sm_shellcore_request_op_t;
 
 typedef struct {
   uint32_t magic;
   uint16_t version;
   uint16_t operation;
-  union {
-    char title_id[MAX_TITLE_ID];
-    struct {
-      uint32_t app_id;
-      uint8_t reserved[MAX_TITLE_ID - sizeof(uint32_t)];
-    } app_exit;
-  } payload;
+  char title_id[MAX_TITLE_ID];
 } sm_shellcore_request_t;
 
 typedef struct {

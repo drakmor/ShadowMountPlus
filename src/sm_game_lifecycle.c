@@ -19,11 +19,11 @@
 #include "sm_runtime.h"
 #include "sm_scan.h"
 #include "sm_scanner.h"
-#include "sm_shellcore_hooks.h"
 #include "sm_shellcore_service.h"
 #include "sm_time.h"
 
 #define MAX_PENDING_GAME_EXEC_CANDIDATES 32
+#define GAME_SANDBOX_ROOT "/mnt/sandbox"
 
 typedef struct {
   bool active;
@@ -209,7 +209,7 @@ static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
   if (!sm_shellcore_ensure_title_runtime(title_id)) {
     return false;
   }
-  sm_shellcore_service_bind_prepared_app(title_id, app_id);
+  sm_shellcore_service_bind_prepared_app(title_id, app_id, pid);
 
   if (!register_game_exit_watch(kq, pid)) {
     log_debug("  [GAME] skipping launch tracking for %s pid=%ld without exit watch",
@@ -249,6 +249,26 @@ static void close_game_lifecycle_wake_pipe(void) {
   }
 }
 
+static int register_game_sandbox_watch(int kq) {
+  int fd = open(GAME_SANDBOX_ROOT, O_RDONLY);
+  if (fd < 0) {
+    log_debug("  [GAME] sandbox watcher open failed: %s", strerror(errno));
+    return -1;
+  }
+
+  struct kevent kev;
+  EV_SET(&kev, (uintptr_t)fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR,
+         NOTE_WRITE | NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE,
+         0, NULL);
+  if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) {
+    log_debug("  [GAME] sandbox watcher registration failed: %s",
+              strerror(errno));
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
 static void drain_game_lifecycle_wake_pipe(void) {
   char drain_buf[32];
   while (read(g_game_lifecycle_wake_pipe[0], drain_buf, sizeof(drain_buf)) > 0) {
@@ -277,6 +297,7 @@ static bool drain_game_lifecycle_events_nowait(int kq) {
         handle_game_exit((pid_t)events[i].ident);
       }
     }
+    (void)sm_shellcore_service_release_exited_titles();
   }
 }
 
@@ -492,8 +513,11 @@ static void handle_game_exec(int kq, pid_t pid) {
 }
 
 static void handle_game_exit(pid_t pid) {
-  char title_id[MAX_TITLE_ID] = {0};
-  bool had_active_title = consume_active_game_title(pid, title_id);
+  char active_title_id[MAX_TITLE_ID] = {0};
+  char owned_title_id[MAX_TITLE_ID] = {0};
+  bool had_active_title = consume_active_game_title(pid, active_title_id);
+  bool owned_exit =
+      sm_shellcore_service_note_game_exit(pid, owned_title_id);
   pending_game_launch_t *entry = find_pending_game_launch(pid);
   if (entry)
     clear_pending_game_launch(entry);
@@ -501,20 +525,18 @@ static void handle_game_exit(pid_t pid) {
     publish_active_game_pid(0);
   sm_fakelib_game_on_exit(pid);
   sm_kstuff_game_on_exit(pid);
-  if (had_active_title) {
-    if (sm_shellcore_service_note_game_exit(title_id)) {
-      if (sm_shellcore_app_exit_hook_active()) {
-        log_debug("  [SHELLCORE] runtime release awaiting onAppExit: %s",
-                  title_id);
-      } else if (!sm_shellcore_release_title_runtime(title_id)) {
-        log_debug("  [SHELLCORE] no app-exit hook; runtime release deferred: %s",
-                  title_id);
-      }
-    }
-    int snd0_updates = normalize_snd0info_for_title(title_id);
+  if (owned_exit) {
+    log_debug("  [SHELLCORE] runtime release awaiting sandbox removal: %s",
+              owned_title_id);
+  }
+
+  const char *exited_title_id =
+      owned_exit ? owned_title_id : (had_active_title ? active_title_id : NULL);
+  if (exited_title_id) {
+    int snd0_updates = normalize_snd0info_for_title(exited_title_id);
     if (snd0_updates >= 0)
       log_debug("  [DB] snd0info normalized after game exit rows=%d title=%s",
-                snd0_updates, title_id);
+                snd0_updates, exited_title_id);
   }
 }
 
@@ -583,6 +605,56 @@ static bool terminate_usb_game_for_sleep(int kq, pid_t pid,
   return false;
 }
 
+static bool wait_for_shellcore_exit_cleanup_for_sleep(int kq,
+                                                       bool require_no_owner) {
+  uint64_t now_us = monotonic_time_us();
+  uint64_t deadline_us =
+      now_us == 0 ? 0 : now_us + GAME_SLEEP_EXIT_TIMEOUT_US;
+  while (!atomic_load_explicit(&g_game_lifecycle_stop_requested,
+                               memory_order_relaxed) &&
+         !should_stop_requested()) {
+    int release_status = sm_shellcore_service_release_exited_titles();
+    if (release_status == 0 &&
+        (!require_no_owner || !sm_shellcore_service_has_prepared_mount())) {
+      return true;
+    }
+    if (release_status != 0 && release_status != EAGAIN) {
+      log_debug("  [SLEEP] runtime release failed: %s",
+                strerror(release_status));
+      return false;
+    }
+
+    struct kevent event;
+    struct timespec timeout = {
+        .tv_sec = 0,
+        .tv_nsec = (long)GAME_LIFECYCLE_POLL_INTERVAL_US * 1000L,
+    };
+    int nev = kevent(kq, NULL, 0, &event, 1, &timeout);
+    if (nev < 0) {
+      if (errno == EINTR)
+        continue;
+      log_debug("  [SLEEP] sandbox cleanup wait failed: %s", strerror(errno));
+      return false;
+    }
+    if (nev > 0) {
+      if (event.filter == EVFILT_READ &&
+          event.ident == (uintptr_t)g_game_lifecycle_wake_pipe[0]) {
+        drain_game_lifecycle_wake_pipe();
+      } else if (event.filter == EVFILT_PROC &&
+                 (event.fflags & NOTE_EXIT) != 0) {
+        handle_game_exit((pid_t)event.ident);
+      }
+    }
+
+    now_us = monotonic_time_us();
+    if (deadline_us != 0 && now_us != 0 && now_us >= deadline_us) {
+      log_debug("  [SLEEP] timed out waiting for sandbox cleanup");
+      return false;
+    }
+  }
+  return false;
+}
+
 static void *game_lifecycle_watcher_main(void *arg) {
   (void)arg;
 
@@ -620,6 +692,8 @@ static void *game_lifecycle_watcher_main(void *arg) {
     return NULL;
   }
 
+  int sandbox_watch_fd = register_game_sandbox_watch(kq);
+
   set_game_lifecycle_start_result(true);
   log_debug("  [GAME] lifecycle watcher started");
 
@@ -654,11 +728,16 @@ static void *game_lifecycle_watcher_main(void *arg) {
           }
         }
         if (usb_cleanup_allowed) {
+          usb_cleanup_allowed = wait_for_shellcore_exit_cleanup_for_sleep(
+              kq, usb_game);
+        }
+        if (usb_cleanup_allowed) {
           runtime_mount_state_lock();
           unmount_usb_sources_for_suspend();
           runtime_mount_state_unlock();
         } else {
-          log_debug("[SLEEP] USB cleanup skipped while game process remains");
+          log_debug("[SLEEP] USB cleanup skipped: game/sandbox cleanup "
+                    "incomplete");
         }
         // Keep a live non-USB game published while it is suspended so scanner
         // work cannot race its unchanged runtime mount.
@@ -711,9 +790,10 @@ static void *game_lifecycle_watcher_main(void *arg) {
       if (event.filter == EVFILT_READ &&
           event.ident == (uintptr_t)g_game_lifecycle_wake_pipe[0]) {
         drain_game_lifecycle_wake_pipe();
-      } else if ((event.fflags & NOTE_TRACKERR) != 0) {
+      } else if (event.filter == EVFILT_PROC &&
+                 (event.fflags & NOTE_TRACKERR) != 0) {
         log_debug("  [GAME] NOTE_TRACKERR for pid=%ld", (long)event.ident);
-      } else {
+      } else if (event.filter == EVFILT_PROC) {
         if ((event.fflags & NOTE_EXEC) != 0)
           handle_game_exec(kq, (pid_t)event.ident);
         if ((event.fflags & NOTE_EXIT) != 0)
@@ -724,12 +804,15 @@ static void *game_lifecycle_watcher_main(void *arg) {
     if (runtime_sleep_mode_active())
       continue;
     poll_game_modules(kq);
+    (void)sm_shellcore_service_release_exited_titles();
   }
 
   clear_all_pending_game_launches();
   sm_fakelib_game_shutdown();
   sm_kstuff_game_shutdown();
   publish_active_game(0, NULL, 0);
+  if (sandbox_watch_fd >= 0)
+    close(sandbox_watch_fd);
   close(kq);
   log_debug("  [GAME] lifecycle watcher stopped");
   return NULL;
