@@ -40,6 +40,7 @@
  * optional OTBL metadata. Current ShadowMount profiles are:
  *
  *   .exfat                         type 5  Sv,  direct + BFS sdimg batching
+ *                                  fallback: type 0 Dfl
  *   .ffpkg (UFS)                  type 5  Sv,  direct + BFS sdimg batching
  *   standalone .ffpfs             type 5  Sv,  direct
  *   outer .ffpfsc                 type 9  AcO, layered package outer

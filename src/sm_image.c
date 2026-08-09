@@ -452,10 +452,10 @@ static bool attach_md_backend(const char *file_path, image_fs_type_t fs_type,
   return true;
 }
 
-static bool attach_lvd_backend(const char *file_path, image_fs_type_t fs_type,
-                               bool mount_read_only, off_t file_size,
-                               int *unit_id_out, char *devname_out,
-                               size_t devname_size) {
+static bool attach_lvd_backend_as(
+    const char *file_path, image_fs_type_t fs_type, bool mount_read_only,
+    off_t file_size, int *unit_id_out, char *devname_out,
+    size_t devname_size, uint16_t image_type) {
   // This ioctl caches metadata of the PFS vnode containing the image file.
   // The filesystem stored inside that file can be PFS, UFS, or exFAT.
   if (is_pfsc_image_mount_base_or_child(file_path))
@@ -485,7 +485,7 @@ static bool attach_lvd_backend(const char *file_path, image_fs_type_t fs_type,
   lvd_ioctl_attach_v0_t req;
   memset(&req, 0, sizeof(req));
   req.io_version = LVD_ATTACH_IO_VERSION_V0;
-  req.image_type = get_lvd_image_type(file_path, fs_type);
+  req.image_type = image_type;
   req.layer_count = LVD_ATTACH_LAYER_COUNT;
   req.device_size = (uint64_t)file_size;
   req.layers_ptr = layers;
@@ -531,6 +531,15 @@ static bool attach_lvd_backend(const char *file_path, image_fs_type_t fs_type,
 
   *unit_id_out = unit_id;
   return true;
+}
+
+static bool attach_lvd_backend(const char *file_path, image_fs_type_t fs_type,
+                               bool mount_read_only, off_t file_size,
+                               int *unit_id_out, char *devname_out,
+                               size_t devname_size) {
+  return attach_lvd_backend_as(
+      file_path, fs_type, mount_read_only, file_size, unit_id_out, devname_out,
+      devname_size, get_lvd_image_type(file_path, fs_type));
 }
 
 static const image_backend_ops_t *get_image_backend_ops(attach_backend_t backend) {
@@ -923,6 +932,38 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   return false;
 }
 
+static bool try_exfat_lvd_type_fallback(
+    const char *file_path, bool mount_read_only, bool force_mount,
+    off_t file_size, int *unit_id_out, char *devname_out, size_t devname_size,
+    const char *mount_point) {
+  if (runtime_sleep_mode_active() || !path_exists(file_path))
+    return false;
+
+  log_debug("  [IMG][%s] retrying exFAT with img=%u",
+            attach_backend_name(ATTACH_BACKEND_LVD),
+            LVD_ATTACH_IMAGE_TYPE_SINGLE);
+  if (!attach_lvd_backend_as(
+          file_path, IMAGE_FS_EXFAT, mount_read_only, file_size, unit_id_out,
+          devname_out, devname_size, LVD_ATTACH_IMAGE_TYPE_SINGLE)) {
+    return false;
+  }
+
+  if (runtime_sleep_mode_active()) {
+    (void)detach_attached_unit(ATTACH_BACKEND_LVD, *unit_id_out, NULL);
+    return false;
+  }
+  if (!perform_image_nmount(file_path, IMAGE_FS_EXFAT, ATTACH_BACKEND_LVD,
+                            *unit_id_out, devname_out, mount_point,
+                            mount_read_only, force_mount)) {
+    return false;
+  }
+
+  sm_error_clear();
+  log_debug("  [IMG][%s] exFAT type fallback succeeded: %s",
+            attach_backend_name(ATTACH_BACKEND_LVD), file_path);
+  return true;
+}
+
 static bool validate_mounted_image(const char *file_path, image_fs_type_t fs_type,
                                    attach_backend_t attach_backend, int unit_id,
                                    const char *devname,
@@ -1039,20 +1080,32 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   int unit_id = -1;
   char devname[64];
   memset(devname, 0, sizeof(devname));
-  if (!attach_image_device(file_path, fs_type, mount_read_only, st.st_size,
-                           attach_backend, &unit_id, devname, sizeof(devname))) {
-    runtime_mount_state_unlock();
-    return false;
+  bool attached =
+      attach_image_device(file_path, fs_type, mount_read_only, st.st_size,
+                          attach_backend, &unit_id, devname, sizeof(devname));
+  int attach_errno = errno;
+  bool mounted = false;
+  if (attached) {
+    if (runtime_sleep_mode_active()) {
+      (void)detach_attached_unit(attach_backend, unit_id, NULL);
+      runtime_mount_state_unlock();
+      return false;
+    }
+    mounted = perform_image_nmount(
+        file_path, fs_type, attach_backend, unit_id, devname, mount_point,
+        mount_read_only, force_mount);
   }
-  if (runtime_sleep_mode_active()) {
-    (void)detach_attached_unit(attach_backend, unit_id, NULL);
-    runtime_mount_state_unlock();
-    return false;
-  }
-  if (!perform_image_nmount(file_path, fs_type, attach_backend, unit_id, devname,
-                            mount_point, mount_read_only, force_mount)) {
-    runtime_mount_state_unlock();
-    return false;
+  if (!mounted) {
+    bool can_retry = attach_backend == ATTACH_BACKEND_LVD &&
+                     fs_type == IMAGE_FS_EXFAT &&
+                     (attached || attach_errno == EINVAL);
+    if (!can_retry ||
+        !try_exfat_lvd_type_fallback(
+            file_path, mount_read_only, force_mount, st.st_size, &unit_id,
+            devname, sizeof(devname), mount_point)) {
+      runtime_mount_state_unlock();
+      return false;
+    }
   }
   if (runtime_sleep_mode_active()) {
     (void)unmount_runtime_image(file_path, unit_id, attach_backend);
