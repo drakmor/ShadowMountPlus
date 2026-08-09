@@ -377,31 +377,16 @@ static bool detach_md_unit(int unit_id,
   req.md_version = MDIOVERSION;
   req.md_unit = (unsigned int)unit_id;
 
-  bool detach_accepted = false;
-  int detach_errno = 0;
   if (ioctl(fd, MDIOCDETACH, &req) != 0) {
-    int initial_errno = errno;
-    req.md_options = MD_FORCE;
-    if (ioctl(fd, MDIOCDETACH, &req) != 0) {
-      detach_errno = errno;
-      log_debug("  [IMG][%s] detach %d failed: %s",
-                attach_backend_name(ATTACH_BACKEND_MD), unit_id,
-                strerror(detach_errno));
-    } else {
-      detach_accepted = true;
-      log_debug("  [IMG][%s] detach %d forced after error: %s",
-                attach_backend_name(ATTACH_BACKEND_MD), unit_id,
-                strerror(initial_errno));
-    }
-  } else {
-    detach_accepted = true;
-  }
-  close(fd);
-
-  if (!detach_accepted) {
+    int detach_errno = errno;
+    log_debug("  [IMG][%s] detach %d failed: %s",
+              attach_backend_name(ATTACH_BACKEND_MD), unit_id,
+              strerror(detach_errno));
+    close(fd);
     return finish_failed_detach(ATTACH_BACKEND_MD, unit_id, devname,
                                 &request_state, detach_errno);
   }
+  close(fd);
 
   return finish_accepted_detach(ATTACH_BACKEND_MD, unit_id, state,
                                 &request_state);
