@@ -265,7 +265,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
       DEFAULT_KSTUFF_PAUSE_DELAY_IMAGE_SECONDS;
   state->cfg.kstuff_pause_delay_direct_seconds =
       DEFAULT_KSTUFF_PAUSE_DELAY_DIRECT_SECONDS;
-  state->cfg.fan_target_temperature_c = FAN_TARGET_TEMPERATURE_AUTO;
+  state->cfg.fan_target_temperature_c = FAN_TARGET_TEMPERATURE_SYSTEM;
   state->cfg.language_id = SM_LANGUAGE_AUTO;
   state->cfg.exfat_backend = default_exfat_backend();
   state->cfg.ufs_backend = default_ufs_backend();
@@ -1389,13 +1389,14 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     }
 
     if (strcasecmp(key, "fan_target_temperature") == 0) {
-      if (strcasecmp(value, "auto") == 0) {
-        state->cfg.fan_target_temperature_c = FAN_TARGET_TEMPERATURE_AUTO;
+      if (strcasecmp(value, "system") == 0 ||
+          strcasecmp(value, "auto") == 0) {
+        state->cfg.fan_target_temperature_c = FAN_TARGET_TEMPERATURE_SYSTEM;
       } else if (!parse_u32_ini(value, &u32) ||
                  u32 < MIN_FAN_TARGET_TEMPERATURE_C ||
                  u32 > MAX_FAN_TARGET_TEMPERATURE_C) {
         log_debug("  [CFG] invalid fan target at line %d: %s=%s "
-                  "(use auto or %u..%u C)",
+                  "(use system or %u..%u C)",
                   line_no, key, value,
                   (unsigned)MIN_FAN_TARGET_TEMPERATURE_C,
                   (unsigned)MAX_FAN_TARGET_TEMPERATURE_C);
@@ -1587,7 +1588,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
             "kstuff_game_auto_toggle=%d kstuff_crash_detection=%d "
-            "fan_target_temperature=%u (0=auto) "
+            "fan_target_temperature=%u (0=system) "
             "kstuff_pause_delay_image_s=%u kstuff_pause_delay_direct_s=%u "
             "exfat_backend=%s ufs_backend=%s "
             "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u) "

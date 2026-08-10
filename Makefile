@@ -28,6 +28,10 @@ L10N_CATALOGS := $(wildcard include/lang/*.inc)
 # Targets
 all: shadowmountplus.elf
 
+usb-info.elf: tools/usb_info.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -lSceNotification
+	$(PS5_PAYLOAD_SDK)/bin/prospero-strip --strip-all $@
+
 # Build Daemon
 shadowmountplus.elf: $(OBJS) $(KERNEL_SYS_STUB_SO)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(KERNEL_SYS_STUB_SO) $(LIBS)
@@ -55,4 +59,4 @@ src/%.o: src/%.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f shadowmountplus.elf api-test.elf kill.elf src/*.o $(KERNEL_SYS_STUB_SO) src/notify_icon_asset.c src/config_ini_example_asset.c
+	rm -f shadowmountplus.elf usb-info.elf api-test.elf kill.elf src/*.o $(KERNEL_SYS_STUB_SO) src/notify_icon_asset.c src/config_ini_example_asset.c

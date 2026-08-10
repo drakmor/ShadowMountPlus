@@ -80,7 +80,7 @@ Supported keys (all optional):
 - `global_fakelib_exclude=<TITLE_ID>` (repeatable; disables the global fakelib overlay for matching titles)
 - `kstuff_game_auto_toggle=1|0` (`1` pauses kstuff after tracked game launches and resumes it on stop; default: `1`)
 - `kstuff_crash_detection=1|0` (`1` enables crash monitoring and pause-delay autotune updates; default: `1`)
-- `fan_target_temperature=auto|<50..91>` (automatic fan-controller target in degrees Celsius, applied when a game starts; `auto` leaves the system target untouched and is the default)
+- `fan_target_temperature=system|<50..91>` (automatic fan-controller target in degrees Celsius, applied when a game starts; `system` leaves fan control to the console and is the default)
 - `kstuff_pause_delay_image_seconds=<0..3600>` (delay before pausing kstuff for image-backed launches; default: `25`)
 - `kstuff_pause_delay_direct_seconds=<0..3600>` (delay before pausing kstuff for direct/non-image launches; default: `15`)
 - `kstuff_no_pause=<TITLE_ID>` (repeatable; keeps kstuff enabled for matching titles)
