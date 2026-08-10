@@ -787,10 +787,48 @@ static bool attach_image_device(const char *file_path, image_fs_type_t fs_type,
   return true;
 }
 
+static bool verify_exfat_nmount_result(const char *file_path,
+                                       attach_backend_t attach_backend,
+                                       int unit_id, const char *devname,
+                                       const char *mount_point,
+                                       bool *retry_safe_out) {
+  struct statfs sfs;
+  int verify_errno = EINVAL;
+  if (statfs(mount_point, &sfs) == 0) {
+    if (strcmp(sfs.f_fstypename, "exfatfs") == 0 &&
+        strcmp(sfs.f_mntfromname, devname) == 0 &&
+        strcmp(sfs.f_mntonname, mount_point) == 0) {
+      return true;
+    }
+
+    log_debug("  [IMG][%s] nmount did not produce the expected exFAT mount: "
+              "from=%s path=%s type=%s",
+              attach_backend_name(attach_backend), sfs.f_mntfromname,
+              sfs.f_mntonname, sfs.f_fstypename);
+  } else {
+    verify_errno = errno;
+    log_debug("  [IMG][%s] exFAT mount verification failed for %s -> %s: %s",
+              attach_backend_name(attach_backend), devname, mount_point,
+              strerror(verify_errno));
+  }
+
+  bool released = unmount_runtime_image(file_path, unit_id, attach_backend);
+  int result_errno = (!released && errno != 0) ? errno : verify_errno;
+  if (retry_safe_out)
+    *retry_safe_out = released;
+  errno = result_errno;
+  return false;
+}
+
 static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
                                  attach_backend_t attach_backend, int unit_id,
                                  const char *devname, const char *mount_point,
-                                 bool mount_read_only, bool force_mount) {
+                                 bool mount_read_only, bool force_mount,
+                                 bool *retry_safe_out) {
+  // A fallback may attach another device only after this one is fully released.
+  if (retry_safe_out)
+    *retry_safe_out = false;
+
   struct iovec *iov = NULL;
   unsigned int iovlen = 0;
   char mount_errmsg[256];
@@ -908,15 +946,20 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   } else {
     log_debug("  [IMG][%s] unsupported fstype=%s",
               attach_backend_name(attach_backend), image_fs_name(fs_type));
-    (void)detach_attached_unit(attach_backend, unit_id, NULL);
+    bool released = detach_attached_unit(attach_backend, unit_id, NULL);
+    if (retry_safe_out)
+      *retry_safe_out = released;
     errno = EINVAL;
     return false;
   }
 
   const char *mount_mode = NULL;
   unsigned int mount_flags = get_nmount_flags(mount_read_only, &mount_mode);
-  if (nmount(iov, iovlen, (int)mount_flags) == 0)
-    return true;
+  if (nmount(iov, iovlen, (int)mount_flags) == 0) {
+    return fs_type != IMAGE_FS_EXFAT ||
+           verify_exfat_nmount_result(file_path, attach_backend, unit_id,
+                                      devname, mount_point, retry_safe_out);
+  }
 
   int mount_errno = errno;
   if (mount_errmsg[0] != '\0') {
@@ -927,7 +970,9 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   log_debug("  [IMG][%s] nmount %s failed: %s",
             attach_backend_name(attach_backend), mount_mode,
             strerror(mount_errno));
-  (void)detach_attached_unit(attach_backend, unit_id, NULL);
+  bool released = detach_attached_unit(attach_backend, unit_id, NULL);
+  if (retry_safe_out)
+    *retry_safe_out = released;
   errno = mount_errno;
   return false;
 }
@@ -939,6 +984,7 @@ static bool try_exfat_lvd_type_fallback(
   if (runtime_sleep_mode_active() || !path_exists(file_path))
     return false;
 
+  ensure_mount_dirs(mount_point);
   log_debug("  [IMG][%s] retrying exFAT with img=%u",
             attach_backend_name(ATTACH_BACKEND_LVD),
             LVD_ATTACH_IMAGE_TYPE_SINGLE);
@@ -954,7 +1000,7 @@ static bool try_exfat_lvd_type_fallback(
   }
   if (!perform_image_nmount(file_path, IMAGE_FS_EXFAT, ATTACH_BACKEND_LVD,
                             *unit_id_out, devname_out, mount_point,
-                            mount_read_only, force_mount)) {
+                            mount_read_only, force_mount, NULL)) {
     return false;
   }
 
@@ -1085,6 +1131,7 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
                           attach_backend, &unit_id, devname, sizeof(devname));
   int attach_errno = errno;
   bool mounted = false;
+  bool retry_safe = false;
   if (attached) {
     if (runtime_sleep_mode_active()) {
       (void)detach_attached_unit(attach_backend, unit_id, NULL);
@@ -1093,12 +1140,13 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
     }
     mounted = perform_image_nmount(
         file_path, fs_type, attach_backend, unit_id, devname, mount_point,
-        mount_read_only, force_mount);
+        mount_read_only, force_mount, &retry_safe);
   }
   if (!mounted) {
     bool can_retry = attach_backend == ATTACH_BACKEND_LVD &&
                      fs_type == IMAGE_FS_EXFAT &&
-                     (attached || attach_errno == EINVAL);
+                     ((attached && retry_safe) ||
+                      (!attached && attach_errno == EINVAL));
     if (!can_retry ||
         !try_exfat_lvd_type_fallback(
             file_path, mount_read_only, force_mount, st.st_size, &unit_id,
