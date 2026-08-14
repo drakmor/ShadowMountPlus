@@ -46,6 +46,22 @@ static uint16_t pfs_lvd_game_image_type_from_selector(uint8_t selector) {
   return table[idx];
 }
 
+static bool image_uses_legacy_mount(const runtime_config_t *cfg,
+                                    image_fs_type_t fs_type) {
+  switch (fs_type) {
+  case IMAGE_FS_UFS:
+    return cfg->legacy_mount_ufs;
+  case IMAGE_FS_EXFAT:
+    return cfg->legacy_mount_exfat;
+  case IMAGE_FS_PFS:
+    return cfg->legacy_mount_pfs;
+  case IMAGE_FS_PFSC_CONTAINER:
+    return cfg->legacy_mount_pfsc;
+  default:
+    return false;
+  }
+}
+
 static uint32_t get_lvd_sector_size_fallback(image_fs_type_t fs_type) {
   const runtime_config_t *cfg = runtime_config();
   switch (fs_type) {
@@ -95,14 +111,13 @@ static uint32_t get_lvd_sector_size(const char *path, image_fs_type_t fs_type) {
 }
 
 static uint32_t get_lvd_secondary_unit(image_fs_type_t fs_type,
-                                       uint32_t sector_size) {
-  if (fs_type == IMAGE_FS_EXFAT || fs_type == IMAGE_FS_UFS ||
-      image_fs_type_is_pfs(fs_type)) {
-    if (LVD_SECONDARY_UNIT_IMAGE_IO % sector_size != 0u)
-      return sector_size;
-    return LVD_SECONDARY_UNIT_IMAGE_IO;
-  }
-  return sector_size;
+                                       uint32_t sector_size,
+                                       bool legacy_mount) {
+  if (legacy_mount && fs_type != IMAGE_FS_EXFAT)
+    return sector_size;
+  return LVD_SECONDARY_UNIT_IMAGE_IO % sector_size == 0u
+             ? LVD_SECONDARY_UNIT_IMAGE_IO
+             : sector_size;
 }
 
 static uint32_t get_md_sector_size(image_fs_type_t fs_type) {
@@ -133,13 +148,25 @@ static unsigned int get_md_attach_options(bool mount_read_only) {
   return options;
 }
 
-static uint16_t get_lvd_attach_raw_flags(bool mount_read_only) {
+static uint16_t get_lvd_attach_raw_flags(image_fs_type_t fs_type,
+                                         bool mount_read_only,
+                                         bool legacy_mount) {
+  if (legacy_mount && fs_type == IMAGE_FS_UFS) {
+    return mount_read_only ? LVD_ATTACH_RAW_FLAGS_DD_RO
+                           : LVD_ATTACH_RAW_FLAGS_DD_RW;
+  }
   return mount_read_only ? LVD_ATTACH_RAW_FLAGS_SINGLE_RO
                          : LVD_ATTACH_RAW_FLAGS_SINGLE_RW;
 }
 
-static unsigned int get_nmount_flags(bool mount_read_only,
+static unsigned int get_nmount_flags(image_fs_type_t fs_type,
+                                     bool mount_read_only, bool legacy_mount,
                                      const char **mount_mode_out) {
+  if (legacy_mount && fs_type == IMAGE_FS_UFS) {
+    if (mount_mode_out)
+      *mount_mode_out = mount_read_only ? "legacy_dd_ro" : "legacy_dd_rw";
+    return (mount_read_only ? MNT_RDONLY : 0u) | MNT_NOATIME;
+  }
   if (mount_mode_out)
     *mount_mode_out = mount_read_only ? "rdonly" : "rw";
   return mount_read_only ? MNT_RDONLY : 0;
@@ -161,14 +188,22 @@ static uint16_t normalize_lvd_raw_flags(uint16_t raw_flags) {
   return flags;
 }
 
-static uint16_t get_lvd_image_type(const char *path, image_fs_type_t fs_type) {
-  if (fs_type == IMAGE_FS_UFS || fs_type == IMAGE_FS_EXFAT)
-    return LVD_ATTACH_IMAGE_TYPE_SAVE_DATA;
+static uint16_t get_lvd_image_type(const char *path, image_fs_type_t fs_type,
+                                   bool legacy_mount) {
   if (pfs_path_uses_nested_profile(path, fs_type)) {
     return pfs_lvd_game_image_type_from_selector(
         get_nested_pfs_img_type(path, fs_type));
   }
-  if (image_fs_type_is_pfs(fs_type))
+
+  if (fs_type == IMAGE_FS_UFS) {
+    return legacy_mount ? LVD_ATTACH_IMAGE_TYPE_DOWNLOAD_DATA
+                        : LVD_ATTACH_IMAGE_TYPE_SAVE_DATA;
+  }
+  if (fs_type == IMAGE_FS_EXFAT) {
+    return legacy_mount ? LVD_ATTACH_IMAGE_TYPE_SINGLE
+                        : LVD_ATTACH_IMAGE_TYPE_SAVE_DATA;
+  }
+  if (fs_type == IMAGE_FS_PFS)
     return LVD_ATTACH_IMAGE_TYPE_SAVE_DATA;
   return LVD_ATTACH_IMAGE_TYPE_SINGLE;
 }
@@ -239,6 +274,10 @@ static void prepare_nested_image_backing_cache(const char *file_path) {
   log_debug("  [IMG][LVD] PFS backing metadata cache request accepted for %s "
             "(fs=%s cmp=1 icv=%d)",
             file_path, sfs.f_fstypename, PFS_MOUNT_SIGVERIFY ? 1 : 0);
+}
+
+static bool nested_image_backing_cache_enabled(bool legacy_mount) {
+  return !legacy_mount || runtime_config()->legacy_gddr5_cache_enabled;
 }
 
 // --- Image Path and Naming Helpers ---
@@ -385,16 +424,6 @@ void get_image_mount_point_for_source(const char *file_path,
   build_image_mount_point(file_path, mount_point);
 }
 
-typedef bool (*image_attach_fn)(const char *file_path, image_fs_type_t fs_type,
-                                bool mount_read_only, off_t file_size,
-                                int *unit_id_out, char *devname_out,
-                                size_t devname_size);
-
-typedef struct {
-  attach_backend_t id;
-  image_attach_fn attach;
-} image_backend_ops_t;
-
 static bool attach_md_backend(const char *file_path, image_fs_type_t fs_type,
                               bool mount_read_only, off_t file_size,
                               int *unit_id_out, char *devname_out,
@@ -455,11 +484,13 @@ static bool attach_md_backend(const char *file_path, image_fs_type_t fs_type,
 static bool attach_lvd_backend_as(
     const char *file_path, image_fs_type_t fs_type, bool mount_read_only,
     off_t file_size, int *unit_id_out, char *devname_out,
-    size_t devname_size, uint16_t image_type) {
+    size_t devname_size, bool legacy_mount, uint16_t image_type) {
   // This ioctl caches metadata of the PFS vnode containing the image file.
   // The filesystem stored inside that file can be PFS, UFS, or exFAT.
-  if (is_pfsc_image_mount_base_or_child(file_path))
+  if (nested_image_backing_cache_enabled(legacy_mount) &&
+      is_pfsc_image_mount_base_or_child(file_path)) {
     prepare_nested_image_backing_cache(file_path);
+  }
 
   int lvd_fd = open(LVD_CTRL_PATH, O_RDWR);
   if (lvd_fd < 0) {
@@ -478,8 +509,10 @@ static bool attach_lvd_backend_as(
   layers[0].size = (uint64_t)file_size;
 
   uint32_t sector_size = get_lvd_sector_size(file_path, fs_type);
-  uint32_t secondary_unit = get_lvd_secondary_unit(fs_type, sector_size);
-  uint16_t raw_flags = get_lvd_attach_raw_flags(mount_read_only);
+  uint32_t secondary_unit =
+      get_lvd_secondary_unit(fs_type, sector_size, legacy_mount);
+  uint16_t raw_flags =
+      get_lvd_attach_raw_flags(fs_type, mount_read_only, legacy_mount);
   uint16_t normalized_flags = normalize_lvd_raw_flags(raw_flags);
 
   lvd_ioctl_attach_v0_t req;
@@ -536,22 +569,11 @@ static bool attach_lvd_backend_as(
 static bool attach_lvd_backend(const char *file_path, image_fs_type_t fs_type,
                                bool mount_read_only, off_t file_size,
                                int *unit_id_out, char *devname_out,
-                               size_t devname_size) {
+                               size_t devname_size, bool legacy_mount) {
   return attach_lvd_backend_as(
       file_path, fs_type, mount_read_only, file_size, unit_id_out, devname_out,
-      devname_size, get_lvd_image_type(file_path, fs_type));
-}
-
-static const image_backend_ops_t *get_image_backend_ops(attach_backend_t backend) {
-  static const image_backend_ops_t md_ops = {
-      .id = ATTACH_BACKEND_MD, .attach = attach_md_backend};
-  static const image_backend_ops_t lvd_ops = {
-      .id = ATTACH_BACKEND_LVD, .attach = attach_lvd_backend};
-  if (backend == ATTACH_BACKEND_MD)
-    return &md_ops;
-  if (backend == ATTACH_BACKEND_LVD)
-    return &lvd_ops;
-  return NULL;
+      devname_size, legacy_mount,
+      get_lvd_image_type(file_path, fs_type, legacy_mount));
 }
 
 static bool get_cached_image_mount(const char *file_path,
@@ -769,18 +791,24 @@ static attach_backend_t select_image_backend(const runtime_config_t *cfg,
 static bool attach_image_device(const char *file_path, image_fs_type_t fs_type,
                                 bool mount_read_only, off_t file_size,
                                 attach_backend_t attach_backend, int *unit_id_out,
-                                char *devname_out, size_t devname_size) {
-  const image_backend_ops_t *backend_ops = get_image_backend_ops(attach_backend);
-  if (!backend_ops) {
+                                char *devname_out, size_t devname_size,
+                                bool legacy_mount) {
+  bool attached = false;
+  if (attach_backend == ATTACH_BACKEND_MD) {
+    attached = attach_md_backend(file_path, fs_type, mount_read_only, file_size,
+                                 unit_id_out, devname_out, devname_size);
+  } else if (attach_backend == ATTACH_BACKEND_LVD) {
+    attached = attach_lvd_backend(
+        file_path, fs_type, mount_read_only, file_size, unit_id_out,
+        devname_out, devname_size, legacy_mount);
+  } else {
     log_debug("  [IMG] unsupported attach backend for %s", file_path);
     errno = EINVAL;
     return false;
   }
 
-  if (!backend_ops->attach(file_path, fs_type, mount_read_only, file_size,
-                           unit_id_out, devname_out, devname_size)) {
+  if (!attached)
     return false;
-  }
 
   log_debug("  [IMG][%s] Attached as %s", attach_backend_name(attach_backend),
             devname_out);
@@ -824,7 +852,7 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
                                  attach_backend_t attach_backend, int unit_id,
                                  const char *devname, const char *mount_point,
                                  bool mount_read_only, bool force_mount,
-                                 bool *retry_safe_out) {
+                                 bool legacy_mount, bool *retry_safe_out) {
   // A fallback may attach another device only after this one is fully released.
   if (retry_safe_out)
     *retry_safe_out = false;
@@ -929,8 +957,11 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
       log_debug("  [IMG][%s] nested PFS profile: selector=0x%02x "
                 "lvd_img=%u gddr5=%d",
                 attach_backend_name(attach_backend), nested_img_type,
-                get_lvd_image_type(file_path, fs_type),
-                pfs_path_is_nested_inner(file_path, fs_type) ? 1 : 0);
+                get_lvd_image_type(file_path, fs_type, legacy_mount),
+                nested_image_backing_cache_enabled(legacy_mount) &&
+                        pfs_path_is_nested_inner(file_path, fs_type)
+                    ? 1
+                    : 0);
       iov = iov_nested_pfs;
       iovlen =
           (unsigned int)IOVEC_SIZE(iov_nested_pfs) - (force_mount ? 0u : 2u);
@@ -954,7 +985,8 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   }
 
   const char *mount_mode = NULL;
-  unsigned int mount_flags = get_nmount_flags(mount_read_only, &mount_mode);
+  unsigned int mount_flags =
+      get_nmount_flags(fs_type, mount_read_only, legacy_mount, &mount_mode);
   if (nmount(iov, iovlen, (int)mount_flags) == 0) {
     return fs_type != IMAGE_FS_EXFAT ||
            verify_exfat_nmount_result(file_path, attach_backend, unit_id,
@@ -990,7 +1022,7 @@ static bool try_exfat_lvd_type_fallback(
             LVD_ATTACH_IMAGE_TYPE_SINGLE);
   if (!attach_lvd_backend_as(
           file_path, IMAGE_FS_EXFAT, mount_read_only, file_size, unit_id_out,
-          devname_out, devname_size, LVD_ATTACH_IMAGE_TYPE_SINGLE)) {
+          devname_out, devname_size, false, LVD_ATTACH_IMAGE_TYPE_SINGLE)) {
     return false;
   }
 
@@ -1000,7 +1032,7 @@ static bool try_exfat_lvd_type_fallback(
   }
   if (!perform_image_nmount(file_path, IMAGE_FS_EXFAT, ATTACH_BACKEND_LVD,
                             *unit_id_out, devname_out, mount_point,
-                            mount_read_only, force_mount, NULL)) {
+                            mount_read_only, force_mount, false, NULL)) {
     return false;
   }
 
@@ -1069,6 +1101,7 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   bool mount_read_only = cfg->mount_read_only;
   bool mount_mode_overridden = false;
   bool force_mount = cfg->force_mount;
+  bool legacy_mount = image_uses_legacy_mount(cfg, fs_type);
   const char *filename = get_filename_component(file_path);
   if (filename[0] != '\0')
     mount_mode_overridden =
@@ -1110,8 +1143,10 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
     return success;
   }
 
-  log_debug("  [IMG] Mounting image (%s): %s -> %s", image_fs_name(fs_type),
-            file_path, mount_point);
+  log_debug("  [IMG] Mounting image (%s, %s): %s -> %s",
+            image_fs_name(fs_type),
+            legacy_mount ? "legacy-1.6" : "optimized-1.7", file_path,
+            mount_point);
   if (mount_mode_overridden) {
     log_debug("  [CFG] Image mode override: %s -> %s", file_path,
               mount_read_only ? "ro" : "rw");
@@ -1128,7 +1163,8 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   memset(devname, 0, sizeof(devname));
   bool attached =
       attach_image_device(file_path, fs_type, mount_read_only, st.st_size,
-                          attach_backend, &unit_id, devname, sizeof(devname));
+                          attach_backend, &unit_id, devname, sizeof(devname),
+                          legacy_mount);
   int attach_errno = errno;
   bool mounted = false;
   bool retry_safe = false;
@@ -1140,10 +1176,10 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
     }
     mounted = perform_image_nmount(
         file_path, fs_type, attach_backend, unit_id, devname, mount_point,
-        mount_read_only, force_mount, &retry_safe);
+        mount_read_only, force_mount, legacy_mount, &retry_safe);
   }
   if (!mounted) {
-    bool can_retry = attach_backend == ATTACH_BACKEND_LVD &&
+    bool can_retry = !legacy_mount && attach_backend == ATTACH_BACKEND_LVD &&
                      fs_type == IMAGE_FS_EXFAT &&
                      ((attached && retry_safe) ||
                       (!attached && attach_errno == EINVAL));

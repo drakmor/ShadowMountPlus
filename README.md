@@ -73,6 +73,11 @@ Supported keys (all optional):
 - `stability_wait_seconds=<0..3600>` (minimum source age before processing; default: `10`)
 - `exfat_backend=lvd|md` (default: `lvd`)
 - `ufs_backend=lvd|md` (default: `lvd`)
+- `legacy_mount_ufs=1|0` (`.ffpkg`; `1` selects the version 1.6 mount profile; default: `1`)
+- `legacy_mount_exfat=1|0` (`.exfat`; `1` selects the version 1.6 mount profile; default: `1`)
+- `legacy_mount_pfs=1|0` (`.ffpfs` and nested `pfs_image.dat`; `1` selects the version 1.6 mount profile; default: `1`)
+- `legacy_mount_pfsc=1|0` (outer `.ffpfsc`; `1` selects the version 1.6 mount profile; default: `1`)
+- `legacy_gddr5_cache=1|0` (request the PFS compressed-offset cache for nested images in legacy mode; default: `0`; optimized mode always requests it)
 - `backport_fakelib=1|0` (`1` mounts sandbox `fakelib` overlays for running games; default: `1`)
 - `global_fakelib=1|0` (`1` enables the global fakelib overlay when the folder exists; default: `1`)
 - `global_fakelib_path=<absolute_path>` (global fakelib folder; default: `/data/shadowmount/fakelib`)
@@ -92,9 +97,9 @@ Supported keys (all optional):
 - `scanpath=<absolute_path>` (can be repeated on multiple lines; default: built-in scan path list below)
 - `lvd_exfat_sector_size=<value>` (default: `512`)
 - `lvd_ufs_sector_size=<value>` (default: `4096`)
-- `lvd_pfs_sector_size=<value>` (default: `4096`; LVD mapping unit remains `65536`)
+- `lvd_pfs_sector_size=<value>` (default: `4096`; the optimized profile uses a `65536`-byte LVD mapping unit)
 - `md_exfat_sector_size=<value>` (default: `512`)
-- `md_ufs_sector_size=<value>` (default: `4096`)
+- `md_ufs_sector_size=<value>` (default: `512` with the legacy UFS profile, `4096` with the optimized profile)
 
 Supported notification languages:
 
@@ -387,7 +392,8 @@ Recommended only for titles that need external-drive-style compatibility. For ge
 
 ### LVD type-5 / BFS fast-path requirements
 
-ShadowMount attaches `.exfat` through LVD as `img_type=5 (Sv)`, with a 512-byte
+With `legacy_mount_exfat=0`, ShadowMount attaches `.exfat` through LVD as
+`img_type=5 (Sv)`, with a 512-byte
 logical sector and a 64 KiB `secondary_unit`. This lets the LVD worker collect
 up to 31 queued, 64-KiB-aligned requests of exactly 64 KiB and
 submit them through `bfs_iosession_rw_sdimg`/`BfsSdimg`. Non-matching requests
@@ -397,6 +403,8 @@ All of the following are required for the kernel to consider that fast path:
 
 - Use `exfat_backend=lvd` (the default). `/dev/mdctl` has no LVD image type or
   BFS sdimg batching.
+- Set `legacy_mount_exfat=0`; the default version 1.6 profile uses
+  `img_type=0` and does not request this fast path.
 - Store the final `.exfat` file directly on the internal BFS, normally below
   `/data`. An image on USB/UFS/exFAT/PFS, or an exFAT image nested in compressed
   PFS, uses the normal path.

@@ -269,11 +269,16 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.language_id = SM_LANGUAGE_AUTO;
   state->cfg.exfat_backend = default_exfat_backend();
   state->cfg.ufs_backend = default_ufs_backend();
+  state->cfg.legacy_mount_ufs = true;
+  state->cfg.legacy_mount_exfat = true;
+  state->cfg.legacy_mount_pfs = true;
+  state->cfg.legacy_mount_pfsc = true;
+  state->cfg.legacy_gddr5_cache_enabled = false;
   state->cfg.lvd_sector_exfat = LVD_SECTOR_SIZE_EXFAT;
   state->cfg.lvd_sector_ufs = LVD_SECTOR_SIZE_UFS;
   state->cfg.lvd_sector_pfs = LVD_SECTOR_SIZE_PFS;
   state->cfg.md_sector_exfat = MD_SECTOR_SIZE_EXFAT;
-  state->cfg.md_sector_ufs = MD_SECTOR_SIZE_UFS;
+  state->cfg.md_sector_ufs = MD_SECTOR_SIZE_UFS_LEGACY;
   memset(state->image_mode_rules, 0, sizeof(state->image_mode_rules));
   clear_kstuff_title_rules(state);
   init_runtime_scan_paths_defaults(state);
@@ -1135,6 +1140,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
   int line_no = 0;
   bool has_custom_scanpaths = false;
   bool legacy_recursive_scan_requested = false;
+  bool md_ufs_sector_configured = false;
   while (fgets(line, sizeof(line), f)) {
     line_no++;
     char *key = NULL;
@@ -1509,6 +1515,28 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    bool *legacy_option = NULL;
+    if (strcasecmp(key, "legacy_mount_ufs") == 0) {
+      legacy_option = &state->cfg.legacy_mount_ufs;
+    } else if (strcasecmp(key, "legacy_mount_exfat") == 0) {
+      legacy_option = &state->cfg.legacy_mount_exfat;
+    } else if (strcasecmp(key, "legacy_mount_pfs") == 0) {
+      legacy_option = &state->cfg.legacy_mount_pfs;
+    } else if (strcasecmp(key, "legacy_mount_pfsc") == 0) {
+      legacy_option = &state->cfg.legacy_mount_pfsc;
+    } else if (strcasecmp(key, "legacy_gddr5_cache") == 0) {
+      legacy_option = &state->cfg.legacy_gddr5_cache_enabled;
+    }
+    if (legacy_option) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key,
+                  value);
+        continue;
+      }
+      *legacy_option = bval;
+      continue;
+    }
+
     if (strcasecmp(key, "scanpath") == 0) {
       if (!has_custom_scanpaths) {
         clear_runtime_scan_paths(state);
@@ -1549,6 +1577,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       state->cfg.md_sector_exfat = u32;
     } else if (strcasecmp(key, "md_ufs_sector_size") == 0) {
       state->cfg.md_sector_ufs = u32;
+      md_ufs_sector_configured = true;
     }
   }
 
@@ -1559,6 +1588,9 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     init_runtime_scan_paths_defaults(state);
   }
   add_runtime_managed_scan_paths(state);
+
+  if (!md_ufs_sector_configured && !state->cfg.legacy_mount_ufs)
+    state->cfg.md_sector_ufs = MD_SECTOR_SIZE_UFS_OPTIMIZED;
 
   if (legacy_recursive_scan_requested) {
     state->cfg.scan_depth = 2u;
@@ -1591,6 +1623,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "fan_target_temperature=%u (0=system) "
             "kstuff_pause_delay_image_s=%u kstuff_pause_delay_direct_s=%u "
             "exfat_backend=%s ufs_backend=%s "
+            "legacy_mount(ufs=%d exfat=%d pfs=%d pfsc=%d) "
+            "legacy_gddr5_cache=%d "
             "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u) "
             "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d "
             "kstuff_no_pause=%d kstuff_delay_rules=%d",
@@ -1618,6 +1652,11 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.kstuff_pause_delay_direct_seconds,
             attach_backend_name(state->cfg.exfat_backend),
             attach_backend_name(state->cfg.ufs_backend),
+            state->cfg.legacy_mount_ufs ? 1 : 0,
+            state->cfg.legacy_mount_exfat ? 1 : 0,
+            state->cfg.legacy_mount_pfs ? 1 : 0,
+            state->cfg.legacy_mount_pfsc ? 1 : 0,
+            state->cfg.legacy_gddr5_cache_enabled ? 1 : 0,
             state->cfg.lvd_sector_exfat, state->cfg.lvd_sector_ufs,
             state->cfg.lvd_sector_pfs, state->cfg.md_sector_exfat,
             state->cfg.md_sector_ufs, state->cfg.scan_interval_us / 1000000u,

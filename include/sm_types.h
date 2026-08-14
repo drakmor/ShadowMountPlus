@@ -144,6 +144,11 @@ typedef struct runtime_config {
   int32_t language_id;
   attach_backend_t exfat_backend;
   attach_backend_t ufs_backend;
+  bool legacy_mount_ufs;
+  bool legacy_mount_exfat;
+  bool legacy_mount_pfs;
+  bool legacy_mount_pfsc;
+  bool legacy_gddr5_cache_enabled;
   uint32_t lvd_sector_exfat;
   uint32_t lvd_sector_ufs;
   uint32_t lvd_sector_pfs;

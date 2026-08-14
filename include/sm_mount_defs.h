@@ -20,10 +20,10 @@
  * alignment and is not a filesystem allocation block. ShadowMount defaults to
  * 512 bytes for exFAT and 4096 bytes for UFS/PFS.
  *
- * secondary_unit is the LVD mapping/split granularity. ShadowMount uses 64 KiB
- * for all supported image filesystems. It matches the exFAT/UFS allocation
- * profile and PFS/PFSC block boundary, must be divisible by sector_size, and is
- * required by the type-5 BFS sdimg path.
+ * secondary_unit is the LVD mapping/split granularity. The optimized profile
+ * uses 64 KiB for all supported image filesystems. The legacy 1.6 profile uses
+ * sector_size except for exFAT, which already used 64 KiB. The value must be
+ * divisible by sector_size; 64 KiB is required by the type-5 BFS sdimg path.
  *
  * LVD attach ABI and image types
  * ------------------------------
@@ -37,7 +37,7 @@
  *
  * Types 0/5/6/7/12 use lvdstart_vnode_direct. Types 1-4/8-11 use
  * lvdstart_vnode and resolve each secondary unit through layered bitmap and
- * optional OTBL metadata. Current ShadowMount profiles are:
+ * optional OTBL metadata. Optimized ShadowMount profiles are:
  *
  *   .exfat                         type 5  Sv,  direct + BFS sdimg batching
  *                                  fallback: type 0 Dfl
@@ -149,8 +149,10 @@
  *     by the PFS mount path and is not evidence that a big-app memory reserve
  *     exists.
  *
- *  2. PFS_GDDR5_CACHE_IOCTL is issued on a nested image's backing vnode before
- *     LVD attach. It requests the containing PFS/PPR read path to cache the
+ *  2. PFS_GDDR5_CACHE_IOCTL can be issued on a nested image's backing vnode
+ *     before LVD attach. The optimized profile requests it automatically; the
+ *     legacy profile requires legacy_gddr5_cache=1. It requests the containing
+ *     PFS/PPR read path to cache the
  *     compressed-offset table used to reach that vnode's data; it does not
  *     inspect or impose a format on the bytes stored inside the file. Thus the
  *     nested file may contain PFS, UFS, exFAT or arbitrary block data and need
@@ -200,24 +202,26 @@
  * Backend and nmount policy
  * -------------------------
  * LVD is the default for every format. MD is a compatibility backend for
- * UFS/exFAT; it uses AUTOUNIT|ASYNC and native logical sectors (UFS 4096,
- * exFAT 512). Read-only state is applied to the backing
- * device and nmount. Current nmount profiles are:
+ * UFS/exFAT; it uses AUTOUNIT|ASYNC and configurable logical sectors (modern
+ * UFS default 4096, legacy UFS default 512, exFAT default 512). Read-only state
+ * is applied to the backing device and nmount. The shared nmount profiles are:
  *
  *   UFS   ufs + budgetid + async + noatime + automounted
  *   exFAT exfatfs + large + static-timezone + async + noatime + ignoreacl
  *   PFS   pfs + AC + game + sigverify/playgo/disc=0 + zero ekpfs
  *         + async + noatime
  *
- * ShadowMount passes only MNT_RDONLY (0x1) in nmount's numeric flags argument.
- * Generic named options are decoded by the kernel as async=MNT_ASYNC (0x40),
+ * The optimized profile passes only MNT_RDONLY (0x1) in nmount's numeric flags
+ * argument. Legacy UFS also passes MNT_NOATIME, matching version 1.6. Generic
+ * named options are decoded by the kernel as async=MNT_ASYNC (0x40),
  * noatime=MNT_NOATIME (0x10000000), and automounted=MNT_AUTOMOUNTED
  * (0x200000000). UFS options compressedfile, iochunk, largewrite and related
  * zone-aware modes are separate filesystem features and are not DD flags.
  *
  * force is appended only for explicit recovery. Unsigned PFS keeps signature
- * verification disabled; every nested image on PFS primes the containing
- * file's compressed-offset cache before LVD attach.
+ * verification disabled. The optimized profile primes every nested image on
+ * PFS before LVD attach; the legacy profile does so only when explicitly
+ * enabled.
  */
 
 #define LVD_CTRL_PATH "/dev/lvdctl"
@@ -261,7 +265,8 @@
 #define LVD_SECTOR_SIZE_PFS 4096u
 #define LVD_SECONDARY_UNIT_IMAGE_IO 0x10000u
 #define MD_SECTOR_SIZE_EXFAT 512u
-#define MD_SECTOR_SIZE_UFS 4096u
+#define MD_SECTOR_SIZE_UFS_OPTIMIZED 4096u
+#define MD_SECTOR_SIZE_UFS_LEGACY 512u
 _Static_assert(LVD_SECONDARY_UNIT_IMAGE_IO % LVD_SECTOR_SIZE_EXFAT == 0,
                "exFAT LVD geometry must be aligned");
 _Static_assert(LVD_SECONDARY_UNIT_IMAGE_IO % LVD_SECTOR_SIZE_UFS == 0,
@@ -270,6 +275,7 @@ _Static_assert(LVD_SECONDARY_UNIT_IMAGE_IO % LVD_SECTOR_SIZE_PFS == 0,
                "PFS LVD geometry must be aligned");
 #define LVD_ATTACH_IMAGE_TYPE_SINGLE 0
 #define LVD_ATTACH_IMAGE_TYPE_SAVE_DATA 5
+#define LVD_ATTACH_IMAGE_TYPE_DOWNLOAD_DATA 7
 #define PFS_NESTED_OUTER_IMG_TYPE 0x02u
 #define PFS_NESTED_INNER_IMG_TYPE 0x82u
 #define LVD_ATTACH_LAYER_COUNT 1
