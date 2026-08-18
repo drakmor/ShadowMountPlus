@@ -1092,10 +1092,50 @@ static int copy_file_impl(const char *src, const char *dst, bool set_mode,
   return ret;
 }
 
-static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
-                         mode_t mode, char *buffer, size_t buffer_size) {
-  if (mkdir(dst, set_mode ? mode : 0777) != 0 && errno != EEXIST)
+static int remove_copy_path(const char *path) {
+  struct stat st;
+  if (lstat(path, &st) != 0)
+    return errno == ENOENT ? 0 : -1;
+  if (!S_ISDIR(st.st_mode))
+    return unlink(path);
+
+  DIR *d = opendir(path);
+  if (!d)
     return -1;
+  int ret = 0;
+  struct dirent *entry;
+  while (ret == 0 && (entry = readdir(d)) != NULL) {
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+      continue;
+    char child[MAX_PATH];
+    int written = snprintf(child, sizeof(child), "%s/%s", path,
+                           entry->d_name);
+    if (written < 0 || (size_t)written >= sizeof(child) ||
+        remove_copy_path(child) != 0) {
+      ret = -1;
+    }
+  }
+  if (closedir(d) != 0)
+    ret = -1;
+  if (ret == 0 && rmdir(path) != 0)
+    ret = -1;
+  return ret;
+}
+
+static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
+                         mode_t mode, bool overlay, char *buffer,
+                         size_t buffer_size) {
+  if (mkdir(dst, set_mode ? mode : 0777) != 0) {
+    if (errno != EEXIST)
+      return -1;
+    struct stat dst_st;
+    if (lstat(dst, &dst_st) != 0)
+      return -1;
+    if (!S_ISDIR(dst_st.st_mode)) {
+      errno = ENOTDIR;
+      return -1;
+    }
+  }
   DIR *d = opendir(src);
   if (!d)
     return -1;
@@ -1131,8 +1171,28 @@ static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
     } else {
       st = lst;
     }
+    if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) {
+      errno = EINVAL;
+      ret = -1;
+      break;
+    }
+    if (overlay) {
+      struct stat dst_st;
+      if (lstat(dd, &dst_st) == 0) {
+        if (!S_ISDIR(st.st_mode) || !S_ISDIR(dst_st.st_mode)) {
+          if (remove_copy_path(dd) != 0) {
+            ret = -1;
+            break;
+          }
+        }
+      } else if (errno != ENOENT) {
+        ret = -1;
+        break;
+      }
+    }
     if (S_ISDIR(st.st_mode)) {
-      if (copy_dir_impl(ss, dd, set_mode, mode, buffer, buffer_size) != 0) {
+      if (copy_dir_impl(ss, dd, set_mode, mode, overlay, buffer,
+                        buffer_size) != 0) {
         ret = -1;
         break;
       }
@@ -1150,12 +1210,13 @@ static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
 }
 
 static int copy_dir_with_options(const char *src, const char *dst,
-                                 bool set_mode, mode_t mode) {
+                                 bool set_mode, mode_t mode, bool overlay) {
   const size_t buffer_size = 64u * 1024u;
   char *buffer = malloc(buffer_size);
   if (!buffer)
     return -1;
-  int ret = copy_dir_impl(src, dst, set_mode, mode, buffer, buffer_size);
+  int ret = copy_dir_impl(src, dst, set_mode, mode, overlay, buffer,
+                          buffer_size);
   free(buffer);
   return ret;
 }
@@ -1169,11 +1230,11 @@ int copy_file_with_mode(const char *src, const char *dst, mode_t mode) {
 }
 
 int copy_dir(const char *src, const char *dst) {
-  return copy_dir_with_options(src, dst, false, 0);
+  return copy_dir_with_options(src, dst, false, 0, false);
 }
 
 int copy_dir_with_mode(const char *src, const char *dst, mode_t mode) {
-  return copy_dir_with_options(src, dst, true, mode);
+  return copy_dir_with_options(src, dst, true, mode, true);
 }
 
 int remount_system_ex(void) {

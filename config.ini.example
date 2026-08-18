@@ -131,8 +131,7 @@
 # Default: 1
 # backport_fakelib=1
 
-# Updates for multiple emulators in the game fakelib (cache is created only when
-# at least one regular file name matches):
+# Updates for multiple emulators in the game fakelib:
 # 1/true/yes/on  -> cache the game's fakelib before launch and replace matching
 #                   cached files from emulators_path
 # 0/false/no/off -> disable emulator updates
@@ -161,7 +160,7 @@
 # ampr_update_url=https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx
 
 # Global fakelib overlay:
-# 1/true/yes/on  -> also mount global fakelib for every tracked game when present
+# 1/true/yes/on  -> use global fakelib for every tracked game when present
 # 0/false/no/off -> do not use the global fakelib folder
 # Default: 1
 # global_fakelib=1
@@ -169,9 +168,9 @@
 # Default global fakelib folder:
 # global_fakelib_path=/data/shadowmount/fakelib
 #
-# Priority when both global and per-game fakelib exist:
-# game   -> mount global first, then game-specific fakelib (game wins)
-# global -> mount game-specific fakelib first, then global fakelib (global wins)
+# Priority when both global and per-game fakelib exist in the combined cache:
+# game   -> game-specific files win
+# global -> global files win
 # Default: game
 # global_fakelib_priority=game
 #

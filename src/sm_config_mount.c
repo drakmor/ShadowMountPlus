@@ -250,7 +250,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.auto_remove_games_with_dlc = false;
   state->cfg.backport_fakelib_enabled = true;
   state->cfg.global_fakelib_enabled = true;
-  state->cfg.global_fakelib_mount_first = true;
+  state->cfg.global_fakelib_game_priority = true;
   state->cfg.update_emulators_enabled = true;
   state->cfg.auto_update_ampr_enabled = false;
   state->cfg.kstuff_game_auto_toggle = true;
@@ -1406,11 +1406,10 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     }
 
     if (strcasecmp(key, "global_fakelib_priority") == 0) {
-      // Lower-priority overlay must be mounted first.
       if (strcasecmp(value, "game") == 0) {
-        state->cfg.global_fakelib_mount_first = true;
+        state->cfg.global_fakelib_game_priority = true;
       } else if (strcasecmp(value, "global") == 0) {
-        state->cfg.global_fakelib_mount_first = false;
+        state->cfg.global_fakelib_game_priority = false;
       } else {
         log_debug("  [CFG] invalid global fakelib priority at line %d: %s=%s "
                   "(use game or global)",
@@ -1741,7 +1740,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.legacy_recursive_scan_forced ? 1 : 0,
             state->cfg.backport_fakelib_enabled ? 1 : 0,
             state->cfg.global_fakelib_enabled ? 1 : 0,
-            state->cfg.global_fakelib_mount_first ? "game" : "global",
+            state->cfg.global_fakelib_game_priority ? "game" : "global",
             state->cfg.global_fakelib_path,
             state->cfg.global_fakelib_exclude_title_count,
             state->cfg.update_emulators_enabled ? 1 : 0,

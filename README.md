@@ -191,9 +191,7 @@ Backport overlay behavior:
 - If `update_emulators=1`, matching files from `emulators_path` replace files in the selected game fakelib. The cache is refreshed when its sources change and expires after seven days without a game launch.
 - With `auto_update_ampr=1`, ShadowMount+ checks for AMPR updates 30 seconds after startup and every four hours. It downloads a missing or newer emulator and displays a notification after a successful update.
 - The backport notification adds `Emulators updated` when emulator files are updated for the launched game.
-- If `global_fakelib=1` and `global_fakelib_path` exists as a directory, ShadowMount+ also mounts that folder into the same sandbox `common/lib`.
-- When both global and per-game fakelib exist, the default gives the game's own `fakelib` priority by mounting `/data/shadowmount/fakelib` first and then the game-specific fakelib.
-- `global_fakelib_priority=global` reverses that priority.
+- If both global and per-game fakelib exist, they are combined in the game cache according to `global_fakelib_priority`. Without a per-game fakelib, the global folder is mounted directly.
 - Use repeatable `global_fakelib_exclude=<TITLE_ID>` entries to skip the global fakelib for specific games without disabling per-game fakelib.
 - `backport_fakelib=0` disables the sandbox `fakelib` watcher, including global fakelib and emulator updates.
 - For `backport_fakelib` to work correctly, the standalone `BackPork` payload must be disabled. Running both at the same time will conflict.

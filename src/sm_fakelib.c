@@ -6,6 +6,7 @@
 #include "sm_gameinfo.h"
 #include "sm_log.h"
 #include "sm_mount_diag.h"
+#include "sm_path_utils.h"
 #include "sm_paths.h"
 #include "sm_scan.h"
 #include "sm_types.h"
@@ -14,9 +15,13 @@
 #include <sys/time.h>
 #include <time.h>
 
-#define FAKELIB_CACHE_VERSION 2u
+#define FAKELIB_CACHE_VERSION 3u
 #define FAKELIB_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
 #define FAKELIB_CACHE_MAGIC 0x534D4643u
+#define FAKELIB_CACHE_HAS_GLOBAL (1u << 0)
+#define FAKELIB_CACHE_GLOBAL_PRIORITY (1u << 1)
+#define FAKELIB_CACHE_FLAG_MASK                                               \
+  (FAKELIB_CACHE_HAS_GLOBAL | FAKELIB_CACHE_GLOBAL_PRIORITY)
 
 typedef struct {
   char source_path[MAX_PATH];
@@ -27,7 +32,7 @@ typedef struct {
 typedef struct {
   pid_t pid;
   char mount_path[MAX_PATH];
-  fakelib_layer_t layers[2];
+  fakelib_layer_t layers[1];
   size_t layer_count;
 } fakelib_session_t;
 
@@ -40,12 +45,27 @@ typedef struct {
 typedef struct {
   uint32_t magic;
   uint32_t version;
+  uint32_t flags;
+  uint32_t reserved;
   uint64_t emulator_file_count;
-  fakelib_cache_signature_t source_signature;
+  fakelib_cache_signature_t game_signature;
+  fakelib_cache_signature_t global_signature;
   fakelib_cache_signature_t emulator_files_signature;
-  char source_path[MAX_PATH];
+  char game_path[MAX_PATH];
+  char global_path[MAX_PATH];
   char emulators_path[MAX_PATH];
 } fakelib_cache_manifest_t;
+
+typedef struct {
+  uint32_t flags;
+  size_t emulator_file_count;
+  fakelib_cache_signature_t game_signature;
+  fakelib_cache_signature_t global_signature;
+  fakelib_cache_signature_t emulator_files_signature;
+  char game_path[MAX_PATH];
+  char global_path[MAX_PATH];
+  char emulators_path[MAX_PATH];
+} fakelib_cache_context_t;
 
 static fakelib_session_t g_fakelib_mount;
 static pthread_mutex_t g_fakelib_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -221,16 +241,21 @@ static bool resolve_game_fakelib_source_for_path(
 }
 
 static bool resolve_game_fakelib_source(const char *title_id,
-                                        char source_path[MAX_PATH]) {
+                                         char source_path[MAX_PATH]) {
   char game_path[MAX_PATH];
   if (!read_mount_link(title_id, game_path, sizeof(game_path)))
     game_path[0] = '\0';
   return resolve_game_fakelib_source_for_path(title_id, game_path,
-                                              source_path);
+                                               source_path);
+}
+
+static bool path_overlaps_fakelib_cache(const char *path) {
+  return path_matches_root_or_child(path, FAKELIB_CACHE_PATH) ||
+         path_matches_root_or_child(FAKELIB_CACHE_PATH, path);
 }
 
 static bool resolve_global_fakelib_source(const char *title_id,
-                                          char source_path[MAX_PATH]) {
+                                           char source_path[MAX_PATH]) {
   source_path[0] = '\0';
 
   const runtime_config_t *cfg = runtime_config();
@@ -248,6 +273,11 @@ static bool resolve_global_fakelib_source(const char *title_id,
   }
   if (!S_ISDIR(st.st_mode)) {
     log_debug("  [FAKELIB] global path is not a directory for %s: %s",
+              title_id, cfg->global_fakelib_path);
+    return false;
+  }
+  if (path_overlaps_fakelib_cache(cfg->global_fakelib_path)) {
+    log_debug("  [FAKELIB] global path overlaps cache root for %s: %s",
               title_id, cfg->global_fakelib_path);
     return false;
   }
@@ -343,6 +373,10 @@ static bool compute_tree_signature(const char *root, const char *relative_root,
     } else {
       st = lst;
     }
+    if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) {
+      ok = false;
+      break;
+    }
     cache_signature_add(signature, relative_path, &st);
     if (S_ISDIR(st.st_mode) &&
         !compute_tree_signature(root, relative_path, signature)) {
@@ -361,8 +395,24 @@ static bool compute_source_signature(
   return compute_tree_signature(source_path, "", signature);
 }
 
+static int directory_entry_exists(const char *directory, const char *name) {
+  if (!directory)
+    return 0;
+  char path[MAX_PATH];
+  int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
+  if (written <= 0 || (size_t)written >= sizeof(path)) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  struct stat st;
+  if (lstat(path, &st) == 0)
+    return 1;
+  return errno == ENOENT ? 0 : -1;
+}
+
 static bool compute_emulator_files_signature(
     const char *emulators_path, const char *source_path,
+    const char *higher_priority_path,
     fakelib_cache_signature_t *signature, size_t *matching_count_out) {
   memset(signature, 0, sizeof(*signature));
   *matching_count_out = 0;
@@ -400,6 +450,13 @@ static bool compute_emulator_files_signature(
       continue;
     }
     if (stat(source_file, &source_st) != 0 || !S_ISREG(source_st.st_mode))
+      continue;
+    int shadowed = directory_entry_exists(higher_priority_path, entry->d_name);
+    if (shadowed < 0) {
+      ok = false;
+      break;
+    }
+    if (shadowed > 0)
       continue;
     if (emulator_st.st_dev == source_st.st_dev &&
         emulator_st.st_ino == source_st.st_ino) {
@@ -545,9 +602,19 @@ static bool read_cache_manifest(const char *cache_root,
     ok = false;
   ok = ok && manifest->magic == FAKELIB_CACHE_MAGIC &&
        manifest->version == FAKELIB_CACHE_VERSION &&
-       memchr(manifest->source_path, '\0', sizeof(manifest->source_path)) &&
+       memchr(manifest->game_path, '\0', sizeof(manifest->game_path)) &&
+       memchr(manifest->global_path, '\0', sizeof(manifest->global_path)) &&
        memchr(manifest->emulators_path, '\0',
-              sizeof(manifest->emulators_path));
+               sizeof(manifest->emulators_path));
+  if (ok) {
+    bool has_global = manifest->flags & FAKELIB_CACHE_HAS_GLOBAL;
+    ok = (manifest->flags & ~FAKELIB_CACHE_FLAG_MASK) == 0 &&
+         (!(manifest->flags & FAKELIB_CACHE_GLOBAL_PRIORITY) || has_global) &&
+         manifest->game_path[0] == '/' &&
+         (has_global ? manifest->global_path[0] == '/'
+                     : manifest->global_path[0] == '\0') &&
+         (has_global || manifest->emulator_file_count > 0);
+  }
   if (ok && last_used_out)
     *last_used_out = manifest_st.st_mtime;
   return ok;
@@ -591,30 +658,30 @@ static bool write_cache_manifest(const char *cache_root,
 }
 
 static bool cache_manifest_matches_context(
-    const fakelib_cache_manifest_t *manifest, const char *source_path,
-    const char *emulators_path) {
-  return strcmp(manifest->source_path, source_path) == 0 &&
-         strcmp(manifest->emulators_path, emulators_path) == 0 &&
-         manifest->emulator_file_count > 0;
+    const fakelib_cache_manifest_t *manifest,
+    const fakelib_cache_context_t *context) {
+  return manifest->flags == context->flags &&
+         strcmp(manifest->game_path, context->game_path) == 0 &&
+         strcmp(manifest->global_path, context->global_path) == 0 &&
+         strcmp(manifest->emulators_path, context->emulators_path) == 0;
 }
 
 static bool cache_manifest_is_current(
-    const fakelib_cache_manifest_t *manifest, const char *source_path,
-    const char *emulators_path,
-    const fakelib_cache_signature_t *source_signature,
-    const fakelib_cache_signature_t *emulator_files_signature,
-    size_t emulator_file_count) {
-  return cache_manifest_matches_context(manifest, source_path,
-                                        emulators_path) &&
-         manifest->emulator_file_count == emulator_file_count &&
-         cache_signatures_equal(&manifest->source_signature,
-                                source_signature) &&
+    const fakelib_cache_manifest_t *manifest,
+    const fakelib_cache_context_t *context) {
+  return cache_manifest_matches_context(manifest, context) &&
+         manifest->emulator_file_count == context->emulator_file_count &&
+         cache_signatures_equal(&manifest->game_signature,
+                                &context->game_signature) &&
+         cache_signatures_equal(&manifest->global_signature,
+                                &context->global_signature) &&
          cache_signatures_equal(&manifest->emulator_files_signature,
-                                emulator_files_signature);
+                                &context->emulator_files_signature);
 }
 
 static bool copy_emulator_files_to_cache(const char *emulators_path,
                                          const char *source_path,
+                                         const char *higher_priority_path,
                                          const char *cache_fakelib_path,
                                          size_t *copied_count_out) {
   *copied_count_out = 0;
@@ -655,6 +722,13 @@ static bool copy_emulator_files_to_cache(const char *emulators_path,
       continue;
     }
     if (stat(source_file, &source_st) != 0 || !S_ISREG(source_st.st_mode))
+      continue;
+    int shadowed = directory_entry_exists(higher_priority_path, entry->d_name);
+    if (shadowed < 0) {
+      ok = false;
+      break;
+    }
+    if (shadowed > 0)
       continue;
     if (emulator_st.st_dev == source_st.st_dev &&
         emulator_st.st_ino == source_st.st_ino) {
@@ -709,10 +783,10 @@ static void cleanup_expired_fakelib_caches(uint64_t now_sec) {
       char temporary_root[MAX_PATH];
       if (build_cache_path(temporary_title_id, ".tmp", temporary_root)) {
         if (remove_cache_tree(temporary_root)) {
-          log_debug("  [EMU] orphaned temporary cache removed: %s",
+          log_debug("  [FAKELIB] orphaned temporary cache removed: %s",
                     temporary_root);
         } else {
-          log_debug("  [EMU] temporary cache cleanup failed: %s",
+          log_debug("  [FAKELIB] temporary cache cleanup failed: %s",
                     temporary_root);
         }
       }
@@ -734,16 +808,16 @@ static void cleanup_expired_fakelib_caches(uint64_t now_sec) {
       (void)remove_cache_tree(cache_root);
       continue;
     }
-    if (manifest.emulator_file_count > 0 && last_used > 0 &&
+    if (last_used > 0 &&
         ((uint64_t)last_used > now_sec ||
          now_sec - (uint64_t)last_used <= FAKELIB_CACHE_MAX_AGE_SECONDS)) {
       continue;
     }
     if (remove_cache_tree(cache_root)) {
-      log_debug("  [EMU] stale fakelib cache removed: %s", cache_root);
+      log_debug("  [FAKELIB] stale cache removed: %s", cache_root);
     } else {
-      log_debug("  [EMU] stale fakelib cache cleanup failed: %s",
-                cache_root);
+      log_debug("  [FAKELIB] stale cache cleanup failed: %s",
+                 cache_root);
     }
   }
   closedir(d);
@@ -759,11 +833,59 @@ void sm_fakelib_cleanup_caches(void) {
   pthread_mutex_unlock(&g_fakelib_cache_mutex);
 }
 
+static void init_cache_context(const char *title_id, const char *game_path,
+                               fakelib_cache_context_t *context) {
+  memset(context, 0, sizeof(*context));
+  (void)strlcpy(context->game_path, game_path, sizeof(context->game_path));
+
+  const runtime_config_t *cfg = runtime_config();
+  if (cfg->update_emulators_enabled) {
+    (void)strlcpy(context->emulators_path, cfg->emulators_path,
+                  sizeof(context->emulators_path));
+  }
+
+  if (resolve_global_fakelib_source(title_id, context->global_path) &&
+      strcmp(context->global_path, game_path) != 0) {
+    context->flags |= FAKELIB_CACHE_HAS_GLOBAL;
+    if (!cfg->global_fakelib_game_priority)
+      context->flags |= FAKELIB_CACHE_GLOBAL_PRIORITY;
+  } else {
+    context->global_path[0] = '\0';
+  }
+}
+
+static bool compute_cache_context_signatures(
+    fakelib_cache_context_t *context) {
+  if (!compute_source_signature(context->game_path,
+                                &context->game_signature)) {
+    return false;
+  }
+  if ((context->flags & FAKELIB_CACHE_HAS_GLOBAL) &&
+      !compute_source_signature(context->global_path,
+                                &context->global_signature)) {
+    return false;
+  }
+  if (context->emulators_path[0] != '\0' &&
+      !compute_emulator_files_signature(
+          context->emulators_path, context->game_path,
+          context->flags & FAKELIB_CACHE_GLOBAL_PRIORITY
+              ? context->global_path
+              : NULL,
+          &context->emulator_files_signature,
+          &context->emulator_file_count)) {
+    return false;
+  }
+  return true;
+}
+
+static bool cache_context_requires_cache(
+    const fakelib_cache_context_t *context) {
+  return (context->flags & FAKELIB_CACHE_HAS_GLOBAL) ||
+         context->emulator_file_count > 0;
+}
+
 static bool rebuild_fakelib_cache(
-    const char *title_id, const char *source_path, const char *emulators_path,
-    const fakelib_cache_signature_t *source_signature,
-    const fakelib_cache_signature_t *emulator_files_signature,
-    size_t emulator_file_count) {
+    const char *title_id, const fakelib_cache_context_t *context) {
   char cache_root[MAX_PATH] = {0};
   char temp_root[MAX_PATH];
   if (!build_cache_path(title_id, "", cache_root) ||
@@ -771,41 +893,53 @@ static bool rebuild_fakelib_cache(
     return false;
   }
   if (!remove_cache_tree(temp_root)) {
-    log_debug("  [EMU] temporary cache cleanup failed for %s: %s", title_id,
-              temp_root);
+    log_debug("  [FAKELIB] temporary cache cleanup failed for %s: %s",
+              title_id, temp_root);
     return false;
   }
   if (mkdir(temp_root, 0777) != 0) {
-    log_debug("  [EMU] temporary cache creation failed for %s: %s (%s)",
+    log_debug("  [FAKELIB] temporary cache creation failed for %s: %s (%s)",
               title_id, temp_root, strerror(errno));
     return false;
   }
   char temp_fakelib[MAX_PATH];
   int written = snprintf(temp_fakelib, sizeof(temp_fakelib), "%s/fakelib",
                          temp_root);
+  bool has_global = context->flags & FAKELIB_CACHE_HAS_GLOBAL;
+  bool global_priority = context->flags & FAKELIB_CACHE_GLOBAL_PRIORITY;
+  const char *base_path = has_global && !global_priority
+                              ? context->global_path
+                              : context->game_path;
   bool built = written > 0 && (size_t)written < sizeof(temp_fakelib) &&
-               copy_dir_with_mode(source_path, temp_fakelib, 0777) == 0;
+               copy_dir_with_mode(base_path, temp_fakelib, 0777) == 0;
+  if (built && has_global && !global_priority) {
+    built = copy_dir_with_mode(context->game_path, temp_fakelib, 0777) == 0;
+  }
   size_t copied_emulator_files = 0;
-  if (built) {
-    built = copy_emulator_files_to_cache(emulators_path, source_path,
+  if (built && context->emulator_file_count > 0) {
+    built = copy_emulator_files_to_cache(context->emulators_path,
+                                         context->game_path,
+                                         global_priority
+                                             ? context->global_path
+                                             : NULL,
                                          temp_fakelib,
                                          &copied_emulator_files) &&
-            copied_emulator_files == emulator_file_count;
+            copied_emulator_files == context->emulator_file_count;
+  }
+  if (built && has_global && global_priority) {
+    built = copy_dir_with_mode(context->global_path, temp_fakelib, 0777) == 0;
   }
 
-  fakelib_cache_signature_t current_source_signature;
-  fakelib_cache_signature_t current_emulator_files_signature;
-  size_t current_emulator_file_count = 0;
+  fakelib_cache_context_t current = *context;
   if (built) {
-    built = compute_source_signature(source_path, &current_source_signature) &&
-            compute_emulator_files_signature(
-                emulators_path, source_path, &current_emulator_files_signature,
-                &current_emulator_file_count) &&
-            current_emulator_file_count == emulator_file_count &&
-            cache_signatures_equal(source_signature,
-                                   &current_source_signature) &&
-            cache_signatures_equal(emulator_files_signature,
-                                   &current_emulator_files_signature);
+    built = compute_cache_context_signatures(&current) &&
+            current.emulator_file_count == context->emulator_file_count &&
+            cache_signatures_equal(&context->game_signature,
+                                   &current.game_signature) &&
+            cache_signatures_equal(&context->global_signature,
+                                   &current.global_signature) &&
+            cache_signatures_equal(&context->emulator_files_signature,
+                                   &current.emulator_files_signature);
   }
 
   fakelib_cache_manifest_t manifest;
@@ -813,35 +947,42 @@ static bool rebuild_fakelib_cache(
     memset(&manifest, 0, sizeof(manifest));
     manifest.magic = FAKELIB_CACHE_MAGIC;
     manifest.version = FAKELIB_CACHE_VERSION;
-    manifest.emulator_file_count = emulator_file_count;
-    manifest.source_signature = *source_signature;
-    manifest.emulator_files_signature = *emulator_files_signature;
-    (void)strlcpy(manifest.source_path, source_path,
-                  sizeof(manifest.source_path));
-    (void)strlcpy(manifest.emulators_path, emulators_path,
+    manifest.flags = context->flags;
+    manifest.emulator_file_count = context->emulator_file_count;
+    manifest.game_signature = context->game_signature;
+    manifest.global_signature = context->global_signature;
+    manifest.emulator_files_signature = context->emulator_files_signature;
+    (void)strlcpy(manifest.game_path, context->game_path,
+                  sizeof(manifest.game_path));
+    (void)strlcpy(manifest.global_path, context->global_path,
+                  sizeof(manifest.global_path));
+    (void)strlcpy(manifest.emulators_path, context->emulators_path,
                   sizeof(manifest.emulators_path));
     built = write_cache_manifest(temp_root, &manifest);
   }
 
   if (!built) {
-    log_debug("  [EMU] fakelib cache build failed for %s", title_id);
+    log_debug("  [FAKELIB] cache build failed for %s", title_id);
     (void)remove_cache_tree(temp_root);
     return false;
   }
   if (cache_root_is_mounted(cache_root)) {
-    log_debug("  [EMU] fakelib cache is still mounted for %s", title_id);
+    log_debug("  [FAKELIB] cache is still mounted for %s", title_id);
     (void)remove_cache_tree(temp_root);
     return false;
   }
   if (!remove_cache_tree(cache_root) || rename(temp_root, cache_root) != 0) {
-    log_debug("  [EMU] fakelib cache publish failed for %s: %s", title_id,
+    log_debug("  [FAKELIB] cache publish failed for %s: %s", title_id,
               strerror(errno));
     (void)remove_cache_tree(temp_root);
     return false;
   }
 
-  log_debug("  [EMU] fakelib cache updated for %s: source=%s emulator_files=%u",
-            title_id, source_path, (unsigned)emulator_file_count);
+  log_debug("  [FAKELIB] cache updated for %s: game=%s global=%s "
+            "emulator_files=%u",
+            title_id, context->game_path,
+            has_global ? context->global_path : "none",
+            (unsigned)context->emulator_file_count);
   return true;
 }
 
@@ -849,38 +990,36 @@ static void prepare_title_cache(const char *title_id, const char *game_path) {
   if (!is_supported_game_title_id(title_id))
     return;
   const runtime_config_t *cfg = runtime_config();
-  if (!cfg->backport_fakelib_enabled || !cfg->update_emulators_enabled)
+  if (!cfg->backport_fakelib_enabled)
     return;
-  char emulators_path[MAX_PATH];
-  (void)strlcpy(emulators_path, cfg->emulators_path, sizeof(emulators_path));
 
-  char source_path[MAX_PATH];
+  char game_source_path[MAX_PATH];
   if (!resolve_game_fakelib_source_for_path(title_id, game_path,
-                                            source_path))
+                                             game_source_path)) {
+    remove_title_cache(title_id);
     return;
-  if (!ensure_fakelib_cache_root()) {
-    log_debug("  [EMU] fakelib cache root unavailable for %s: %s (%s)",
-              title_id, FAKELIB_CACHE_PATH, strerror(errno));
+  }
+  if (path_overlaps_fakelib_cache(game_source_path)) {
+    log_debug("  [FAKELIB] refusing cache source inside cache tree for %s: %s",
+              title_id, game_source_path);
+    remove_title_cache(title_id);
     return;
   }
 
-  fakelib_cache_signature_t source_signature;
-  fakelib_cache_signature_t emulator_files_signature;
-  size_t emulator_file_count = 0;
-  if (!compute_emulator_files_signature(
-          emulators_path, source_path, &emulator_files_signature,
-          &emulator_file_count)) {
-    log_debug("  [EMU] fakelib cache fingerprint failed for %s", title_id);
+  fakelib_cache_context_t context;
+  init_cache_context(title_id, game_source_path, &context);
+  if (!compute_cache_context_signatures(&context)) {
+    log_debug("  [FAKELIB] cache fingerprint failed for %s", title_id);
     remove_title_cache(title_id);
     return;
   }
-  if (emulator_file_count == 0) {
+  if (!cache_context_requires_cache(&context)) {
     remove_title_cache(title_id);
     return;
   }
-  if (!compute_source_signature(source_path, &source_signature)) {
-    log_debug("  [EMU] fakelib cache fingerprint failed for %s", title_id);
-    remove_title_cache(title_id);
+  if (!ensure_fakelib_cache_root()) {
+    log_debug("  [FAKELIB] cache root unavailable for %s: %s (%s)", title_id,
+              FAKELIB_CACHE_PATH, strerror(errno));
     return;
   }
 
@@ -893,22 +1032,19 @@ static void prepare_title_cache(const char *title_id, const char *game_path) {
                            "%s/fakelib", cache_root);
     struct stat st;
     current = written > 0 && (size_t)written < sizeof(cache_fakelib) &&
-              lstat(cache_fakelib, &st) == 0 && S_ISDIR(st.st_mode) &&
-              read_cache_manifest(cache_root, &manifest, NULL) &&
-              cache_manifest_is_current(
-                  &manifest, source_path, emulators_path,
-                  &source_signature, &emulator_files_signature,
-                  emulator_file_count);
+               lstat(cache_fakelib, &st) == 0 && S_ISDIR(st.st_mode) &&
+               read_cache_manifest(cache_root, &manifest, NULL) &&
+               cache_manifest_is_current(&manifest, &context);
   }
   if (!current) {
-    if (!rebuild_fakelib_cache(
-            title_id, source_path, emulators_path, &source_signature,
-            &emulator_files_signature, emulator_file_count)) {
+    if (!rebuild_fakelib_cache(title_id, &context)) {
       remove_title_cache(title_id);
     }
   } else {
-    log_debug("  [EMU] fakelib cache current for %s: emulator_files=%u", title_id,
-              (unsigned)emulator_file_count);
+    log_debug("  [FAKELIB] cache current for %s: global=%s emulator_files=%u",
+              title_id,
+              context.flags & FAKELIB_CACHE_HAS_GLOBAL ? "yes" : "no",
+              (unsigned)context.emulator_file_count);
   }
 }
 
@@ -920,16 +1056,15 @@ void sm_fakelib_prepare_title_cache(const char *title_id,
 }
 
 static bool resolve_cached_fakelib_locked(
-    const char *title_id, const char *source_path, char cache_path[MAX_PATH],
-    size_t *emulator_file_count_out) {
+    const char *title_id, const char *game_path, char cache_path[MAX_PATH],
+    size_t *emulator_file_count_out, bool *includes_global_out) {
   *emulator_file_count_out = 0;
+  *includes_global_out = false;
   if (!is_supported_game_title_id(title_id))
     return false;
-  const runtime_config_t *cfg = runtime_config();
-  if (!cfg->update_emulators_enabled)
-    return false;
-  char emulators_path[MAX_PATH];
-  (void)strlcpy(emulators_path, cfg->emulators_path, sizeof(emulators_path));
+
+  fakelib_cache_context_t context;
+  init_cache_context(title_id, game_path, &context);
 
   char cache_root[MAX_PATH];
   if (!build_cache_path(title_id, "", cache_root))
@@ -938,8 +1073,7 @@ static bool resolve_cached_fakelib_locked(
   if (!read_cache_manifest(cache_root, &manifest, NULL))
     return false;
 
-  if (!cache_manifest_matches_context(&manifest, source_path,
-                                      emulators_path)) {
+  if (!cache_manifest_matches_context(&manifest, &context)) {
     return false;
   }
 
@@ -951,20 +1085,23 @@ static bool resolve_cached_fakelib_locked(
     return false;
   }
   if (!touch_cache_manifest(cache_root)) {
-    log_debug("  [EMU] fakelib cache lifetime refresh failed for %s: %s",
+    log_debug("  [FAKELIB] cache lifetime refresh failed for %s: %s",
               title_id, strerror(errno));
   }
   *emulator_file_count_out = (size_t)manifest.emulator_file_count;
+  *includes_global_out = manifest.flags & FAKELIB_CACHE_HAS_GLOBAL;
   return true;
 }
 
 static bool resolve_cached_fakelib(const char *title_id,
-                                   const char *source_path,
-                                   char cache_path[MAX_PATH],
-                                   size_t *emulator_file_count_out) {
+                                    const char *game_path,
+                                    char cache_path[MAX_PATH],
+                                    size_t *emulator_file_count_out,
+                                    bool *includes_global_out) {
   pthread_mutex_lock(&g_fakelib_cache_mutex);
   bool resolved = resolve_cached_fakelib_locked(
-      title_id, source_path, cache_path, emulator_file_count_out);
+      title_id, game_path, cache_path, emulator_file_count_out,
+      includes_global_out);
   pthread_mutex_unlock(&g_fakelib_cache_mutex);
   return resolved;
 }
@@ -1024,22 +1161,29 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id) {
     return;
   }
 
-  bool same_source =
+  bool needs_combined_cache =
       has_global && has_game &&
-      strcmp(global_source_path, game_source_path) == 0;
+      strcmp(global_source_path, game_source_path) != 0;
   size_t emulator_file_count = 0;
+  bool cache_resolved = false;
+  bool cache_includes_global = false;
   if (has_game) {
     char cache_path[MAX_PATH];
-    if (resolve_cached_fakelib(title_id, game_source_path, cache_path,
-                               &emulator_file_count)) {
+    cache_resolved = resolve_cached_fakelib(
+        title_id, game_source_path, cache_path, &emulator_file_count,
+        &cache_includes_global);
+    if (cache_resolved) {
       (void)strlcpy(game_source_path, cache_path, sizeof(game_source_path));
-      log_debug("  [EMU] using fakelib cache for %s: %s", title_id,
+      log_debug("  [FAKELIB] using cache for %s: %s", title_id,
                 game_source_path);
     }
   }
-  same_source = same_source ||
-                (has_global && has_game &&
-                 strcmp(global_source_path, game_source_path) == 0);
+  if (needs_combined_cache &&
+      (!cache_resolved || !cache_includes_global)) {
+    log_debug("  [FAKELIB] combined cache unavailable for %s; "
+              "skipping global fakelib",
+              title_id);
+  }
 
   memset(&g_fakelib_mount, 0, sizeof(g_fakelib_mount));
   g_fakelib_mount.pid = pid;
@@ -1052,32 +1196,12 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id) {
   (void)strlcpy(g_fakelib_mount.mount_path, mount_path,
                 sizeof(g_fakelib_mount.mount_path));
 
-  bool global_first = runtime_config()->global_fakelib_mount_first;
-  if (global_first && has_global && !same_source) {
-    if (!track_fakelib_overlay(title_id, global_source_path, mount_path,
-                               "global")) {
-      (void)cleanup_fakelib_mount();
-      pthread_mutex_unlock(&g_fakelib_mutex);
-      return;
-    }
-  }
-
-  if (has_game) {
-    if (!track_fakelib_overlay(title_id, game_source_path, mount_path,
-                               "game")) {
-      (void)cleanup_fakelib_mount();
-      pthread_mutex_unlock(&g_fakelib_mutex);
-      return;
-    }
-  }
-
-  if (!global_first && has_global && !same_source) {
-    if (!track_fakelib_overlay(title_id, global_source_path, mount_path,
-                               "global")) {
-      (void)cleanup_fakelib_mount();
-      pthread_mutex_unlock(&g_fakelib_mutex);
-      return;
-    }
+  const char *source_path = has_game ? game_source_path : global_source_path;
+  const char *label = has_game ? "game" : "global";
+  if (!track_fakelib_overlay(title_id, source_path, mount_path, label)) {
+    (void)cleanup_fakelib_mount();
+    pthread_mutex_unlock(&g_fakelib_mutex);
+    return;
   }
 
   if (has_game) {

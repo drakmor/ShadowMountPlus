@@ -235,8 +235,8 @@ static bool fakelib_runtime_config_changed(const runtime_config_t *old_cfg,
   return old_cfg->backport_fakelib_enabled !=
              new_cfg->backport_fakelib_enabled ||
          old_cfg->global_fakelib_enabled != new_cfg->global_fakelib_enabled ||
-         old_cfg->global_fakelib_mount_first !=
-             new_cfg->global_fakelib_mount_first ||
+         old_cfg->global_fakelib_game_priority !=
+             new_cfg->global_fakelib_game_priority ||
          old_cfg->update_emulators_enabled !=
              new_cfg->update_emulators_enabled ||
          strcmp(old_cfg->emulators_path, new_cfg->emulators_path) != 0 ||

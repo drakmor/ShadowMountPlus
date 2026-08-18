@@ -125,7 +125,7 @@ typedef struct runtime_config {
   bool auto_remove_games_with_dlc;
   bool backport_fakelib_enabled;
   bool global_fakelib_enabled;
-  bool global_fakelib_mount_first;
+  bool global_fakelib_game_priority;
   bool update_emulators_enabled;
   bool auto_update_ampr_enabled;
   bool kstuff_game_auto_toggle;
