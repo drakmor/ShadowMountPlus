@@ -11,6 +11,8 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "Backport overlay thất bại: %s\n%s\n0x%08X",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "Đã áp dụng backport cho game: %s",
+    /* English: Backport applied to game: %s\nEmulators updated */
+    [SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED] = "Đã áp dụng backport cho game: %s\nĐã cập nhật các trình giả lập",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nSaved image_sector override: %u.\nTry mounting again. */
     [SM_L10N_IMAGE_REJECTED_CLUSTER_AUTOTUNED] = "Từ chối gắn ảnh đĩa:\n%s\nKích thước cụm quá nhỏ (%llu < %u).\nĐã lưu giá trị image_sector: %u.\nHãy thử gắn lại.",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nUse a larger cluster size in the image or lower sector size in config. */

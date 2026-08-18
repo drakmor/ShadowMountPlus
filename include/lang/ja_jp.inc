@@ -11,6 +11,8 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "バックポートオーバーレイのマウントに失敗しました: %s\n%s\n0x%08X",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "ゲームにバックポートを適用しました: %s",
+    /* English: Backport applied to game: %s\nEmulators updated */
+    [SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED] = "ゲームにバックポートを適用しました: %s\n複数のエミュレーターを更新しました",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nSaved image_sector override: %u.\nTry mounting again. */
     [SM_L10N_IMAGE_REJECTED_CLUSTER_AUTOTUNED] = "イメージのマウントが拒否されました:\n%s\nクラスタサイズが小さすぎます (%llu < %u)。\nimage_sector override を保存しました: %u。\nもう一度マウントしてください。",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nUse a larger cluster size in the image or lower sector size in config. */

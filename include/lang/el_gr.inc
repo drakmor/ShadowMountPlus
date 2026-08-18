@@ -11,6 +11,8 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "Αποτυχία backport overlay: %s\n%s\n0x%08X",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "Εφαρμόστηκε backport στο παιχνίδι: %s",
+    /* English: Backport applied to game: %s\nEmulators updated */
+    [SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED] = "Εφαρμόστηκε backport στο παιχνίδι: %s\nΟι εξομοιωτές ενημερώθηκαν",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nSaved image_sector override: %u.\nTry mounting again. */
     [SM_L10N_IMAGE_REJECTED_CLUSTER_AUTOTUNED] = "Η προσάρτηση του ειδώλου απορρίφθηκε:\n%s\nΤο μέγεθος συστοιχίας είναι πολύ μικρό (%llu < %u).\nΑποθηκεύτηκε η τιμή image_sector: %u.\nΔοκιμάστε ξανά την προσάρτηση.",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nUse a larger cluster size in the image or lower sector size in config. */

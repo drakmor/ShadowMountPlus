@@ -11,6 +11,8 @@ static const char *const g_da_dk[SM_L10N_COUNT] = {
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "Backport-overlay mislykkedes: %s\n%s\n0x%08X",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "Spil backportet: %s",
+    /* English: Backport applied to game: %s\nEmulators updated */
+    [SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED] = "Spil backportet: %s\nEmulatorer opdateret",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nSaved image_sector override: %u.\nTry mounting again. */
     [SM_L10N_IMAGE_REJECTED_CLUSTER_AUTOTUNED] = "Montering af image afvist:\n%s\nKlyngestørrelsen er for lille (%llu < %u).\nimage_sector-tilsidesættelse gemt: %u.\nPrøv at montere igen.",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nUse a larger cluster size in the image or lower sector size in config. */

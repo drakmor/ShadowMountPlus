@@ -6,6 +6,7 @@
 #include <sys/un.h>
 
 #include "sm_filesystem.h"
+#include "sm_fakelib.h"
 #include "sm_game_lifecycle.h"
 #include "sm_gameinfo.h"
 #include "sm_image.h"
@@ -390,6 +391,7 @@ static bool prepare_title_runtime(const char *title_id,
                                   const char *source_path) {
   if (!prepare_image_source(title_id, source_path))
     return false;
+  sm_fakelib_prepare_title_cache(title_id, source_path);
   runtime_mount_state_lock();
   bool title_mounted = !runtime_sleep_mode_active() &&
                        mount_title_nullfs(title_id, source_path);
@@ -425,6 +427,8 @@ static int mount_managed_title_runtime(const char *title_id,
   if (claim_status != 0)
     return claim_status;
   if (!claimed && is_data_mounted(title_id)) {
+    if (launch_request)
+      sm_fakelib_prepare_title_cache(title_id, source_path);
     finish_prepared_title(title_id, false);
     return 0;
   }

@@ -2,11 +2,21 @@
 
 #include "sm_fakelib.h"
 #include "sm_config_mount.h"
+#include "sm_filesystem.h"
+#include "sm_gameinfo.h"
 #include "sm_log.h"
 #include "sm_mount_diag.h"
+#include "sm_paths.h"
+#include "sm_scan.h"
 #include "sm_types.h"
 
 #include <pthread.h>
+#include <sys/time.h>
+#include <time.h>
+
+#define FAKELIB_CACHE_VERSION 2u
+#define FAKELIB_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
+#define FAKELIB_CACHE_MAGIC 0x534D4643u
 
 typedef struct {
   char source_path[MAX_PATH];
@@ -21,8 +31,29 @@ typedef struct {
   size_t layer_count;
 } fakelib_session_t;
 
+typedef struct {
+  uint64_t xor_hash;
+  uint64_t sum_hash;
+  uint64_t entry_count;
+} fakelib_cache_signature_t;
+
+typedef struct {
+  uint32_t magic;
+  uint32_t version;
+  uint64_t emulator_file_count;
+  fakelib_cache_signature_t source_signature;
+  fakelib_cache_signature_t emulator_files_signature;
+  char source_path[MAX_PATH];
+  char emulators_path[MAX_PATH];
+} fakelib_cache_manifest_t;
+
 static fakelib_session_t g_fakelib_mount;
 static pthread_mutex_t g_fakelib_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_fakelib_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static bool fakelib_session_active(void) {
+  return g_fakelib_mount.layer_count > 0;
+}
 
 bool sm_fakelib_game_feature_enabled(void) {
   return runtime_config()->backport_fakelib_enabled;
@@ -83,10 +114,8 @@ static bool track_fakelib_overlay(const char *title_id,
   return true;
 }
 
-static bool resolve_sandbox_context(const char *title_id,
-                                    char game_source_path[MAX_PATH],
-                                    char mount_path[MAX_PATH]) {
-  game_source_path[0] = '\0';
+static bool resolve_sandbox_mount_path(const char *title_id,
+                                       char mount_path[MAX_PATH]) {
   mount_path[0] = '\0';
 
   char sandbox_id[MAX_TITLE_ID];
@@ -131,19 +160,7 @@ static bool resolve_sandbox_context(const char *title_id,
   if (!found)
     return false;
 
-  char source_path[MAX_PATH];
-  snprintf(source_path, sizeof(source_path), "/mnt/sandbox/%s/app0/fakelib2",
-           sandbox_id);
   struct stat st;
-  if (stat(source_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-    (void)strlcpy(game_source_path, source_path, MAX_PATH);
-  } else {
-    snprintf(source_path, sizeof(source_path), "/mnt/sandbox/%s/app0/fakelib",
-             sandbox_id);
-    if (stat(source_path, &st) == 0 && S_ISDIR(st.st_mode))
-      (void)strlcpy(game_source_path, source_path, MAX_PATH);
-  }
-
   char sandbox_root[MAX_PATH];
   snprintf(sandbox_root, sizeof(sandbox_root), "/mnt/sandbox/%s", sandbox_id);
   d = opendir(sandbox_root);
@@ -168,6 +185,48 @@ static bool resolve_sandbox_context(const char *title_id,
 
   closedir(d);
   return found;
+}
+
+static bool resolve_game_fakelib_source_for_path(
+    const char *title_id, const char *game_path,
+    char source_path[MAX_PATH]) {
+  source_path[0] = '\0';
+
+  char backport_path[MAX_PATH] = {0};
+  bool has_backport =
+      resolve_backport_path_for_title(title_id, NULL, backport_path);
+  bool has_game = game_path && game_path[0] != '\0';
+  const struct {
+    const char *root;
+    const char *directory;
+  } candidates[] = {
+      {has_backport ? backport_path : NULL, "fakelib2"},
+      {has_backport ? backport_path : NULL, "fakelib"},
+      {has_game ? game_path : NULL, "fakelib"},
+  };
+  struct stat st;
+  for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
+    if (!candidates[i].root)
+      continue;
+    int written = snprintf(source_path, MAX_PATH, "%s/%s",
+                           candidates[i].root, candidates[i].directory);
+    if (written > 0 && (size_t)written < MAX_PATH &&
+        stat(source_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+      return true;
+    }
+  }
+
+  source_path[0] = '\0';
+  return false;
+}
+
+static bool resolve_game_fakelib_source(const char *title_id,
+                                        char source_path[MAX_PATH]) {
+  char game_path[MAX_PATH];
+  if (!read_mount_link(title_id, game_path, sizeof(game_path)))
+    game_path[0] = '\0';
+  return resolve_game_fakelib_source_for_path(title_id, game_path,
+                                              source_path);
 }
 
 static bool resolve_global_fakelib_source(const char *title_id,
@@ -197,8 +256,727 @@ static bool resolve_global_fakelib_source(const char *title_id,
   return true;
 }
 
+static uint64_t cache_hash_bytes(uint64_t hash, const void *data, size_t size) {
+  const uint8_t *bytes = (const uint8_t *)data;
+  for (size_t i = 0; i < size; ++i) {
+    hash ^= bytes[i];
+    hash *= 1099511628211ULL;
+  }
+  return hash;
+}
+
+static void cache_signature_add(fakelib_cache_signature_t *signature,
+                                const char *relative_path,
+                                const struct stat *st) {
+  uint64_t entry_hash = 1469598103934665603ULL;
+  entry_hash = cache_hash_bytes(entry_hash, relative_path,
+                                strlen(relative_path));
+  entry_hash = cache_hash_bytes(entry_hash, &st->st_size,
+                                sizeof(st->st_size));
+  entry_hash = cache_hash_bytes(entry_hash, &st->st_mode,
+                                sizeof(st->st_mode));
+  entry_hash = cache_hash_bytes(entry_hash, &st->st_mtim.tv_sec,
+                                sizeof(st->st_mtim.tv_sec));
+  entry_hash = cache_hash_bytes(entry_hash, &st->st_mtim.tv_nsec,
+                                sizeof(st->st_mtim.tv_nsec));
+  entry_hash = cache_hash_bytes(entry_hash, &st->st_ctim.tv_sec,
+                                sizeof(st->st_ctim.tv_sec));
+  entry_hash = cache_hash_bytes(entry_hash, &st->st_ctim.tv_nsec,
+                                sizeof(st->st_ctim.tv_nsec));
+  signature->xor_hash ^= entry_hash;
+  signature->sum_hash += entry_hash;
+  signature->entry_count++;
+}
+
+static bool compute_tree_signature(const char *root, const char *relative_root,
+                                   fakelib_cache_signature_t *signature) {
+  char directory_path[MAX_PATH];
+  int written = relative_root[0] == '\0'
+                    ? snprintf(directory_path, sizeof(directory_path), "%s",
+                               root)
+                    : snprintf(directory_path, sizeof(directory_path), "%s/%s",
+                               root, relative_root);
+  if (written <= 0 || (size_t)written >= sizeof(directory_path))
+    return false;
+
+  DIR *d = opendir(directory_path);
+  if (!d)
+    return false;
+
+  bool ok = true;
+  struct dirent *entry;
+  while ((entry = readdir(d)) != NULL) {
+    if (entry->d_name[0] == '.' &&
+        (entry->d_name[1] == '\0' ||
+         (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
+      continue;
+    }
+
+    char relative_path[MAX_PATH];
+    char full_path[MAX_PATH];
+    int relative_len =
+        relative_root[0] == '\0'
+            ? snprintf(relative_path, sizeof(relative_path), "%s",
+                       entry->d_name)
+            : snprintf(relative_path, sizeof(relative_path), "%s/%s",
+                       relative_root, entry->d_name);
+    int full_len = snprintf(full_path, sizeof(full_path), "%s/%s", root,
+                            relative_path);
+    if (relative_len <= 0 ||
+        (size_t)relative_len >= sizeof(relative_path) || full_len <= 0 ||
+        (size_t)full_len >= sizeof(full_path)) {
+      ok = false;
+      break;
+    }
+
+    struct stat lst;
+    struct stat st;
+    if (lstat(full_path, &lst) != 0) {
+      ok = false;
+      break;
+    }
+    if (S_ISLNK(lst.st_mode)) {
+      if (stat(full_path, &st) != 0 || S_ISDIR(st.st_mode)) {
+        ok = false;
+        break;
+      }
+    } else {
+      st = lst;
+    }
+    cache_signature_add(signature, relative_path, &st);
+    if (S_ISDIR(st.st_mode) &&
+        !compute_tree_signature(root, relative_path, signature)) {
+      ok = false;
+      break;
+    }
+  }
+  if (closedir(d) != 0)
+    ok = false;
+  return ok;
+}
+
+static bool compute_source_signature(
+    const char *source_path, fakelib_cache_signature_t *signature) {
+  memset(signature, 0, sizeof(*signature));
+  return compute_tree_signature(source_path, "", signature);
+}
+
+static bool compute_emulator_files_signature(
+    const char *emulators_path, const char *source_path,
+    fakelib_cache_signature_t *signature, size_t *matching_count_out) {
+  memset(signature, 0, sizeof(*signature));
+  *matching_count_out = 0;
+
+  DIR *d = opendir(emulators_path);
+  if (!d)
+    return errno == ENOENT;
+
+  bool ok = true;
+  struct dirent *entry;
+  while ((entry = readdir(d)) != NULL) {
+    if (entry->d_name[0] == '.' &&
+        (entry->d_name[1] == '\0' ||
+         (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
+      continue;
+    }
+
+    char emulator_file[MAX_PATH];
+    char source_file[MAX_PATH];
+    int emulator_len = snprintf(emulator_file, sizeof(emulator_file), "%s/%s",
+                                emulators_path, entry->d_name);
+    int source_len = snprintf(source_file, sizeof(source_file), "%s/%s",
+                              source_path, entry->d_name);
+    if (emulator_len <= 0 ||
+        (size_t)emulator_len >= sizeof(emulator_file) || source_len <= 0 ||
+        (size_t)source_len >= sizeof(source_file)) {
+      ok = false;
+      break;
+    }
+
+    struct stat emulator_st;
+    struct stat source_st;
+    if (stat(emulator_file, &emulator_st) != 0 ||
+        !S_ISREG(emulator_st.st_mode)) {
+      continue;
+    }
+    if (stat(source_file, &source_st) != 0 || !S_ISREG(source_st.st_mode))
+      continue;
+    if (emulator_st.st_dev == source_st.st_dev &&
+        emulator_st.st_ino == source_st.st_ino) {
+      continue;
+    }
+    cache_signature_add(signature, entry->d_name, &emulator_st);
+    (*matching_count_out)++;
+  }
+  if (closedir(d) != 0)
+    ok = false;
+  return ok;
+}
+
+static bool cache_signatures_equal(const fakelib_cache_signature_t *a,
+                                   const fakelib_cache_signature_t *b) {
+  return a->xor_hash == b->xor_hash && a->sum_hash == b->sum_hash &&
+         a->entry_count == b->entry_count;
+}
+
+static bool remove_cache_tree(const char *path) {
+  struct stat root_st;
+  if (lstat(path, &root_st) != 0)
+    return errno == ENOENT;
+  if (!S_ISDIR(root_st.st_mode))
+    return unlink(path) == 0 || errno == ENOENT;
+
+  DIR *d = opendir(path);
+  if (!d)
+    return false;
+
+  bool removed = true;
+  struct dirent *entry;
+  while ((entry = readdir(d)) != NULL) {
+    if (entry->d_name[0] == '.' &&
+        (entry->d_name[1] == '\0' ||
+         (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
+      continue;
+    }
+
+    char child_path[MAX_PATH];
+    int written = snprintf(child_path, sizeof(child_path), "%s/%s", path,
+                           entry->d_name);
+    if (written <= 0 || (size_t)written >= sizeof(child_path)) {
+      removed = false;
+      break;
+    }
+    struct stat st;
+    if (lstat(child_path, &st) != 0) {
+      removed = false;
+      break;
+    }
+    if (S_ISDIR(st.st_mode)) {
+      if (!remove_cache_tree(child_path)) {
+        removed = false;
+        break;
+      }
+    } else if (unlink(child_path) != 0) {
+      removed = false;
+      break;
+    }
+  }
+  if (closedir(d) != 0)
+    removed = false;
+  if (removed && rmdir(path) != 0 && errno != ENOENT)
+    removed = false;
+  return removed;
+}
+
+static bool build_cache_path(const char *title_id, const char *suffix,
+                             char path[MAX_PATH]) {
+  int written = snprintf(path, MAX_PATH, "%s/%s%s", FAKELIB_CACHE_PATH,
+                         title_id, suffix ? suffix : "");
+  return written > 0 && (size_t)written < MAX_PATH;
+}
+
+static bool cache_root_is_mounted(const char *cache_root) {
+  char cache_fakelib[MAX_PATH];
+  int written = snprintf(cache_fakelib, sizeof(cache_fakelib), "%s/fakelib",
+                         cache_root);
+  if (written <= 0 || (size_t)written >= sizeof(cache_fakelib))
+    return false;
+
+  struct statfs *mounts = NULL;
+  int mount_count = getmntinfo(&mounts, MNT_NOWAIT);
+  if (mount_count <= 0 || !mounts)
+    return true;
+
+  for (int i = 0; i < mount_count; ++i) {
+    const char *source = mounts[i].f_mntfromname;
+    if (strncmp(source, "<above>:", 8) == 0)
+      source += 8;
+    if (strcmp(source, cache_fakelib) == 0)
+      return true;
+  }
+  return false;
+}
+
+static void remove_title_cache(const char *title_id) {
+  char cache_root[MAX_PATH];
+  if (!build_cache_path(title_id, "", cache_root))
+    return;
+  struct stat st;
+  if (lstat(cache_root, &st) != 0)
+    return;
+  if (!S_ISDIR(st.st_mode)) {
+    (void)unlink(cache_root);
+    return;
+  }
+
+  char manifest_path[MAX_PATH];
+  int written = snprintf(manifest_path, sizeof(manifest_path), "%s/manifest",
+                         cache_root);
+  if (written > 0 && (size_t)written < sizeof(manifest_path))
+    (void)unlink(manifest_path);
+  if (!cache_root_is_mounted(cache_root))
+    (void)remove_cache_tree(cache_root);
+}
+
+static bool read_cache_manifest(const char *cache_root,
+                                fakelib_cache_manifest_t *manifest,
+                                time_t *last_used_out) {
+  struct stat cache_st;
+  if (lstat(cache_root, &cache_st) != 0 || !S_ISDIR(cache_st.st_mode))
+    return false;
+
+  char manifest_path[MAX_PATH];
+  int written = snprintf(manifest_path, sizeof(manifest_path), "%s/manifest",
+                         cache_root);
+  if (written <= 0 || (size_t)written >= sizeof(manifest_path))
+    return false;
+
+  struct stat manifest_st;
+  if (lstat(manifest_path, &manifest_st) != 0 ||
+      !S_ISREG(manifest_st.st_mode)) {
+    return false;
+  }
+
+  FILE *file = fopen(manifest_path, "rb");
+  if (!file)
+    return false;
+  bool ok = fread(manifest, 1, sizeof(*manifest), file) == sizeof(*manifest);
+  if (fclose(file) != 0)
+    ok = false;
+  ok = ok && manifest->magic == FAKELIB_CACHE_MAGIC &&
+       manifest->version == FAKELIB_CACHE_VERSION &&
+       memchr(manifest->source_path, '\0', sizeof(manifest->source_path)) &&
+       memchr(manifest->emulators_path, '\0',
+              sizeof(manifest->emulators_path));
+  if (ok && last_used_out)
+    *last_used_out = manifest_st.st_mtime;
+  return ok;
+}
+
+static bool touch_cache_manifest(const char *cache_root) {
+  char manifest_path[MAX_PATH];
+  int written = snprintf(manifest_path, sizeof(manifest_path), "%s/manifest",
+                         cache_root);
+  return written > 0 && (size_t)written < sizeof(manifest_path) &&
+         utimes(manifest_path, NULL) == 0;
+}
+
+static bool write_cache_manifest(const char *cache_root,
+                                 const fakelib_cache_manifest_t *manifest) {
+  char manifest_path[MAX_PATH];
+  int written = snprintf(manifest_path, sizeof(manifest_path), "%s/manifest",
+                         cache_root);
+  if (written <= 0 || (size_t)written >= sizeof(manifest_path))
+    return false;
+
+  FILE *file = fopen(manifest_path, "wb");
+  if (!file)
+    return false;
+  bool ok = fchmod(fileno(file), 0777) == 0 &&
+            fwrite(manifest, 1, sizeof(*manifest), file) == sizeof(*manifest) &&
+            fflush(file) == 0 && fsync(fileno(file)) == 0;
+  if (fclose(file) != 0)
+    ok = false;
+  if (!ok)
+    (void)unlink(manifest_path);
+  return ok;
+}
+
+static bool cache_manifest_matches_context(
+    const fakelib_cache_manifest_t *manifest, const char *source_path,
+    const char *emulators_path) {
+  return strcmp(manifest->source_path, source_path) == 0 &&
+         strcmp(manifest->emulators_path, emulators_path) == 0 &&
+         manifest->emulator_file_count > 0;
+}
+
+static bool cache_manifest_is_current(
+    const fakelib_cache_manifest_t *manifest, const char *source_path,
+    const char *emulators_path,
+    const fakelib_cache_signature_t *source_signature,
+    const fakelib_cache_signature_t *emulator_files_signature,
+    size_t emulator_file_count) {
+  return cache_manifest_matches_context(manifest, source_path,
+                                        emulators_path) &&
+         manifest->emulator_file_count == emulator_file_count &&
+         cache_signatures_equal(&manifest->source_signature,
+                                source_signature) &&
+         cache_signatures_equal(&manifest->emulator_files_signature,
+                                emulator_files_signature);
+}
+
+static bool copy_emulator_files_to_cache(const char *emulators_path,
+                                         const char *source_path,
+                                         const char *cache_fakelib_path,
+                                         size_t *copied_count_out) {
+  *copied_count_out = 0;
+  DIR *d = opendir(emulators_path);
+  if (!d)
+    return errno == ENOENT;
+
+  bool ok = true;
+  struct dirent *entry;
+  while ((entry = readdir(d)) != NULL) {
+    if (entry->d_name[0] == '.' &&
+        (entry->d_name[1] == '\0' ||
+         (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
+      continue;
+    }
+
+    char emulator_file[MAX_PATH];
+    char source_file[MAX_PATH];
+    char cache_file[MAX_PATH];
+    int emulator_len = snprintf(emulator_file, sizeof(emulator_file), "%s/%s",
+                                emulators_path, entry->d_name);
+    int source_len = snprintf(source_file, sizeof(source_file), "%s/%s",
+                              source_path, entry->d_name);
+    int cache_len = snprintf(cache_file, sizeof(cache_file), "%s/%s",
+                             cache_fakelib_path, entry->d_name);
+    if (emulator_len <= 0 ||
+        (size_t)emulator_len >= sizeof(emulator_file) || source_len <= 0 ||
+        (size_t)source_len >= sizeof(source_file) || cache_len <= 0 ||
+        (size_t)cache_len >= sizeof(cache_file)) {
+      ok = false;
+      break;
+    }
+
+    struct stat emulator_st;
+    struct stat source_st;
+    if (stat(emulator_file, &emulator_st) != 0 ||
+        !S_ISREG(emulator_st.st_mode)) {
+      continue;
+    }
+    if (stat(source_file, &source_st) != 0 || !S_ISREG(source_st.st_mode))
+      continue;
+    if (emulator_st.st_dev == source_st.st_dev &&
+        emulator_st.st_ino == source_st.st_ino) {
+      continue;
+    }
+    if (copy_file_with_mode(emulator_file, cache_file, 0777) != 0) {
+      ok = false;
+      break;
+    }
+    (*copied_count_out)++;
+  }
+  if (closedir(d) != 0)
+    ok = false;
+  return ok;
+}
+
+static bool ensure_fakelib_cache_root(void) {
+  if (mkdir("/data/shadowmount", 0777) != 0 && errno != EEXIST)
+    return false;
+  if (mkdir(FAKELIB_CACHE_PATH, 0777) != 0 && errno != EEXIST)
+    return false;
+
+  struct stat st;
+  return lstat(FAKELIB_CACHE_PATH, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static bool parse_temporary_cache_title_id(
+    const char *entry_name, char title_id[MAX_TITLE_ID]) {
+  const char suffix[] = ".tmp";
+  size_t length = strlen(entry_name);
+  size_t suffix_length = sizeof(suffix) - 1u;
+  if (length <= suffix_length || length - suffix_length >= MAX_TITLE_ID ||
+      strcmp(entry_name + length - suffix_length, suffix) != 0) {
+    return false;
+  }
+  size_t title_length = length - suffix_length;
+  memcpy(title_id, entry_name, title_length);
+  title_id[title_length] = '\0';
+  return is_supported_game_title_id(title_id);
+}
+
+static void cleanup_expired_fakelib_caches(uint64_t now_sec) {
+  DIR *d = opendir(FAKELIB_CACHE_PATH);
+  if (!d)
+    return;
+
+  struct dirent *entry;
+  while ((entry = readdir(d)) != NULL) {
+    char temporary_title_id[MAX_TITLE_ID];
+    if (parse_temporary_cache_title_id(entry->d_name,
+                                       temporary_title_id)) {
+      char temporary_root[MAX_PATH];
+      if (build_cache_path(temporary_title_id, ".tmp", temporary_root)) {
+        if (remove_cache_tree(temporary_root)) {
+          log_debug("  [EMU] orphaned temporary cache removed: %s",
+                    temporary_root);
+        } else {
+          log_debug("  [EMU] temporary cache cleanup failed: %s",
+                    temporary_root);
+        }
+      }
+      continue;
+    }
+    if (!is_supported_game_title_id(entry->d_name)) {
+      continue;
+    }
+
+    char cache_root[MAX_PATH];
+    if (!build_cache_path(entry->d_name, "", cache_root))
+      continue;
+    if (cache_root_is_mounted(cache_root))
+      continue;
+
+    fakelib_cache_manifest_t manifest;
+    time_t last_used = 0;
+    if (!read_cache_manifest(cache_root, &manifest, &last_used)) {
+      (void)remove_cache_tree(cache_root);
+      continue;
+    }
+    if (manifest.emulator_file_count > 0 && last_used > 0 &&
+        ((uint64_t)last_used > now_sec ||
+         now_sec - (uint64_t)last_used <= FAKELIB_CACHE_MAX_AGE_SECONDS)) {
+      continue;
+    }
+    if (remove_cache_tree(cache_root)) {
+      log_debug("  [EMU] stale fakelib cache removed: %s", cache_root);
+    } else {
+      log_debug("  [EMU] stale fakelib cache cleanup failed: %s",
+                cache_root);
+    }
+  }
+  closedir(d);
+}
+
+void sm_fakelib_cleanup_caches(void) {
+  time_t now = time(NULL);
+  if (now < 0)
+    return;
+
+  pthread_mutex_lock(&g_fakelib_cache_mutex);
+  cleanup_expired_fakelib_caches((uint64_t)now);
+  pthread_mutex_unlock(&g_fakelib_cache_mutex);
+}
+
+static bool rebuild_fakelib_cache(
+    const char *title_id, const char *source_path, const char *emulators_path,
+    const fakelib_cache_signature_t *source_signature,
+    const fakelib_cache_signature_t *emulator_files_signature,
+    size_t emulator_file_count) {
+  char cache_root[MAX_PATH] = {0};
+  char temp_root[MAX_PATH];
+  if (!build_cache_path(title_id, "", cache_root) ||
+      !build_cache_path(title_id, ".tmp", temp_root)) {
+    return false;
+  }
+  if (chmod(FAKELIB_CACHE_PATH, 0777) != 0) {
+    log_debug("  [EMU] cache root mode update failed: %s (%s)",
+              FAKELIB_CACHE_PATH, strerror(errno));
+    return false;
+  }
+
+  if (!remove_cache_tree(temp_root)) {
+    log_debug("  [EMU] temporary cache cleanup failed for %s: %s", title_id,
+              temp_root);
+    return false;
+  }
+  if (mkdir(temp_root, 0777) != 0) {
+    log_debug("  [EMU] temporary cache creation failed for %s: %s (%s)",
+              title_id, temp_root, strerror(errno));
+    return false;
+  }
+  if (chmod(temp_root, 0777) != 0) {
+    log_debug("  [EMU] temporary cache mode update failed for %s: %s (%s)",
+              title_id, temp_root, strerror(errno));
+    (void)remove_cache_tree(temp_root);
+    return false;
+  }
+
+  char temp_fakelib[MAX_PATH];
+  int written = snprintf(temp_fakelib, sizeof(temp_fakelib), "%s/fakelib",
+                         temp_root);
+  bool built = written > 0 && (size_t)written < sizeof(temp_fakelib) &&
+               copy_dir_with_mode(source_path, temp_fakelib, 0777) == 0;
+  size_t copied_emulator_files = 0;
+  if (built) {
+    built = copy_emulator_files_to_cache(emulators_path, source_path,
+                                         temp_fakelib,
+                                         &copied_emulator_files) &&
+            copied_emulator_files == emulator_file_count;
+  }
+
+  fakelib_cache_signature_t current_source_signature;
+  fakelib_cache_signature_t current_emulator_files_signature;
+  size_t current_emulator_file_count = 0;
+  if (built) {
+    built = compute_source_signature(source_path, &current_source_signature) &&
+            compute_emulator_files_signature(
+                emulators_path, source_path, &current_emulator_files_signature,
+                &current_emulator_file_count) &&
+            current_emulator_file_count == emulator_file_count &&
+            cache_signatures_equal(source_signature,
+                                   &current_source_signature) &&
+            cache_signatures_equal(emulator_files_signature,
+                                   &current_emulator_files_signature);
+  }
+
+  fakelib_cache_manifest_t manifest;
+  if (built) {
+    memset(&manifest, 0, sizeof(manifest));
+    manifest.magic = FAKELIB_CACHE_MAGIC;
+    manifest.version = FAKELIB_CACHE_VERSION;
+    manifest.emulator_file_count = emulator_file_count;
+    manifest.source_signature = *source_signature;
+    manifest.emulator_files_signature = *emulator_files_signature;
+    (void)strlcpy(manifest.source_path, source_path,
+                  sizeof(manifest.source_path));
+    (void)strlcpy(manifest.emulators_path, emulators_path,
+                  sizeof(manifest.emulators_path));
+    built = write_cache_manifest(temp_root, &manifest);
+  }
+
+  if (!built) {
+    log_debug("  [EMU] fakelib cache build failed for %s", title_id);
+    (void)remove_cache_tree(temp_root);
+    return false;
+  }
+  if (cache_root_is_mounted(cache_root)) {
+    log_debug("  [EMU] fakelib cache is still mounted for %s", title_id);
+    (void)remove_cache_tree(temp_root);
+    return false;
+  }
+  if (!remove_cache_tree(cache_root) || rename(temp_root, cache_root) != 0) {
+    log_debug("  [EMU] fakelib cache publish failed for %s: %s", title_id,
+              strerror(errno));
+    (void)remove_cache_tree(temp_root);
+    return false;
+  }
+
+  log_debug("  [EMU] fakelib cache updated for %s: source=%s emulator_files=%u",
+            title_id, source_path, (unsigned)emulator_file_count);
+  return true;
+}
+
+static void prepare_title_cache(const char *title_id, const char *game_path) {
+  if (!is_supported_game_title_id(title_id))
+    return;
+  const runtime_config_t *cfg = runtime_config();
+  if (!cfg->backport_fakelib_enabled || !cfg->update_emulators_enabled)
+    return;
+  char emulators_path[MAX_PATH];
+  (void)strlcpy(emulators_path, cfg->emulators_path, sizeof(emulators_path));
+
+  char source_path[MAX_PATH];
+  if (!resolve_game_fakelib_source_for_path(title_id, game_path,
+                                            source_path))
+    return;
+  if (!ensure_fakelib_cache_root()) {
+    log_debug("  [EMU] fakelib cache root unavailable for %s: %s (%s)",
+              title_id, FAKELIB_CACHE_PATH, strerror(errno));
+    return;
+  }
+
+  fakelib_cache_signature_t source_signature;
+  fakelib_cache_signature_t emulator_files_signature;
+  size_t emulator_file_count = 0;
+  if (!compute_emulator_files_signature(
+          emulators_path, source_path, &emulator_files_signature,
+          &emulator_file_count)) {
+    log_debug("  [EMU] fakelib cache fingerprint failed for %s", title_id);
+    remove_title_cache(title_id);
+    return;
+  }
+  if (emulator_file_count == 0) {
+    remove_title_cache(title_id);
+    return;
+  }
+  if (!compute_source_signature(source_path, &source_signature)) {
+    log_debug("  [EMU] fakelib cache fingerprint failed for %s", title_id);
+    remove_title_cache(title_id);
+    return;
+  }
+
+  char cache_root[MAX_PATH] = {0};
+  bool current = false;
+  if (build_cache_path(title_id, "", cache_root)) {
+    fakelib_cache_manifest_t manifest;
+    char cache_fakelib[MAX_PATH];
+    int written = snprintf(cache_fakelib, sizeof(cache_fakelib),
+                           "%s/fakelib", cache_root);
+    struct stat st;
+    current = written > 0 && (size_t)written < sizeof(cache_fakelib) &&
+              lstat(cache_fakelib, &st) == 0 && S_ISDIR(st.st_mode) &&
+              read_cache_manifest(cache_root, &manifest, NULL) &&
+              cache_manifest_is_current(
+                  &manifest, source_path, emulators_path,
+                  &source_signature, &emulator_files_signature,
+                  emulator_file_count);
+  }
+  if (!current) {
+    if (!rebuild_fakelib_cache(
+            title_id, source_path, emulators_path, &source_signature,
+            &emulator_files_signature, emulator_file_count)) {
+      remove_title_cache(title_id);
+    }
+  } else {
+    log_debug("  [EMU] fakelib cache current for %s: emulator_files=%u", title_id,
+              (unsigned)emulator_file_count);
+  }
+}
+
+void sm_fakelib_prepare_title_cache(const char *title_id,
+                                    const char *game_path) {
+  pthread_mutex_lock(&g_fakelib_cache_mutex);
+  prepare_title_cache(title_id, game_path);
+  pthread_mutex_unlock(&g_fakelib_cache_mutex);
+}
+
+static bool resolve_cached_fakelib_locked(
+    const char *title_id, const char *source_path, char cache_path[MAX_PATH],
+    size_t *emulator_file_count_out) {
+  *emulator_file_count_out = 0;
+  if (!is_supported_game_title_id(title_id))
+    return false;
+  const runtime_config_t *cfg = runtime_config();
+  if (!cfg->update_emulators_enabled)
+    return false;
+  char emulators_path[MAX_PATH];
+  (void)strlcpy(emulators_path, cfg->emulators_path, sizeof(emulators_path));
+
+  char cache_root[MAX_PATH];
+  if (!build_cache_path(title_id, "", cache_root))
+    return false;
+  fakelib_cache_manifest_t manifest;
+  if (!read_cache_manifest(cache_root, &manifest, NULL))
+    return false;
+
+  if (!cache_manifest_matches_context(&manifest, source_path,
+                                      emulators_path) ||
+      manifest.emulator_file_count > SIZE_MAX) {
+    return false;
+  }
+
+  int written = snprintf(cache_path, MAX_PATH, "%s/fakelib", cache_root);
+  struct stat st;
+  if (written <= 0 || (size_t)written >= MAX_PATH ||
+      lstat(cache_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    cache_path[0] = '\0';
+    return false;
+  }
+  if (!touch_cache_manifest(cache_root)) {
+    log_debug("  [EMU] fakelib cache lifetime refresh failed for %s: %s",
+              title_id, strerror(errno));
+  }
+  *emulator_file_count_out = (size_t)manifest.emulator_file_count;
+  return true;
+}
+
+static bool resolve_cached_fakelib(const char *title_id,
+                                   const char *source_path,
+                                   char cache_path[MAX_PATH],
+                                   size_t *emulator_file_count_out) {
+  pthread_mutex_lock(&g_fakelib_cache_mutex);
+  bool resolved = resolve_cached_fakelib_locked(
+      title_id, source_path, cache_path, emulator_file_count_out);
+  pthread_mutex_unlock(&g_fakelib_cache_mutex);
+  return resolved;
+}
+
 static bool cleanup_fakelib_mount(void) {
-  if (g_fakelib_mount.layer_count == 0) {
+  if (!fakelib_session_active()) {
     memset(&g_fakelib_mount, 0, sizeof(g_fakelib_mount));
     return true;
   }
@@ -223,14 +1001,14 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id) {
     return;
   }
 
-  if (g_fakelib_mount.layer_count > 0 && g_fakelib_mount.pid == pid) {
+  if (fakelib_session_active() && g_fakelib_mount.pid == pid) {
     log_debug("  [FAKELIB] already tracking pid=%ld for %s", (long)pid,
               title_id);
     pthread_mutex_unlock(&g_fakelib_mutex);
     return;
   }
 
-  if (g_fakelib_mount.layer_count > 0 && g_fakelib_mount.pid != pid) {
+  if (fakelib_session_active() && g_fakelib_mount.pid != pid) {
     log_debug("  [FAKELIB] handoff active mount pid=%ld -> pid=%ld (%s)",
               (long)g_fakelib_mount.pid, (long)pid, title_id);
     if (!cleanup_fakelib_mount()) {
@@ -244,28 +1022,43 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id) {
   char game_source_path[MAX_PATH];
   char global_source_path[MAX_PATH];
   char mount_path[MAX_PATH];
-  if (!resolve_sandbox_context(title_id, game_source_path, mount_path)) {
-    pthread_mutex_unlock(&g_fakelib_mutex);
-    return;
-  }
-
+  bool has_game = resolve_game_fakelib_source(title_id, game_source_path);
   bool has_global =
       resolve_global_fakelib_source(title_id, global_source_path);
-  bool has_game = (game_source_path[0] != '\0');
   if (!has_global && !has_game) {
     pthread_mutex_unlock(&g_fakelib_mutex);
     return;
   }
 
+  bool same_source =
+      has_global && has_game &&
+      strcmp(global_source_path, game_source_path) == 0;
+  size_t emulator_file_count = 0;
+  if (has_game) {
+    char cache_path[MAX_PATH];
+    if (resolve_cached_fakelib(title_id, game_source_path, cache_path,
+                               &emulator_file_count)) {
+      (void)strlcpy(game_source_path, cache_path, sizeof(game_source_path));
+      log_debug("  [EMU] using fakelib cache for %s: %s", title_id,
+                game_source_path);
+    }
+  }
+  same_source = same_source ||
+                (has_global && has_game &&
+                 strcmp(global_source_path, game_source_path) == 0);
+
   memset(&g_fakelib_mount, 0, sizeof(g_fakelib_mount));
   g_fakelib_mount.pid = pid;
+
+  if (!resolve_sandbox_mount_path(title_id, mount_path)) {
+    memset(&g_fakelib_mount, 0, sizeof(g_fakelib_mount));
+    pthread_mutex_unlock(&g_fakelib_mutex);
+    return;
+  }
   (void)strlcpy(g_fakelib_mount.mount_path, mount_path,
                 sizeof(g_fakelib_mount.mount_path));
 
   bool global_first = runtime_config()->global_fakelib_mount_first;
-  bool same_source =
-      has_global && has_game &&
-      strcmp(global_source_path, game_source_path) == 0;
   if (global_first && has_global && !same_source) {
     if (!track_fakelib_overlay(title_id, global_source_path, mount_path,
                                "global")) {
@@ -293,14 +1086,18 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id) {
     }
   }
 
-  if (has_game)
-    notify_system_info_l10n(SM_L10N_GAME_BACKPORTED, title_id);
+  if (has_game) {
+    notify_system_info_l10n(emulator_file_count > 0
+                                ? SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED
+                                : SM_L10N_GAME_BACKPORTED,
+                            title_id);
+  }
   pthread_mutex_unlock(&g_fakelib_mutex);
 }
 
 void sm_fakelib_game_on_exit(pid_t pid) {
   pthread_mutex_lock(&g_fakelib_mutex);
-  if (g_fakelib_mount.layer_count == 0 || g_fakelib_mount.pid != pid) {
+  if (!fakelib_session_active() || g_fakelib_mount.pid != pid) {
     pthread_mutex_unlock(&g_fakelib_mutex);
     return;
   }

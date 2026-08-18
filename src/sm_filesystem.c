@@ -959,7 +959,8 @@ void cleanup_duplicate_title_mounts(void) {
 }
 
 // --- Copy Helpers for Install Action ---
-static int copy_param_json_rewrite(const char *src, const char *dst) {
+static int copy_param_json_rewrite(const char *src, const char *dst,
+                                   bool set_mode, mode_t mode) {
   FILE *fs = fopen(src, "rb");
   if (!fs)
     return -1;
@@ -1008,8 +1009,8 @@ static int copy_param_json_rewrite(const char *src, const char *dst) {
     return -1;
   }
 
-  int ret = 0;
-  if (len > 0 && fwrite(buf, 1, len, fd) != len)
+  int ret = set_mode && fchmod(fileno(fd), mode) != 0 ? -1 : 0;
+  if (ret == 0 && len > 0 && fwrite(buf, 1, len, fd) != len)
     ret = -1;
   if (fclose(fd) != 0)
     ret = -1;
@@ -1023,12 +1024,13 @@ static int copy_param_json_rewrite(const char *src, const char *dst) {
   return ret;
 }
 
-int copy_file(const char *src, const char *dst) {
+static int copy_file_buffered(const char *src, const char *dst, bool set_mode,
+                              mode_t mode, char *buffer,
+                              size_t buffer_size) {
   if (strstr(src, "/sce_sys/param.json")) {
-    return copy_param_json_rewrite(src, dst);
+    return copy_param_json_rewrite(src, dst, set_mode, mode);
   }
 
-  char buf[64 * 1024];
   FILE *fs = fopen(src, "rb");
   if (!fs)
     return -1;
@@ -1037,14 +1039,16 @@ int copy_file(const char *src, const char *dst) {
     fclose(fs);
     return -1;
   }
-  int ret = 0;
+  int ret = set_mode && fchmod(fileno(fd), mode) != 0 ? -1 : 0;
   while (true) {
-    size_t n = fread(buf, 1, sizeof(buf), fs);
-    if (n > 0 && fwrite(buf, 1, n, fd) != n) {
+    if (ret != 0)
+      break;
+    size_t n = fread(buffer, 1, buffer_size, fs);
+    if (n > 0 && fwrite(buffer, 1, n, fd) != n) {
       ret = -1;
       break;
     }
-    if (n < sizeof(buf)) {
+    if (n < buffer_size) {
       if (ferror(fs))
         ret = -1;
       break;
@@ -1061,8 +1065,22 @@ int copy_file(const char *src, const char *dst) {
   return ret;
 }
 
-int copy_dir(const char *src, const char *dst) {
-  if (mkdir(dst, 0777) != 0 && errno != EEXIST)
+static int copy_file_impl(const char *src, const char *dst, bool set_mode,
+                          mode_t mode) {
+  const size_t buffer_size = 64u * 1024u;
+  char *buffer = malloc(buffer_size);
+  if (!buffer)
+    return -1;
+  int ret = copy_file_buffered(src, dst, set_mode, mode, buffer, buffer_size);
+  free(buffer);
+  return ret;
+}
+
+static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
+                         mode_t mode, char *buffer, size_t buffer_size) {
+  if (mkdir(dst, set_mode ? mode : 0777) != 0 && errno != EEXIST)
+    return -1;
+  if (set_mode && chmod(dst, mode) != 0)
     return -1;
   DIR *d = opendir(src);
   if (!d)
@@ -1100,12 +1118,13 @@ int copy_dir(const char *src, const char *dst) {
       st = lst;
     }
     if (S_ISDIR(st.st_mode)) {
-      if (copy_dir(ss, dd) != 0) {
+      if (copy_dir_impl(ss, dd, set_mode, mode, buffer, buffer_size) != 0) {
         ret = -1;
         break;
       }
     } else {
-      if (copy_file(ss, dd) != 0) {
+      if (copy_file_buffered(ss, dd, set_mode, mode, buffer, buffer_size) !=
+          0) {
         ret = -1;
         break;
       }
@@ -1114,6 +1133,33 @@ int copy_dir(const char *src, const char *dst) {
   if (closedir(d) != 0)
     ret = -1;
   return ret;
+}
+
+static int copy_dir_with_options(const char *src, const char *dst,
+                                 bool set_mode, mode_t mode) {
+  const size_t buffer_size = 64u * 1024u;
+  char *buffer = malloc(buffer_size);
+  if (!buffer)
+    return -1;
+  int ret = copy_dir_impl(src, dst, set_mode, mode, buffer, buffer_size);
+  free(buffer);
+  return ret;
+}
+
+int copy_file(const char *src, const char *dst) {
+  return copy_file_impl(src, dst, false, 0);
+}
+
+int copy_file_with_mode(const char *src, const char *dst, mode_t mode) {
+  return copy_file_impl(src, dst, true, mode);
+}
+
+int copy_dir(const char *src, const char *dst) {
+  return copy_dir_with_options(src, dst, false, 0);
+}
+
+int copy_dir_with_mode(const char *src, const char *dst, mode_t mode) {
+  return copy_dir_with_options(src, dst, true, mode);
 }
 
 int remount_system_ex(void) {

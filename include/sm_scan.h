@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+#include "sm_limits.h"
+
 typedef struct scan_candidate scan_candidate_t;
 
 // Unmount and clean up mounts whose backing sources disappeared.
@@ -21,6 +23,10 @@ int collect_scan_candidates_for_scan_root(const char *scan_root,
                                           int max_candidates,
                                           int *total_found_out,
                                           bool *unstable_found_out);
+// Resolve the source directory of a title backport without mounting it.
+bool resolve_backport_path_for_title(const char *title_id,
+                                     const char *owning_scan_root,
+                                     char backport_path[MAX_PATH]);
 // Ensure a stable backport overlay is mounted when one is present.
 // Absence is harmless; an unusable or failed required overlay returns false.
 bool mount_backport_overlay_for_title(const char *source_path,

@@ -11,6 +11,8 @@ static const char *const g_zh_tw[SM_L10N_COUNT] = {
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "向下相容覆蓋層掛載失敗：%s\n%s\n0x%08X",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "已為遊戲套用向下相容修補程式：%s",
+    /* English: Backport applied to game: %s\nEmulators updated */
+    [SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED] = "已為遊戲套用向下相容修補程式：%s\n多個模擬器已更新",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nSaved image_sector override: %u.\nTry mounting again. */
     [SM_L10N_IMAGE_REJECTED_CLUSTER_AUTOTUNED] = "映像掛載被拒絕:\n%s\n叢集大小太小 (%llu < %u)。\n已儲存 image_sector 覆寫值: %u。\n請再次嘗試掛載。",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nUse a larger cluster size in the image or lower sector size in config. */

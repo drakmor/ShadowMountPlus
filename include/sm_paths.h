@@ -6,6 +6,8 @@
 
 #define DEFAULT_BACKPORTS_DIR_NAME "backports"
 #define DEFAULT_GLOBAL_FAKELIB_PATH "/data/shadowmount/fakelib"
+#define DEFAULT_EMULATORS_PATH "/data/shadowmount/emus"
+#define FAKELIB_CACHE_PATH "/data/shadowmount/cache"
 #define LOG_DIR "/data/shadowmount"
 #define LOG_FILE "/data/shadowmount/debug.log"
 #define LOG_FILE_PREV "/data/shadowmount/debug.log.1"

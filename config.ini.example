@@ -131,6 +131,19 @@
 # Default: 1
 # backport_fakelib=1
 
+# Updates for multiple emulators in the game fakelib (cache is created only when
+# at least one regular file name matches):
+# 1/true/yes/on  -> cache the game's fakelib before launch and replace matching
+#                   cached files from emulators_path
+# 0/false/no/off -> disable emulator updates
+# Default: 1
+# update_emulators=1
+#
+# Folder containing emulator update files (absolute path):
+# emulators_path=/data/shadowmount/emus
+# Cache: /data/shadowmount/cache/<TITLE_ID>/fakelib
+# Unused caches expire seven days after the most recent game launch.
+
 # Global fakelib overlay:
 # 1/true/yes/on  -> also mount global fakelib for every tracked game when present
 # 0/false/no/off -> do not use the global fakelib folder

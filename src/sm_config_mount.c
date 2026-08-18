@@ -81,6 +81,8 @@ static bool add_global_fakelib_exclude_rule(runtime_config_state_t *state,
                                             const char *value);
 static bool normalize_image_filename_value(const char *value,
                                            char out[MAX_PATH]);
+static bool normalize_absolute_path_value(const char *value,
+                                          char out[MAX_PATH]);
 static bool set_image_sector_rule(runtime_config_state_t *state,
                                   const char *value);
 static bool parse_image_sector_rule_value(const char *value,
@@ -248,6 +250,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.backport_fakelib_enabled = true;
   state->cfg.global_fakelib_enabled = true;
   state->cfg.global_fakelib_mount_first = true;
+  state->cfg.update_emulators_enabled = true;
   state->cfg.kstuff_game_auto_toggle = true;
   state->cfg.kstuff_crash_detection_enabled = true;
   state->cfg.legacy_recursive_scan_forced = false;
@@ -256,6 +259,8 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.api_port = SM_API_DEFAULT_PORT;
   (void)strlcpy(state->cfg.global_fakelib_path, DEFAULT_GLOBAL_FAKELIB_PATH,
                 sizeof(state->cfg.global_fakelib_path));
+  (void)strlcpy(state->cfg.emulators_path, DEFAULT_EMULATORS_PATH,
+                sizeof(state->cfg.emulators_path));
   state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
   state->cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
   state->cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
@@ -572,6 +577,29 @@ static bool normalize_image_filename_value(const char *value,
     return false;
 
   (void)strlcpy(out, filename, MAX_PATH);
+  return true;
+}
+
+static bool normalize_absolute_path_value(const char *value,
+                                          char out[MAX_PATH]) {
+  if (!value || !out)
+    return false;
+
+  char local[MAX_PATH];
+  if (strlcpy(local, value, sizeof(local)) >= sizeof(local))
+    return false;
+
+  char *trimmed = trim_ascii(local);
+  size_t len = strlen(trimmed);
+  if (len == 0 || len >= MAX_PATH || trimmed[0] != '/')
+    return false;
+
+  while (len > 1 && trimmed[len - 1] == '/') {
+    trimmed[len - 1] = '\0';
+    len--;
+  }
+
+  (void)strlcpy(out, trimmed, MAX_PATH);
   return true;
 }
 
@@ -1329,24 +1357,13 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     }
 
     if (strcasecmp(key, "global_fakelib_path") == 0) {
-      char local[MAX_PATH];
-      if (strlcpy(local, value, sizeof(local)) >= sizeof(local)) {
+      char path[MAX_PATH];
+      if (!normalize_absolute_path_value(value, path)) {
         log_debug("  [CFG] invalid global fakelib path at line %d: %s=%s",
                   line_no, key, value);
         continue;
       }
-      char *trimmed = trim_ascii(local);
-      size_t len = strlen(trimmed);
-      if (len == 0 || len >= MAX_PATH || trimmed[0] != '/') {
-        log_debug("  [CFG] invalid global fakelib path at line %d: %s=%s",
-                  line_no, key, value);
-        continue;
-      }
-      while (len > 1 && trimmed[len - 1] == '/') {
-        trimmed[len - 1] = '\0';
-        len--;
-      }
-      (void)strlcpy(state->cfg.global_fakelib_path, trimmed,
+      (void)strlcpy(state->cfg.global_fakelib_path, path,
                     sizeof(state->cfg.global_fakelib_path));
       continue;
     }
@@ -1391,6 +1408,27 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
         continue;
       }
       state->cfg.kstuff_crash_detection_enabled = bval;
+      continue;
+    }
+
+    if (strcasecmp(key, "update_emulators") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.update_emulators_enabled = bval;
+      continue;
+    }
+
+    if (strcasecmp(key, "emulators_path") == 0) {
+      char path[MAX_PATH];
+      if (!normalize_absolute_path_value(value, path)) {
+        log_debug("  [CFG] invalid emulator path at line %d: %s=%s",
+                  line_no, key, value);
+        continue;
+      }
+      (void)strlcpy(state->cfg.emulators_path, path,
+                    sizeof(state->cfg.emulators_path));
       continue;
     }
 
@@ -1619,6 +1657,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "legacy_recursive_scan_forced=%d backport_fakelib=%d "
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
+            "update_emulators=%d emulators_path=%s "
             "kstuff_game_auto_toggle=%d kstuff_crash_detection=%d "
             "fan_target_temperature=%u (0=system) "
             "kstuff_pause_delay_image_s=%u kstuff_pause_delay_direct_s=%u "
@@ -1645,6 +1684,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.global_fakelib_mount_first ? "game" : "global",
             state->cfg.global_fakelib_path,
             state->cfg.global_fakelib_exclude_title_count,
+            state->cfg.update_emulators_enabled ? 1 : 0,
+            state->cfg.emulators_path,
             state->cfg.kstuff_game_auto_toggle ? 1 : 0,
             state->cfg.kstuff_crash_detection_enabled ? 1 : 0,
             state->cfg.fan_target_temperature_c,

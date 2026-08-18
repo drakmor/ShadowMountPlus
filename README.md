@@ -79,6 +79,8 @@ Supported keys (all optional):
 - `legacy_mount_pfsc=1|0` (outer `.ffpfsc`; `1` selects the version 1.6 mount profile; default: `1`)
 - `legacy_gddr5_cache=1|0` (request the PFS compressed-offset cache for nested images in legacy mode; default: `0`; optimized mode always requests it)
 - `backport_fakelib=1|0` (`1` mounts sandbox `fakelib` overlays for running games; default: `1`)
+- `update_emulators=1|0` (`1` updates all emulators with matching files in a game's own fakelib; default: `1`)
+- `emulators_path=<absolute_path>` (folder containing emulator update files; default: `/data/shadowmount/emus`)
 - `global_fakelib=1|0` (`1` enables the global fakelib overlay when the folder exists; default: `1`)
 - `global_fakelib_path=<absolute_path>` (global fakelib folder; default: `/data/shadowmount/fakelib`)
 - `global_fakelib_priority=game|global` (overlay priority when both global and game fakelib exist; default: `game`)
@@ -183,12 +185,17 @@ Backport overlay behavior:
 - The `backports` folder is ignored during normal game scanning.
 - A backport is applied automatically to the matching mounted game from any configured scan path.
 - If multiple scan paths provide the same title backport, the game's own scan path wins; otherwise scan path order is used.
-- If `/mnt/sandbox/<TITLE_ID>_XXX/app0/fakelib2` exists while the game is running, ShadowMount+ mounts it into that game's sandbox `common/lib`; otherwise it falls back to `app0/fakelib`.
+- ShadowMount+ checks the selected backport for `fakelib2` and then `fakelib`; if neither exists, it uses only `fakelib` from the original game source. The selected directory is mounted into the running game's sandbox `common/lib`.
+- If `update_emulators=1` and at least one file from `emulators_path` matches a file in the selected game fakelib, ShadowMount+ prepares `/data/shadowmount/cache/<TITLE_ID>/fakelib` before mounting the title runtime. It copies the selected source fakelib into a temporary cache and replaces every matching emulator file.
+- Cache entries are rebuilt when the source path, file set, size, or timestamps of the source fakelib or matching emulator update files change. Their seven-day lifetime is refreshed whenever the game launches.
+- Cache cleanup is independent of game preparation: it runs once when the scanner loop starts and then once every 24 hours while no game mount is active. It removes invalid entries, orphaned temporary directories, and caches unused for more than seven days; mounted caches are always preserved.
+- The cache root and every generated cache directory, file, and manifest are normalized to mode `0777`.
+- After the game starts, the prepared cached fakelib is mounted into `common/lib` via `unionfs`. The backport notification adds `Emulators updated` when at least one emulator update file was copied into the active cache.
 - If `global_fakelib=1` and `global_fakelib_path` exists as a directory, ShadowMount+ also mounts that folder into the same sandbox `common/lib`.
 - When both global and per-game fakelib exist, the default gives the game's own `fakelib` priority by mounting `/data/shadowmount/fakelib` first and then the game-specific fakelib.
 - `global_fakelib_priority=global` reverses that priority.
 - Use repeatable `global_fakelib_exclude=<TITLE_ID>` entries to skip the global fakelib for specific games without disabling per-game fakelib.
-- `backport_fakelib=0` disables the sandbox `fakelib` watcher, including global fakelib.
+- `backport_fakelib=0` disables the sandbox `fakelib` watcher, including global fakelib and emulator updates.
 - For `backport_fakelib` to work correctly, the standalone `BackPork` payload must be disabled. Running both at the same time will conflict.
 
 Kstuff game lifecycle behavior:

@@ -11,6 +11,8 @@ static const char *const g_ar_sa[SM_L10N_COUNT] = {
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "فشل تركيب طبقة التوافق مع الإصدارات الأقدم: %s\n%s\n0x%08X",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "طُبّق دعم الإصدار الأقدم على اللعبة: %s",
+    /* English: Backport applied to game: %s\nEmulators updated */
+    [SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED] = "طُبّق دعم الإصدار الأقدم على اللعبة: %s\nتم تحديث المحاكيات",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nSaved image_sector override: %u.\nTry mounting again. */
     [SM_L10N_IMAGE_REJECTED_CLUSTER_AUTOTUNED] = "تم رفض تحميل الصورة:\n%s\nحجم الكتلة صغير جداً (%llu < %u).\nتم حفظ قيمة حجم القطاع الجديدة: %u.\nحاول التحميل مرة أخرى.",
     /* English: Image mount rejected:\n%s\nCluster size is too small (%llu < %u).\nUse a larger cluster size in the image or lower sector size in config. */

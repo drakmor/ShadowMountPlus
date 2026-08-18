@@ -747,9 +747,9 @@ static bool backport_path_is_dir(const char *backport_path) {
          S_ISDIR(st.st_mode);
 }
 
-static bool resolve_backport_path(const char *title_id,
-                                  const char *owning_scan_path,
-                                  char backport_path[MAX_PATH]) {
+bool resolve_backport_path_for_title(const char *title_id,
+                                     const char *owning_scan_path,
+                                     char backport_path[MAX_PATH]) {
   if (!title_id || title_id[0] == '\0')
     return false;
 
@@ -787,7 +787,8 @@ bool mount_backport_overlay_for_title(const char *source_path,
     return false;
 
   char backport_path[MAX_PATH];
-  if (!resolve_backport_path(title_id, owning_scan_root, backport_path)) {
+  if (!resolve_backport_path_for_title(title_id, owning_scan_root,
+                                       backport_path)) {
     return true;
   }
   if (is_backport_mount_blocked(backport_path))

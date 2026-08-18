@@ -38,6 +38,8 @@
 #define SCANNER_CONFIG_PROBE_INTERVAL_US 10000000ull
 #define SCANNER_MANUAL_RELOAD_DEBOUNCE_US 250000ull
 #define SCANNER_MANUAL_PROBE_INTERVAL_US 10000000ull
+#define SCANNER_FAKELIB_CACHE_CLEANUP_INTERVAL_US                         \
+  (24ull * 60ull * 60ull * 1000000ull)
 
 typedef enum {
   SCANNER_WATCH_SCAN_ROOT = 0,
@@ -234,6 +236,9 @@ static bool fakelib_runtime_config_changed(const runtime_config_t *old_cfg,
          old_cfg->global_fakelib_enabled != new_cfg->global_fakelib_enabled ||
          old_cfg->global_fakelib_mount_first !=
              new_cfg->global_fakelib_mount_first ||
+         old_cfg->update_emulators_enabled !=
+             new_cfg->update_emulators_enabled ||
+         strcmp(old_cfg->emulators_path, new_cfg->emulators_path) != 0 ||
          strcmp(old_cfg->global_fakelib_path,
                 new_cfg->global_fakelib_path) != 0 ||
          old_cfg->global_fakelib_exclude_title_count !=
@@ -1161,6 +1166,7 @@ static int find_due_dirty_scan_root(uint64_t now_us) {
 
 static uint64_t compute_next_scan_deadline_us(uint64_t now_us,
                                               uint64_t full_resync_due_us,
+                                              uint64_t cache_cleanup_due_us,
                                               bool include_scan_work) {
   uint64_t next_deadline = full_resync_due_us;
   uint64_t install_wake_us = sm_install_next_wake_us(now_us);
@@ -1192,6 +1198,10 @@ static uint64_t compute_next_scan_deadline_us(uint64_t now_us,
   }
 
   if (include_scan_work) {
+    if (cache_cleanup_due_us != 0 &&
+        (next_deadline == 0 || cache_cleanup_due_us < next_deadline)) {
+      next_deadline = cache_cleanup_due_us;
+    }
     for (int i = 0; i < get_scan_path_count(); i++) {
       const scanner_root_state_t *state = &g_scanner_root_states[i];
       if (!state->dirty)
@@ -1527,6 +1537,9 @@ void sm_scanner_run_loop(void) {
   }
   uint64_t next_full_resync_us =
       monotonic_time_us() + scanner_full_resync_interval_us();
+  uint64_t next_fakelib_cache_cleanup_us = monotonic_time_us();
+  if (next_fakelib_cache_cleanup_us == 0)
+    next_fakelib_cache_cleanup_us = 1;
   bool was_sleeping = false;
   bool scan_work_blocked = false;
 
@@ -1719,6 +1732,13 @@ void sm_scanner_run_loop(void) {
       continue;
     }
 
+    if (!game_mount_busy && now_us >= next_fakelib_cache_cleanup_us) {
+      sm_fakelib_cleanup_caches();
+      next_fakelib_cache_cleanup_us =
+          monotonic_time_us() + SCANNER_FAKELIB_CACHE_CLEANUP_INTERVAL_US;
+      continue;
+    }
+
     if (!game_mount_busy && next_full_resync_us != 0 &&
         now_us >= next_full_resync_us) {
       bool unstable_found = false;
@@ -1819,7 +1839,8 @@ void sm_scanner_run_loop(void) {
     }
 
     uint64_t deadline_us = compute_next_scan_deadline_us(
-        now_us, next_full_resync_us, !game_mount_busy);
+        now_us, next_full_resync_us, next_fakelib_cache_cleanup_us,
+        !game_mount_busy);
     struct timespec timeout;
     const struct timespec *timeout_ptr =
         build_wait_timeout(&timeout, now_us, deadline_us);

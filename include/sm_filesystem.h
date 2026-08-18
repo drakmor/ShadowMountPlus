@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <sys/types.h>
 
 #include "sm_limits.h"
 
@@ -66,7 +67,11 @@ void cleanup_mount_links_for_source_unmount(const char *source_root);
 void cleanup_usb_mount_links_for_suspend(void);
 // Recursively copy a directory tree.
 int copy_dir(const char *src, const char *dst);
+// Recursively copy a directory tree and set mode as each entry is created.
+int copy_dir_with_mode(const char *src, const char *dst, mode_t mode);
 // Copy a single file.
 int copy_file(const char *src, const char *dst);
+// Copy a single file and set its mode immediately after creation.
+int copy_file_with_mode(const char *src, const char *dst, mode_t mode);
 
 #endif
