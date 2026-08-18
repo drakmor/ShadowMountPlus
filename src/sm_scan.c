@@ -852,26 +852,27 @@ bool release_scan_runtime_mounts(void) {
 
 // --- Unified Scan Pass (images + game candidates) ---
 void cleanup_lost_sources_before_scan(void) {
-  // 1) Drop stale game cache entries for deleted sources.
+  // 1) Validate the persistent image index before any cache consumer runs.
+  sm_image_index_prune();
+  // 2) Drop stale game cache entries for deleted sources.
   prune_game_cache();
-  // 2) Recover or remove stale image mounts before validating their title links.
+  // 3) Recover or remove stale image mounts before validating their title links.
   cleanup_stale_image_mounts();
-  // 3) Drop stale/broken mount links and unmount stale /system_ex stacks.
+  // 4) Drop stale/broken mount links and unmount stale /system_ex stacks.
   runtime_mount_state_lock();
   cleanup_mount_links(NULL, true);
   runtime_mount_state_unlock();
-  sm_image_index_prune();
-  // 4) Drop stale path-state entries.
+  // 5) Drop stale path-state entries.
   prune_path_state();
 }
 
 void cleanup_lost_sources_for_scan_root(const char *scan_root) {
+  sm_image_index_prune();
   prune_game_cache_for_root(scan_root);
   cleanup_stale_image_mounts_for_root(scan_root);
   runtime_mount_state_lock();
   cleanup_mount_links(scan_root, true);
   runtime_mount_state_unlock();
-  sm_image_index_prune();
   prune_path_state_for_root(scan_root);
 }
 

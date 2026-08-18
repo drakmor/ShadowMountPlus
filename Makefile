@@ -2,6 +2,7 @@ PS5_PAYLOAD_SDK ?= /opt/ps5-payload-sdk
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 
 VERSION_TAG := $(shell git describe --abbrev=6 --dirty --always --tags 2>/dev/null || echo unknown)
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Compiler and dependency flags
 JSON_C_ROOT := $(PS5_PAYLOAD_SDK)/target/user/homebrew
@@ -49,9 +50,14 @@ src/config_ini_example_asset.c: config.ini.example
 	xxd -i $< > $@
 
 src/sm_api_service.o: CFLAGS += $(JSON_CFLAGS)
+src/main.o src/sm_image_index.o: CFLAGS += -DSHADOWMOUNT_BUILD_TIME=\"$(BUILD_TIME)\"
+src/main.o src/sm_image_index.o: FORCE
 
 src/sm_l10n.o: $(L10N_CATALOGS)
 src/sm_ampr_updater.o: src/sm_ampr_ca.inc
+
+.PHONY: FORCE
+FORCE:
 
 src/%.o: src/%.c $(HEADERS)
 	$(CC) $(CFLAGS) -c -o $@ $<

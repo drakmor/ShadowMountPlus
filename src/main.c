@@ -32,6 +32,10 @@
 #define SHADOWMOUNT_VERSION "unknown"
 #endif
 
+#ifndef SHADOWMOUNT_BUILD_TIME
+#define SHADOWMOUNT_BUILD_TIME __DATE__ " " __TIME__
+#endif
+
 #define PAYLOAD_NAME "shadowmountplus.elf"
 #define BACKPORK_PROCESS_NAME "backpork.elf"
 #define BACKPORK_PROCESS_NAME_ALT "ps5-backpork.elf"
@@ -522,9 +526,9 @@ int main(void) {
   log_debug(
       "ShadowMount+ v%s exFAT/UFS/PFS/LVD/MD. "
       "FW: %s. "
-      "Build: %s %s. "
+      "Build: %s. "
       "Thx to VoidWhisper/Gezine/Earthonion/EchoStretch/Drakmor",
-      SHADOWMOUNT_VERSION, firmware_version, __DATE__, __TIME__);
+      SHADOWMOUNT_VERSION, firmware_version, SHADOWMOUNT_BUILD_TIME);
   if (restarted_previous_instance)
     log_debug("[RESTART] Previous instance stopped, continuing startup");
   load_runtime_config();
