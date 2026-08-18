@@ -83,4 +83,6 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_CONFIG_RELOADED] = "ShadowMount+: đã tải lại cấu hình.",
     /* English: Duplicate %s ignored:\n%s\nexisting: %s */
     [SM_L10N_DUPLICATE_IGNORED] = "Đã bỏ qua bản trùng %s:\n%s\nđã có: %s",
+    /* English: AMPR emulator updated */
+    [SM_L10N_AMPR_EMULATOR_UPDATED] = "Đã cập nhật trình giả lập AMPR",
 };

@@ -83,4 +83,6 @@ static const char *const g_tr_tr[SM_L10N_COUNT] = {
     [SM_L10N_CONFIG_RELOADED] = "ShadowMount+: yapılandırma yeniden yüklendi.",
     /* English: Duplicate %s ignored:\n%s\nexisting: %s */
     [SM_L10N_DUPLICATE_IGNORED] = "Yinelenen %s yok sayıldı:\n%s\nmevcut: %s",
+    /* English: AMPR emulator updated */
+    [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR emülatörü güncellendi",
 };

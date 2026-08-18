@@ -569,12 +569,20 @@ static bool write_cache_manifest(const char *cache_root,
   if (written <= 0 || (size_t)written >= sizeof(manifest_path))
     return false;
 
-  FILE *file = fopen(manifest_path, "wb");
-  if (!file)
+  int fd = open(manifest_path, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+  if (fd < 0)
     return false;
-  bool ok = fchmod(fileno(file), 0777) == 0 &&
-            fwrite(manifest, 1, sizeof(*manifest), file) == sizeof(*manifest) &&
-            fflush(file) == 0 && fsync(fileno(file)) == 0;
+  FILE *file = fdopen(fd, "wb");
+  if (!file) {
+    int saved_errno = errno;
+    (void)close(fd);
+    (void)unlink(manifest_path);
+    errno = saved_errno;
+    return false;
+  }
+  bool ok =
+      fwrite(manifest, 1, sizeof(*manifest), file) == sizeof(*manifest) &&
+      fflush(file) == 0 && fsync(fileno(file)) == 0;
   if (fclose(file) != 0)
     ok = false;
   if (!ok)
@@ -762,12 +770,6 @@ static bool rebuild_fakelib_cache(
       !build_cache_path(title_id, ".tmp", temp_root)) {
     return false;
   }
-  if (chmod(FAKELIB_CACHE_PATH, 0777) != 0) {
-    log_debug("  [EMU] cache root mode update failed: %s (%s)",
-              FAKELIB_CACHE_PATH, strerror(errno));
-    return false;
-  }
-
   if (!remove_cache_tree(temp_root)) {
     log_debug("  [EMU] temporary cache cleanup failed for %s: %s", title_id,
               temp_root);
@@ -778,13 +780,6 @@ static bool rebuild_fakelib_cache(
               title_id, temp_root, strerror(errno));
     return false;
   }
-  if (chmod(temp_root, 0777) != 0) {
-    log_debug("  [EMU] temporary cache mode update failed for %s: %s (%s)",
-              title_id, temp_root, strerror(errno));
-    (void)remove_cache_tree(temp_root);
-    return false;
-  }
-
   char temp_fakelib[MAX_PATH];
   int written = snprintf(temp_fakelib, sizeof(temp_fakelib), "%s/fakelib",
                          temp_root);
@@ -944,8 +939,7 @@ static bool resolve_cached_fakelib_locked(
     return false;
 
   if (!cache_manifest_matches_context(&manifest, source_path,
-                                      emulators_path) ||
-      manifest.emulator_file_count > SIZE_MAX) {
+                                      emulators_path)) {
     return false;
   }
 

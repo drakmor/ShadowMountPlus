@@ -83,4 +83,6 @@ static const char *const g_zh_cn[SM_L10N_COUNT] = {
     [SM_L10N_CONFIG_RELOADED] = "ShadowMount+：配置已重新加载。",
     /* English: Duplicate %s ignored:\n%s\nexisting: %s */
     [SM_L10N_DUPLICATE_IGNORED] = "已忽略重复项 %s：\n%s\n现有项：%s",
+    /* English: AMPR emulator updated */
+    [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR 模拟器已更新",
 };

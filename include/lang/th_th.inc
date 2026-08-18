@@ -83,4 +83,6 @@ static const char *const g_th_th[SM_L10N_COUNT] = {
     [SM_L10N_CONFIG_RELOADED] = "ShadowMount+: โหลดการตั้งค่าใหม่แล้ว",
     /* English: Duplicate %s ignored:\n%s\nexisting: %s */
     [SM_L10N_DUPLICATE_IGNORED] = "ข้ามรายการซ้ำ %s:\n%s\nที่มีอยู่: %s",
+    /* English: AMPR emulator updated */
+    [SM_L10N_AMPR_EMULATOR_UPDATED] = "อัปเดตโปรแกรมจำลอง AMPR แล้ว",
 };

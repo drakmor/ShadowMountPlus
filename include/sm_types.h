@@ -127,6 +127,7 @@ typedef struct runtime_config {
   bool global_fakelib_enabled;
   bool global_fakelib_mount_first;
   bool update_emulators_enabled;
+  bool auto_update_ampr_enabled;
   bool kstuff_game_auto_toggle;
   bool kstuff_crash_detection_enabled;
   bool legacy_recursive_scan_forced;
@@ -134,6 +135,7 @@ typedef struct runtime_config {
   uint32_t api_port;
   char global_fakelib_path[MAX_PATH];
   char emulators_path[MAX_PATH];
+  char ampr_update_url[MAX_PATH];
   uint32_t global_fakelib_exclude_title_count;
   char global_fakelib_exclude_title_ids[MAX_FAKELIB_EXCLUDE_RULES][MAX_TITLE_ID];
   uint32_t scan_depth;

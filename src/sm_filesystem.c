@@ -959,6 +959,24 @@ void cleanup_duplicate_title_mounts(void) {
 }
 
 // --- Copy Helpers for Install Action ---
+static FILE *open_copy_destination(const char *path, bool set_mode,
+                                   mode_t mode) {
+  if (!set_mode)
+    return fopen(path, "wb");
+
+  int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, mode);
+  if (fd < 0)
+    return NULL;
+  FILE *file = fdopen(fd, "wb");
+  if (!file) {
+    int saved_errno = errno;
+    (void)close(fd);
+    (void)unlink(path);
+    errno = saved_errno;
+  }
+  return file;
+}
+
 static int copy_param_json_rewrite(const char *src, const char *dst,
                                    bool set_mode, mode_t mode) {
   FILE *fs = fopen(src, "rb");
@@ -1003,15 +1021,13 @@ static int copy_param_json_rewrite(const char *src, const char *dst,
     len -= 2u;
   }
 
-  FILE *fd = fopen(dst, "wb");
+  FILE *fd = open_copy_destination(dst, set_mode, mode);
   if (!fd) {
     free(buf);
     return -1;
   }
 
-  int ret = set_mode && fchmod(fileno(fd), mode) != 0 ? -1 : 0;
-  if (ret == 0 && len > 0 && fwrite(buf, 1, len, fd) != len)
-    ret = -1;
+  int ret = len > 0 && fwrite(buf, 1, len, fd) != len ? -1 : 0;
   if (fclose(fd) != 0)
     ret = -1;
 
@@ -1034,12 +1050,12 @@ static int copy_file_buffered(const char *src, const char *dst, bool set_mode,
   FILE *fs = fopen(src, "rb");
   if (!fs)
     return -1;
-  FILE *fd = fopen(dst, "wb");
+  FILE *fd = open_copy_destination(dst, set_mode, mode);
   if (!fd) {
     fclose(fs);
     return -1;
   }
-  int ret = set_mode && fchmod(fileno(fd), mode) != 0 ? -1 : 0;
+  int ret = 0;
   while (true) {
     if (ret != 0)
       break;
@@ -1079,8 +1095,6 @@ static int copy_file_impl(const char *src, const char *dst, bool set_mode,
 static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
                          mode_t mode, char *buffer, size_t buffer_size) {
   if (mkdir(dst, set_mode ? mode : 0777) != 0 && errno != EEXIST)
-    return -1;
-  if (set_mode && chmod(dst, mode) != 0)
     return -1;
   DIR *d = opendir(src);
   if (!d)

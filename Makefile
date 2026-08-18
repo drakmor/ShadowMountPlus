@@ -13,7 +13,7 @@ CFLAGS += -DSHADOWMOUNT_VERSION=\"$(VERSION_TAG)\"
 LDFLAGS := -flto=thin -Wl,--gc-sections
 
 # Libraries
-LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lsqlite3 $(JSON_C_ROOT)/lib/libjson-c.a -lm
+LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lSceNet -lSceSsl -lSceHttp2 -lsqlite3 $(JSON_C_ROOT)/lib/libjson-c.a -lm
 PS5_SCE_STUBS_DIR ?= $(PS5_PAYLOAD_SDK)/src/sce_stubs
 KERNEL_SYS_STUB_SO := src/libkernel_sys_ext.so
 KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUBS_DIR)/libkernel_sys.c src/libkernel_sys_ext.c
@@ -51,6 +51,7 @@ src/config_ini_example_asset.c: config.ini.example
 src/sm_api_service.o: CFLAGS += $(JSON_CFLAGS)
 
 src/sm_l10n.o: $(L10N_CATALOGS)
+src/sm_ampr_updater.o: src/sm_ampr_ca.inc
 
 src/%.o: src/%.c $(HEADERS)
 	$(CC) $(CFLAGS) -c -o $@ $<

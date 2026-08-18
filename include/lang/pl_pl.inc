@@ -83,4 +83,6 @@ static const char *const g_pl_pl[SM_L10N_COUNT] = {
     [SM_L10N_CONFIG_RELOADED] = "ShadowMount+: konfiguracja przeładowana.",
     /* English: Duplicate %s ignored:\n%s\nexisting: %s */
     [SM_L10N_DUPLICATE_IGNORED] = "Duplikat %s zignorowany:\n%s\nistniejący: %s",
+    /* English: AMPR emulator updated */
+    [SM_L10N_AMPR_EMULATOR_UPDATED] = "Emulator AMPR został zaktualizowany",
 };

@@ -5,6 +5,7 @@
 #include <sys/sysctl.h>
 
 #include "sm_runtime.h"
+#include "sm_ampr_updater.h"
 #include "sm_api_service.h"
 #include "sm_types.h"
 #include "sm_log.h"
@@ -542,6 +543,8 @@ int main(void) {
   }
   if (!refresh_game_lifecycle_watcher())
     log_debug("  [GAME] lifecycle watcher unavailable");
+  if (!sm_ampr_updater_start())
+    log_debug("  [AMPR] update service unavailable: %s", strerror(errno));
 
   if (mkdir("/system_ex/app", 0777) != 0 && errno != EEXIST) {
     log_debug("  [MOUNT] failed to create /system_ex/app: %s", strerror(errno));
@@ -585,6 +588,7 @@ int main(void) {
   sm_scanner_run_loop();
 
 shutdown:
+  sm_ampr_updater_stop();
   sm_api_service_stop();
   sm_shellcore_hooks_stop();
   sm_shellcore_service_stop();

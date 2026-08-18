@@ -81,6 +81,8 @@ Supported keys (all optional):
 - `backport_fakelib=1|0` (`1` mounts sandbox `fakelib` overlays for running games; default: `1`)
 - `update_emulators=1|0` (`1` updates all emulators with matching files in a game's own fakelib; default: `1`)
 - `emulators_path=<absolute_path>` (folder containing emulator update files; default: `/data/shadowmount/emus`)
+- `auto_update_ampr=1|0` (check for a new `libSceAmpr.sprx` 30 seconds after startup and every four hours; default: `0`)
+- `ampr_update_url=<http_or_https_url>` (AMPR emulator download URL; default: `https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx`)
 - `global_fakelib=1|0` (`1` enables the global fakelib overlay when the folder exists; default: `1`)
 - `global_fakelib_path=<absolute_path>` (global fakelib folder; default: `/data/shadowmount/fakelib`)
 - `global_fakelib_priority=game|global` (overlay priority when both global and game fakelib exist; default: `game`)
@@ -186,11 +188,9 @@ Backport overlay behavior:
 - A backport is applied automatically to the matching mounted game from any configured scan path.
 - If multiple scan paths provide the same title backport, the game's own scan path wins; otherwise scan path order is used.
 - ShadowMount+ checks the selected backport for `fakelib2` and then `fakelib`; if neither exists, it uses only `fakelib` from the original game source. The selected directory is mounted into the running game's sandbox `common/lib`.
-- If `update_emulators=1` and at least one file from `emulators_path` matches a file in the selected game fakelib, ShadowMount+ prepares `/data/shadowmount/cache/<TITLE_ID>/fakelib` before mounting the title runtime. It copies the selected source fakelib into a temporary cache and replaces every matching emulator file.
-- Cache entries are rebuilt when the source path, file set, size, or timestamps of the source fakelib or matching emulator update files change. Their seven-day lifetime is refreshed whenever the game launches.
-- Cache cleanup is independent of game preparation: it runs once when the scanner loop starts and then once every 24 hours while no game mount is active. It removes invalid entries, orphaned temporary directories, and caches unused for more than seven days; mounted caches are always preserved.
-- The cache root and every generated cache directory, file, and manifest are normalized to mode `0777`.
-- After the game starts, the prepared cached fakelib is mounted into `common/lib` via `unionfs`. The backport notification adds `Emulators updated` when at least one emulator update file was copied into the active cache.
+- If `update_emulators=1`, matching files from `emulators_path` replace files in the selected game fakelib. The cache is refreshed when its sources change and expires after seven days without a game launch.
+- With `auto_update_ampr=1`, ShadowMount+ checks for AMPR updates 30 seconds after startup and every four hours. It downloads a missing or newer emulator and displays a notification after a successful update.
+- The backport notification adds `Emulators updated` when emulator files are updated for the launched game.
 - If `global_fakelib=1` and `global_fakelib_path` exists as a directory, ShadowMount+ also mounts that folder into the same sandbox `common/lib`.
 - When both global and per-game fakelib exist, the default gives the game's own `fakelib` priority by mounting `/data/shadowmount/fakelib` first and then the game-specific fakelib.
 - `global_fakelib_priority=global` reverses that priority.

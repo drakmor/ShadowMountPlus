@@ -83,6 +83,7 @@ static bool normalize_image_filename_value(const char *value,
                                            char out[MAX_PATH]);
 static bool normalize_absolute_path_value(const char *value,
                                           char out[MAX_PATH]);
+static bool normalize_http_url_value(const char *value, char out[MAX_PATH]);
 static bool set_image_sector_rule(runtime_config_state_t *state,
                                   const char *value);
 static bool parse_image_sector_rule_value(const char *value,
@@ -251,6 +252,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.global_fakelib_enabled = true;
   state->cfg.global_fakelib_mount_first = true;
   state->cfg.update_emulators_enabled = true;
+  state->cfg.auto_update_ampr_enabled = false;
   state->cfg.kstuff_game_auto_toggle = true;
   state->cfg.kstuff_crash_detection_enabled = true;
   state->cfg.legacy_recursive_scan_forced = false;
@@ -261,6 +263,8 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
                 sizeof(state->cfg.global_fakelib_path));
   (void)strlcpy(state->cfg.emulators_path, DEFAULT_EMULATORS_PATH,
                 sizeof(state->cfg.emulators_path));
+  (void)strlcpy(state->cfg.ampr_update_url, DEFAULT_AMPR_UPDATE_URL,
+                sizeof(state->cfg.ampr_update_url));
   state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
   state->cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
   state->cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
@@ -597,6 +601,39 @@ static bool normalize_absolute_path_value(const char *value,
   while (len > 1 && trimmed[len - 1] == '/') {
     trimmed[len - 1] = '\0';
     len--;
+  }
+
+  (void)strlcpy(out, trimmed, MAX_PATH);
+  return true;
+}
+
+static bool normalize_http_url_value(const char *value, char out[MAX_PATH]) {
+  if (!value || !out)
+    return false;
+
+  char local[MAX_PATH];
+  if (strlcpy(local, value, sizeof(local)) >= sizeof(local))
+    return false;
+
+  char *trimmed = trim_ascii(local);
+  size_t len = strlen(trimmed);
+  const char *authority = NULL;
+  if (strncasecmp(trimmed, "https://", 8) == 0)
+    authority = trimmed + 8;
+  else if (strncasecmp(trimmed, "http://", 7) == 0)
+    authority = trimmed + 7;
+  else
+    return false;
+  if (*authority == '\0' || *authority == '/' || *authority == '?' ||
+      *authority == '#') {
+    return false;
+  }
+
+  for (size_t i = 0; i < len; ++i) {
+    if (iscntrl((unsigned char)trimmed[i]) ||
+        isspace((unsigned char)trimmed[i])) {
+      return false;
+    }
   }
 
   (void)strlcpy(out, trimmed, MAX_PATH);
@@ -1432,6 +1469,28 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "auto_update_ampr") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.auto_update_ampr_enabled = bval;
+      continue;
+    }
+
+    if (strcasecmp(key, "ampr_update_url") == 0) {
+      char url[MAX_PATH];
+      if (!normalize_http_url_value(value, url)) {
+        log_debug("  [CFG] invalid AMPR update URL at line %d: %s=%s "
+                  "(HTTP or HTTPS required)",
+                  line_no, key, value);
+        continue;
+      }
+      (void)strlcpy(state->cfg.ampr_update_url, url,
+                    sizeof(state->cfg.ampr_update_url));
+      continue;
+    }
+
     if (strcasecmp(key, "fan_target_temperature") == 0) {
       if (strcasecmp(value, "system") == 0 ||
           strcasecmp(value, "auto") == 0) {
@@ -1657,7 +1716,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "legacy_recursive_scan_forced=%d backport_fakelib=%d "
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
-            "update_emulators=%d emulators_path=%s "
+            "update_emulators=%d emulators_path=%s auto_update_ampr=%d "
+            "ampr_update_url=%s "
             "kstuff_game_auto_toggle=%d kstuff_crash_detection=%d "
             "fan_target_temperature=%u (0=system) "
             "kstuff_pause_delay_image_s=%u kstuff_pause_delay_direct_s=%u "
@@ -1686,6 +1746,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.global_fakelib_exclude_title_count,
             state->cfg.update_emulators_enabled ? 1 : 0,
             state->cfg.emulators_path,
+            state->cfg.auto_update_ampr_enabled ? 1 : 0,
+            state->cfg.ampr_update_url,
             state->cfg.kstuff_game_auto_toggle ? 1 : 0,
             state->cfg.kstuff_crash_detection_enabled ? 1 : 0,
             state->cfg.fan_target_temperature_c,

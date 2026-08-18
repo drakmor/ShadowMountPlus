@@ -7,6 +7,9 @@
 #define DEFAULT_BACKPORTS_DIR_NAME "backports"
 #define DEFAULT_GLOBAL_FAKELIB_PATH "/data/shadowmount/fakelib"
 #define DEFAULT_EMULATORS_PATH "/data/shadowmount/emus"
+#define DEFAULT_AMPR_UPDATE_URL                                             \
+  "https://github.com/drakmor/ampr_emu/releases/latest/download/"         \
+  "libSceAmpr.sprx"
 #define FAKELIB_CACHE_PATH "/data/shadowmount/cache"
 #define LOG_DIR "/data/shadowmount"
 #define LOG_FILE "/data/shadowmount/debug.log"

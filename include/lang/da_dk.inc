@@ -83,4 +83,6 @@ static const char *const g_da_dk[SM_L10N_COUNT] = {
     [SM_L10N_CONFIG_RELOADED] = "ShadowMount+: konfigurationen blev genindlæst.",
     /* English: Duplicate %s ignored:\n%s\nexisting: %s */
     [SM_L10N_DUPLICATE_IGNORED] = "Dublet %s ignoreret:\n%s\neksisterende: %s",
+    /* English: AMPR emulator updated */
+    [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR-emulator opdateret",
 };
