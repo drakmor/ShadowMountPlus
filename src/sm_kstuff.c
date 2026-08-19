@@ -784,6 +784,29 @@ void sm_kstuff_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id,
             image_backed ? "image" : "direct", delay_seconds);
 }
 
+bool sm_kstuff_game_handoff(pid_t old_pid, pid_t new_pid,
+                            const char *title_id, uint32_t app_id) {
+  if (old_pid <= 0 || new_pid <= 0 || old_pid == new_pid || !title_id ||
+      title_id[0] == '\0') {
+    return false;
+  }
+  if (!g_kstuff.game.active || g_kstuff.game.pid != old_pid ||
+      strcmp(g_kstuff.game.title_id, title_id) != 0) {
+    return false;
+  }
+
+  g_kstuff.game.pid = new_pid;
+  g_kstuff.game.app_id = app_id;
+  // The auto-pause state/deadline belongs to the application lifetime, not to
+  // the individual process. Only mdbg must follow the replacement PID.
+  sm_mdbg_game_on_exec(new_pid, title_id, app_id);
+  log_debug("  [KSTUFF] process handoff: %s pid=%ld -> pid=%ld "
+            "(pause_applied=%s)",
+            title_id, (long)old_pid, (long)new_pid,
+            g_kstuff.game.pause_applied ? "yes" : "no");
+  return true;
+}
+
 void sm_kstuff_note_app_focus(uint32_t app_id) {
   atomic_store(&g_pending_app_focus_id, app_id);
   atomic_store(&g_pending_app_focus_valid, true);

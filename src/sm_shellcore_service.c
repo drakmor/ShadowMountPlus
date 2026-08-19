@@ -632,7 +632,7 @@ bool sm_shellcore_service_note_game_exit(pid_t pid,
   return changed;
 }
 
-static bool title_sandbox_exists(const char *title_id) {
+bool sm_shellcore_service_title_sandbox_exists(const char *title_id) {
   DIR *dir = opendir("/mnt/sandbox");
   if (!dir) {
     if (errno != ENOENT) {
@@ -689,7 +689,7 @@ int sm_shellcore_service_release_exited_titles(void) {
   int release_error = 0;
   for (size_t i = 0; i < exited_count; ++i) {
     const char *title_id = exited_titles[i];
-    if (title_sandbox_exists(title_id)) {
+    if (sm_shellcore_service_title_sandbox_exists(title_id)) {
       waiting = true;
       continue;
     }

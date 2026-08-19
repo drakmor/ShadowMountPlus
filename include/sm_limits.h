@@ -32,6 +32,11 @@
 #define LVD_RELEASE_WAIT_POLL_US 500000u
 #define GAME_LIFECYCLE_POLL_INTERVAL_US 250000u
 #define GAME_APPINFO_LOOKUP_TIMEOUT_US 1000000u
+// Keep a dead game PID eligible for ExitSpawn/LoadExec replacement while the
+// title sandbox still exists. Once the sandbox disappears, retain a short
+// grace window so a transient sandbox transition cannot tear down the runtime
+// before the replacement NOTE_EXEC is resolved.
+#define GAME_PROCESS_HANDOFF_GRACE_US 1000000u
 #define GAME_SLEEP_EXIT_TIMEOUT_US 5000000u
 #define RUNTIME_RESUME_GRACE_US 10000000u
 #define RUNTIME_RESUME_POLL_US 100000u

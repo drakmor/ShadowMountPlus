@@ -28,6 +28,8 @@ bool sm_shellcore_service_note_game_exit(pid_t pid,
 // have all disappeared. Returns 0 when no exit-pending runtime remains, EAGAIN
 // while a sandbox remains, or another positive errno after a release failure.
 int sm_shellcore_service_release_exited_titles(void);
+// Return true while ShellCore still exposes a sandbox for the title.
+bool sm_shellcore_service_title_sandbox_exists(const char *title_id);
 // Ensure that a managed title has its image/nullfs/backport runtime stack.
 // Unmanaged stock titles are treated as already ready.
 bool sm_shellcore_ensure_title_runtime(const char *title_id);

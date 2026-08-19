@@ -21,6 +21,9 @@ bool sm_kstuff_game_feature_enabled(void);
 // Track a supported game launch for delayed auto-pause handling.
 void sm_kstuff_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id,
                             uint64_t exec_time_us);
+// Preserve kstuff state across an ExitSpawn/LoadExec process replacement.
+bool sm_kstuff_game_handoff(pid_t old_pid, pid_t new_pid,
+                            const char *title_id, uint32_t app_id);
 // Publish an AppFocus change for processing on the lifecycle/kstuff thread.
 void sm_kstuff_note_app_focus(uint32_t app_id);
 // Return the next wake deadline in monotonic microseconds, or 0 when idle.
