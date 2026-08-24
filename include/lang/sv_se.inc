@@ -85,4 +85,6 @@ static const char *const g_sv_se[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "Dubblett %s ignorerad:\n%s\nbefintlig: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR-emulatorn har uppdaterats",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: det gick inte att installera ShellCore-hooks",
 };

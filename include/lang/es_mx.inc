@@ -85,4 +85,6 @@ static const char *const g_es_mx[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "Duplicado %s ignorado:\n%s\nexistente: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "Emulador AMPR actualizado",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: no se pudieron instalar los hooks de ShellCore",
 };

@@ -85,4 +85,6 @@ static const char *const g_hu_hu[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "Duplikált %s kihagyva:\n%s\nlétező: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "Az AMPR-emulátor frissítve",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: a ShellCore hookok telepítése sikertelen",
 };

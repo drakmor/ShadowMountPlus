@@ -85,4 +85,6 @@ static const char *const g_cs_cz[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "Duplicitní %s ignorováno:\n%s\nexistující: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "Emulátor AMPR byl aktualizován",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: instalace hooků ShellCore se nezdařila",
 };

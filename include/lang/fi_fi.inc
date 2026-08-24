@@ -85,4 +85,6 @@ static const char *const g_fi_fi[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "Kaksoiskappale %s ohitettu:\n%s\nolemassa: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR-emulaattori päivitetty",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ShellCore-hookkien asennus epäonnistui",
 };

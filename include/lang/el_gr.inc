@@ -85,4 +85,6 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "Το διπλότυπο %s αγνοήθηκε:\n%s\nυπάρχον: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "Ο εξομοιωτής AMPR ενημερώθηκε",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: απέτυχε η εγκατάσταση των hooks του ShellCore",
 };

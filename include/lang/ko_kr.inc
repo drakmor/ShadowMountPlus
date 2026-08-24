@@ -85,4 +85,6 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "중복 %s 무시됨:\n%s\n기존: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR 에뮬레이터가 업데이트되었습니다",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ShellCore 후크 설치에 실패했습니다",
 };

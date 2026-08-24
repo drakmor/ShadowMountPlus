@@ -539,9 +539,9 @@ int main(void) {
   if (!sm_shellcore_service_start())
     log_debug("  [SHELLCORE] Unix socket service unavailable: %s",
               strerror(errno));
-  else {
-    if (!sm_shellcore_hooks_start())
-      log_debug("  [SHELLCORE] lifecycle hooks unavailable; stock behavior kept");
+  else if (!sm_shellcore_hooks_start()) {
+    log_debug("  [SHELLCORE] lifecycle hooks unavailable; stock behavior kept");
+    notify_system_l10n(SM_L10N_SHELLCORE_HOOKS_FAILED);
   }
   if (!refresh_game_lifecycle_watcher())
     log_debug("  [GAME] lifecycle watcher unavailable");

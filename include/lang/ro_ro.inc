@@ -85,4 +85,6 @@ static const char *const g_ro_ro[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "Duplicatul %s ignorat:\n%s\nexistent: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "Emulatorul AMPR a fost actualizat",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: instalarea hook-urilor ShellCore a eșuat",
 };

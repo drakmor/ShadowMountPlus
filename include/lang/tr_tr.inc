@@ -85,4 +85,6 @@ static const char *const g_tr_tr[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "Yinelenen %s yok sayıldı:\n%s\nmevcut: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR emülatörü güncellendi",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ShellCore hook'ları yüklenemedi",
 };

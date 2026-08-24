@@ -85,4 +85,6 @@ static const char *const g_zh_tw[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "已略過重複項目 %s：\n%s\n現有項目：%s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR 模擬器已更新",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+：無法安裝 ShellCore 掛鉤",
 };

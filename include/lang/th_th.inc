@@ -85,4 +85,6 @@ static const char *const g_th_th[SM_L10N_COUNT] = {
     [SM_L10N_DUPLICATE_IGNORED] = "ข้ามรายการซ้ำ %s:\n%s\nที่มีอยู่: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "อัปเดตโปรแกรมจำลอง AMPR แล้ว",
+    /* English: ShadowMount+: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ไม่สามารถติดตั้งฮุก ShellCore ได้",
 };
