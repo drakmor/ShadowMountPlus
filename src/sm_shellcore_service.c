@@ -639,6 +639,9 @@ bool sm_shellcore_service_note_game_exit(pid_t pid,
 }
 
 bool sm_shellcore_service_title_sandbox_exists(const char *title_id) {
+  if (!title_id || title_id[0] == '\0')
+    return false;
+
   DIR *dir = opendir("/mnt/sandbox");
   if (!dir) {
     if (errno != ENOENT) {

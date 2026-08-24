@@ -1125,7 +1125,8 @@ static bool cleanup_fakelib_mount(void) {
   return true;
 }
 
-void sm_fakelib_game_on_exec(pid_t pid, const char *title_id) {
+void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
+                             bool notify_user) {
   pthread_mutex_lock(&g_fakelib_mutex);
   if (!sm_fakelib_game_feature_enabled()) {
     pthread_mutex_unlock(&g_fakelib_mutex);
@@ -1204,7 +1205,7 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id) {
     return;
   }
 
-  if (has_game) {
+  if (has_game && notify_user) {
     notify_system_info_l10n(emulator_file_count > 0
                                 ? SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED
                                 : SM_L10N_GAME_BACKPORTED,

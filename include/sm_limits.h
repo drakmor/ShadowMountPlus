@@ -37,6 +37,8 @@
 // grace window so a transient sandbox transition cannot tear down the runtime
 // before the replacement NOTE_EXEC is resolved.
 #define GAME_PROCESS_HANDOFF_GRACE_US 1000000u
+// Keep a slow fallback in case the /mnt/sandbox vnode watch is revoked.
+#define GAME_PROCESS_HANDOFF_FALLBACK_POLL_US 5000000u
 #define GAME_SLEEP_EXIT_TIMEOUT_US 5000000u
 #define RUNTIME_RESUME_GRACE_US 10000000u
 #define RUNTIME_RESUME_POLL_US 100000u

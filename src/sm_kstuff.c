@@ -792,14 +792,19 @@ bool sm_kstuff_game_handoff(pid_t old_pid, pid_t new_pid,
   }
   if (!g_kstuff.game.active || g_kstuff.game.pid != old_pid ||
       strcmp(g_kstuff.game.title_id, title_id) != 0) {
+    // Config may have enabled tracking while the old process was pending, or
+    // the old slot may already have been cleared. Start a fresh slot instead
+    // of leaving the replacement process untracked.
+    sm_kstuff_game_on_exec(new_pid, title_id, app_id, monotonic_time_us());
     return false;
   }
 
   g_kstuff.game.pid = new_pid;
-  g_kstuff.game.app_id = app_id;
+  if (app_id != 0)
+    g_kstuff.game.app_id = app_id;
   // The auto-pause state/deadline belongs to the application lifetime, not to
   // the individual process. Only mdbg must follow the replacement PID.
-  sm_mdbg_game_on_exec(new_pid, title_id, app_id);
+  sm_mdbg_game_on_exec(new_pid, title_id, g_kstuff.game.app_id);
   log_debug("  [KSTUFF] process handoff: %s pid=%ld -> pid=%ld "
             "(pause_applied=%s)",
             title_id, (long)old_pid, (long)new_pid,
@@ -825,11 +830,11 @@ void sm_kstuff_game_on_exit(pid_t pid) {
     finish_tracked_game_clear("tracked game exit");
 }
 
-void sm_kstuff_game_poll(void) {
+void sm_kstuff_game_poll(bool process_active) {
   if (atomic_exchange(&g_pending_config_reload, false))
     apply_kstuff_config_reload();
 
-  if (!sm_kstuff_game_feature_enabled())
+  if (!process_active || !sm_kstuff_game_feature_enabled())
     return;
 
   if (atomic_exchange(&g_pending_app_focus_valid, false)) {

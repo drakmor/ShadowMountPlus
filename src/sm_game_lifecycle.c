@@ -63,17 +63,34 @@ static _Atomic bool g_pending_app_focus_valid;
 static char g_active_game_title_id[MAX_TITLE_ID];
 
 static bool register_game_exit_watch(int kq, pid_t pid);
+static void handle_game_exec(int kq, pid_t pid);
 static void handle_game_exit(pid_t pid);
 static void finalize_pending_game_exit(void);
 static void maybe_finalize_pending_game_exit(void);
 static bool try_game_process_handoff(int kq, pid_t pid, const char *title_id,
                                      uint32_t app_id);
 
+static bool published_game_active(pid_t pid, bool handoff_pending) {
+  return pid > 0 || handoff_pending;
+}
+
 static void publish_active_game_pid(pid_t pid) {
   pid_t previous_pid = atomic_exchange(&g_active_game_pid, pid);
-  if (previous_pid == pid)
-    return;
-  sm_scanner_wake();
+  bool handoff_pending = atomic_load(&g_game_exit_handoff_pending);
+  if (published_game_active(previous_pid, handoff_pending) !=
+      published_game_active(pid, handoff_pending)) {
+    sm_scanner_wake();
+  }
+}
+
+static void publish_game_exit_handoff_pending(bool pending) {
+  bool previous_pending =
+      atomic_exchange(&g_game_exit_handoff_pending, pending);
+  pid_t active_pid = atomic_load(&g_active_game_pid);
+  if (published_game_active(active_pid, previous_pending) !=
+      published_game_active(active_pid, pending)) {
+    sm_scanner_wake();
+  }
 }
 
 static void publish_active_game(pid_t pid, const char *title_id,
@@ -222,7 +239,7 @@ static bool is_process_alive(pid_t pid) {
 
 static void clear_pending_game_exit(void) {
   memset(&g_pending_game_exit, 0, sizeof(g_pending_game_exit));
-  atomic_store(&g_game_exit_handoff_pending, false);
+  publish_game_exit_handoff_pending(false);
 }
 
 static void queue_pending_game_exit(pid_t pid, const char *title_id,
@@ -234,7 +251,7 @@ static void queue_pending_game_exit(pid_t pid, const char *title_id,
   g_pending_game_exit.exit_time_us = monotonic_time_us();
   (void)strlcpy(g_pending_game_exit.title_id, title_id,
                 sizeof(g_pending_game_exit.title_id));
-  atomic_store(&g_game_exit_handoff_pending, true);
+  publish_game_exit_handoff_pending(true);
 }
 
 static bool same_application_identity(const char *title_id, uint32_t app_id,
@@ -253,12 +270,14 @@ static bool try_game_process_handoff(int kq, pid_t pid, const char *title_id,
     return false;
 
   pid_t old_pid = 0;
+  uint32_t old_app_id = 0;
   bool pending_exit = false;
   if (g_pending_game_exit.active &&
       same_application_identity(title_id, app_id,
                                 g_pending_game_exit.title_id,
                                 g_pending_game_exit.app_id)) {
     old_pid = g_pending_game_exit.pid;
+    old_app_id = g_pending_game_exit.app_id;
     pending_exit = true;
   } else {
     pid_t active_pid = atomic_load(&g_active_game_pid);
@@ -269,6 +288,7 @@ static bool try_game_process_handoff(int kq, pid_t pid, const char *title_id,
       // NOTE_EXEC can race ahead of the old NOTE_EXIT. A dead old process with
       // the same title/app identity is the same ExitSpawn handoff.
       old_pid = active_pid;
+      old_app_id = g_active_game_app_id;
     }
   }
 
@@ -285,18 +305,19 @@ static bool try_game_process_handoff(int kq, pid_t pid, const char *title_id,
   // can keep the old title sandbox busy and prevent ShellCore from removing
   // it. sm_fakelib_game_on_exec() also handles the NOTE_EXEC-before-NOTE_EXIT
   // race by cleaning any mount still owned by old_pid before mounting for pid.
-  sm_shellcore_service_bind_prepared_app(title_id, app_id, pid);
-  sm_fakelib_game_on_exec(pid, title_id);
+  uint32_t effective_app_id = app_id != 0 ? app_id : old_app_id;
+  sm_shellcore_service_bind_prepared_app(title_id, effective_app_id, pid);
+  sm_fakelib_game_on_exec(pid, title_id, false);
   bool kstuff_rebound =
-      sm_kstuff_game_handoff(old_pid, pid, title_id, app_id);
-  publish_active_game(pid, title_id, app_id);
+      sm_kstuff_game_handoff(old_pid, pid, title_id, effective_app_id);
+  publish_active_game(pid, title_id, effective_app_id);
   if (pending_exit)
     clear_pending_game_exit();
 
   log_debug("  [GAME] process handoff: %s app_id=0x%08X pid=%ld -> pid=%ld "
-            "fakelib=remounted kstuff=%s",
-            title_id, app_id, (long)old_pid, (long)pid,
-            kstuff_rebound ? "rebound" : "inactive");
+            "kstuff=%s",
+            title_id, effective_app_id, (long)old_pid, (long)pid,
+            kstuff_rebound ? "preserved" : "restarted/inactive");
   return true;
 }
 
@@ -325,7 +346,7 @@ static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
             (long)pid, app_id);
   publish_active_game(pid, title_id, app_id);
   sm_kstuff_game_on_exec(pid, title_id, app_id, exec_time_us);
-  sm_fakelib_game_on_exec(pid, title_id);
+  sm_fakelib_game_on_exec(pid, title_id, true);
   return true;
 }
 
@@ -391,9 +412,11 @@ static bool drain_game_lifecycle_events_nowait(int kq) {
     if (nev == 0)
       return true;
     for (int i = 0; i < nev; ++i) {
-      if (events[i].filter == EVFILT_PROC &&
-          (events[i].fflags & NOTE_EXIT) != 0) {
-        handle_game_exit((pid_t)events[i].ident);
+      if (events[i].filter == EVFILT_PROC) {
+        if ((events[i].fflags & NOTE_EXEC) != 0)
+          handle_game_exec(kq, (pid_t)events[i].ident);
+        if ((events[i].fflags & NOTE_EXIT) != 0)
+          handle_game_exit((pid_t)events[i].ident);
       }
     }
     (void)sm_shellcore_service_release_exited_titles();
@@ -498,21 +521,35 @@ static uint64_t next_pending_game_wake_us(uint64_t now_us) {
   return next_wake_us;
 }
 
-static uint64_t next_pending_exit_wake_us(uint64_t now_us) {
+static uint64_t next_pending_exit_wake_us(uint64_t now_us,
+                                          bool sandbox_watch_active) {
   if (!g_pending_game_exit.active)
     return 0;
   if (now_us == 0)
     return 1;
+
+  uint64_t grace_deadline_us =
+      g_pending_game_exit.exit_time_us == 0
+          ? 0
+          : g_pending_game_exit.exit_time_us + GAME_PROCESS_HANDOFF_GRACE_US;
+  if (sandbox_watch_active && grace_deadline_us != 0 &&
+      now_us < grace_deadline_us) {
+    return grace_deadline_us;
+  }
+  if (sandbox_watch_active)
+    return now_us + GAME_PROCESS_HANDOFF_FALLBACK_POLL_US;
   return now_us + GAME_LIFECYCLE_POLL_INTERVAL_US;
 }
 
 static const struct timespec *compute_game_wait_timeout(
-    struct timespec *timeout_out) {
+    struct timespec *timeout_out, bool sandbox_watch_active) {
   uint64_t now_us = monotonic_time_us();
   uint64_t next_wake_us = 0;
 
   next_wake_us = min_nonzero_u64(next_wake_us, next_pending_game_wake_us(now_us));
-  next_wake_us = min_nonzero_u64(next_wake_us, next_pending_exit_wake_us(now_us));
+  next_wake_us = min_nonzero_u64(
+      next_wake_us,
+      next_pending_exit_wake_us(now_us, sandbox_watch_active));
   if (!g_pending_game_exit.active) {
     next_wake_us =
         min_nonzero_u64(next_wake_us, sm_kstuff_game_next_wake_us(now_us));
@@ -584,11 +621,13 @@ static void poll_game_modules(int kq) {
   }
 
   maybe_finalize_pending_game_exit();
-  if (g_pending_game_exit.active)
+  if (g_pending_game_exit.active) {
+    sm_kstuff_game_poll(false);
     return;
+  }
 
   handle_pending_app_focus();
-  sm_kstuff_game_poll();
+  sm_kstuff_game_poll(true);
   sm_mdbg_poll();
 }
 
@@ -654,10 +693,13 @@ static void finalize_pending_game_exit(void) {
     return;
 
   pending_game_exit_t exited = g_pending_game_exit;
-  clear_pending_game_exit();
+  memset(&g_pending_game_exit, 0, sizeof(g_pending_game_exit));
   log_debug("  [GAME] finalizing stopped application: %s pid=%ld",
             exited.title_id, (long)exited.pid);
   finalize_game_exit(exited.pid, exited.title_id);
+  // Keep the public active state asserted until all per-game cleanup has
+  // completed, then publish the single logical active -> inactive transition.
+  publish_game_exit_handoff_pending(false);
 }
 
 static void maybe_finalize_pending_game_exit(void) {
@@ -906,6 +948,11 @@ static void *game_lifecycle_watcher_main(void *arg) {
          !should_stop_requested()) {
     if (runtime_sleep_mode_active()) {
       if (!sleep_cleanup_done && sm_scanner_usb_watches_suspended()) {
+        // A process handoff cannot safely span suspend cleanup: finalize the
+        // dead owner now. A replacement NOTE_EXEC is handled normally after
+        // resume and remounts any runtime that sleep cleanup released.
+        if (g_pending_game_exit.active)
+          finalize_pending_game_exit();
         suspended_game_pid = atomic_load(&g_active_game_pid);
         char suspended_game_title_id[MAX_TITLE_ID];
         bool active_game = snapshot_active_game(suspended_game_pid,
@@ -977,7 +1024,8 @@ static void *game_lifecycle_watcher_main(void *arg) {
 
     struct kevent event;
     struct timespec timeout;
-    const struct timespec *timeout_ptr = compute_game_wait_timeout(&timeout);
+    const struct timespec *timeout_ptr = compute_game_wait_timeout(
+        &timeout, sandbox_watch_fd >= 0);
     int nev = kevent(kq, NULL, 0, &event, 1, timeout_ptr);
     if (nev < 0) {
       if (errno == EINTR)
@@ -1010,10 +1058,10 @@ static void *game_lifecycle_watcher_main(void *arg) {
   }
 
   clear_all_pending_game_launches();
-  clear_pending_game_exit();
   sm_fakelib_game_shutdown();
   sm_kstuff_game_shutdown();
   publish_active_game(0, NULL, 0);
+  clear_pending_game_exit();
   if (sandbox_watch_fd >= 0)
     close(sandbox_watch_fd);
   close(kq);

@@ -30,8 +30,8 @@ void sm_kstuff_note_app_focus(uint32_t app_id);
 uint64_t sm_kstuff_game_next_wake_us(uint64_t now_us);
 // Forget a tracked game and restore kstuff when no paused entries remain.
 void sm_kstuff_game_on_exit(pid_t pid);
-// Apply any delayed kstuff pause whose deadline has elapsed.
-void sm_kstuff_game_poll(void);
+// Apply config reloads and, while process_active, delayed per-process work.
+void sm_kstuff_game_poll(bool process_active);
 // Clear tracked game state and restore kstuff if the watcher paused it.
 void sm_kstuff_game_shutdown(void);
 // Pause kstuff for runtime sleep without restoring game-driven pauses.
