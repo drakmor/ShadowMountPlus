@@ -1,8 +1,8 @@
 static const char *const g_ja_jp[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "デバッグ設定へ移動",
-    /* English: ShadowMount+ v%s exFAT/UFS/PFS */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s exFAT/UFS/PFS",
+    /* English: ShadowMount+ v%s © Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor とコミュニティ",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 は非推奨です。scan_depth=2 を使用します。",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -87,4 +87,6 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPRエミュレーターを更新しました",
     /* English: ShadowMount+: failed to install ShellCore hooks */
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ShellCoreフックのインストールに失敗しました",
+    /* English: Target temperature %u °C → %u °C */
+    [SM_L10N_TEMPERATURE_TRANSITION] = "目標温度 %u °C → %u °C",
 };

@@ -1,8 +1,8 @@
 static const char *const g_fr_ca[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Accéder aux paramètres de débogage",
-    /* English: ShadowMount+ v%s exFAT/UFS/PFS */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s exFAT/UFS/PFS",
+    /* English: ShadowMount+ v%s © Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor et la communauté",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+ : recursive_scan=1 est obsolète, scan_depth=2 sera utilisé.",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -87,4 +87,6 @@ static const char *const g_fr_ca[SM_L10N_COUNT] = {
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "Émulateur AMPR mis à jour",
     /* English: ShadowMount+: failed to install ShellCore hooks */
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+ : échec de l’installation des hooks ShellCore",
+    /* English: Target temperature %u °C → %u °C */
+    [SM_L10N_TEMPERATURE_TRANSITION] = "Température cible %u °C → %u °C",
 };

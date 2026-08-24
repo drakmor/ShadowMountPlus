@@ -1,8 +1,8 @@
 static const char *const g_ko_kr[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "디버그 설정으로 이동",
-    /* English: ShadowMount+ v%s exFAT/UFS/PFS */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s exFAT/UFS/PFS",
+    /* English: ShadowMount+ v%s © Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor 및 커뮤니티",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1은 더 이상 권장되지 않으며 scan_depth=2를 사용합니다.",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -87,4 +87,6 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR 에뮬레이터가 업데이트되었습니다",
     /* English: ShadowMount+: failed to install ShellCore hooks */
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ShellCore 후크 설치에 실패했습니다",
+    /* English: Target temperature %u °C → %u °C */
+    [SM_L10N_TEMPERATURE_TRANSITION] = "목표 온도 %u °C → %u °C",
 };

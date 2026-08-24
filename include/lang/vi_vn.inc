@@ -1,8 +1,8 @@
 static const char *const g_vi_vn[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Đi tới cài đặt gỡ lỗi",
-    /* English: ShadowMount+ v%s exFAT/UFS/PFS */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s exFAT/UFS/PFS",
+    /* English: ShadowMount+ v%s © Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor và Cộng đồng",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 đã lỗi thời; sẽ sử dụng scan_depth=2.",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -87,4 +87,6 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "Đã cập nhật trình giả lập AMPR",
     /* English: ShadowMount+: failed to install ShellCore hooks */
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: không thể cài đặt hook ShellCore",
+    /* English: Target temperature %u °C → %u °C */
+    [SM_L10N_TEMPERATURE_TRANSITION] = "Nhiệt độ mục tiêu %u °C → %u °C",
 };
