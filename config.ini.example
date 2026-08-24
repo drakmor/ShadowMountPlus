@@ -119,11 +119,13 @@
 # legacy_mount_pfs=1
 # legacy_mount_pfsc=1
 
-# PFS "GDDR5" compressed-offset cache for nested images in legacy mode:
-# 1/true/yes/on  -> request the cache before attaching a nested image
+# PFS compressed-file index cache for nested images in legacy mode:
+# 1/true/yes/on  -> cache the containing PFS compressed-file index before
+#                   attaching a nested image
 # 0/false/no/off -> keep the version 1.6 behavior (default)
 # The optimized profile always requests this cache when supported.
-# legacy_gddr5_cache=0
+# The old legacy_gddr5_cache key remains accepted for compatibility.
+# nested_pfs_index_cache=0
 
 # Sandbox fakelib backport watcher:
 # 1/true/yes/on  -> mount app0/fakelib2 when present, otherwise app0/fakelib, into common/lib
@@ -146,10 +148,7 @@
 # Automatic libSceAmpr emulator download:
 # 1/true/yes/on  -> check 30 seconds after startup and then every four hours
 # 0/false/no/off -> do not access the network (default)
-# A missing local emulator is downloaded directly. Otherwise a HEAD request
-# compares the server Last-Modified time with the local file.
-# Current Sectigo and Let's Encrypt trust chains used by GitHub releases are
-# bundled; HTTPS certificate and hostname verification remains enabled.
+# A missing local emulator is downloaded directly. 
 # Otherwise, the SPRX is downloaded only when the server file is newer, then
 # replaces emulators_path/libSceAmpr.sprx only when its contents differ.
 # Downloads are deferred while a game mount is active.

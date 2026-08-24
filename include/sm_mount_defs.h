@@ -151,8 +151,8 @@
  *
  *  2. PFS_GDDR5_CACHE_IOCTL can be issued on a nested image's backing vnode
  *     before LVD attach. The optimized profile requests it automatically; the
- *     legacy profile requires legacy_gddr5_cache=1. It requests the containing
- *     PFS/PPR read path to cache the
+ *     legacy profile requires nested_pfs_index_cache=1. It requests the
+ *     containing PFS/PPR read path to cache the
  *     compressed-offset table used to reach that vnode's data; it does not
  *     inspect or impose a format on the bytes stored inside the file. Thus the
  *     nested file may contain PFS, UFS, exFAT or arbitrary block data and need

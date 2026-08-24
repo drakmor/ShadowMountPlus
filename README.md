@@ -77,7 +77,7 @@ Supported keys (all optional):
 - `legacy_mount_exfat=1|0` (`.exfat`; `1` selects the version 1.6 mount profile; default: `1`)
 - `legacy_mount_pfs=1|0` (`.ffpfs` and nested `pfs_image.dat`; `1` selects the version 1.6 mount profile; default: `1`)
 - `legacy_mount_pfsc=1|0` (outer `.ffpfsc`; `1` selects the version 1.6 mount profile; default: `1`)
-- `legacy_gddr5_cache=1|0` (request the PFS compressed-offset cache for nested images in legacy mode; default: `0`; optimized mode always requests it)
+- `nested_pfs_index_cache=1|0` (cache the containing PFS compressed-file index before attaching a nested image in legacy mode; default: `0`; optimized mode always requests it; the old `legacy_gddr5_cache` name remains accepted)
 - `backport_fakelib=1|0` (`1` mounts sandbox `fakelib` overlays for running games; default: `1`)
 - `update_emulators=1|0` (`1` updates all emulators with matching files in a game's own fakelib; default: `1`)
 - `emulators_path=<absolute_path>` (folder containing emulator update files; default: `/data/shadowmount/emus`)

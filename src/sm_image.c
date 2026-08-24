@@ -72,7 +72,7 @@ get_image_mount_profile(const runtime_config_t *cfg,
     break;
   }
   profile.nested_backing_cache =
-      !profile.legacy || cfg->legacy_gddr5_cache_enabled;
+      !profile.legacy || cfg->nested_pfs_index_cache_enabled;
   return profile;
 }
 

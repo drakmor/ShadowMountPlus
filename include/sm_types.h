@@ -152,7 +152,7 @@ typedef struct runtime_config {
   bool legacy_mount_exfat;
   bool legacy_mount_pfs;
   bool legacy_mount_pfsc;
-  bool legacy_gddr5_cache_enabled;
+  bool nested_pfs_index_cache_enabled;
   uint32_t lvd_sector_exfat;
   uint32_t lvd_sector_ufs;
   uint32_t lvd_sector_pfs;
