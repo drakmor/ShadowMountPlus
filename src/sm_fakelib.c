@@ -67,6 +67,12 @@ typedef struct {
   char emulators_path[MAX_PATH];
 } fakelib_cache_context_t;
 
+typedef enum {
+  FAKELIB_SOURCE_NONE = 0,
+  FAKELIB_SOURCE_COMPOSABLE,
+  FAKELIB_SOURCE_FAKELIB2,
+} fakelib_source_kind_t;
+
 static fakelib_session_t g_fakelib_mount;
 static pthread_mutex_t g_fakelib_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_fakelib_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -207,7 +213,7 @@ static bool resolve_sandbox_mount_path(const char *title_id,
   return found;
 }
 
-static bool resolve_game_fakelib_source_for_path(
+static fakelib_source_kind_t resolve_game_fakelib_source_for_path(
     const char *title_id, const char *game_path,
     char source_path[MAX_PATH]) {
   source_path[0] = '\0';
@@ -219,10 +225,13 @@ static bool resolve_game_fakelib_source_for_path(
   const struct {
     const char *root;
     const char *directory;
+    fakelib_source_kind_t kind;
   } candidates[] = {
-      {has_backport ? backport_path : NULL, "fakelib2"},
-      {has_backport ? backport_path : NULL, "fakelib"},
-      {has_game ? game_path : NULL, "fakelib"},
+      {has_backport ? backport_path : NULL, "fakelib2",
+       FAKELIB_SOURCE_FAKELIB2},
+      {has_backport ? backport_path : NULL, "fakelib",
+       FAKELIB_SOURCE_COMPOSABLE},
+      {has_game ? game_path : NULL, "fakelib", FAKELIB_SOURCE_COMPOSABLE},
   };
   struct stat st;
   for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
@@ -232,16 +241,17 @@ static bool resolve_game_fakelib_source_for_path(
                            candidates[i].root, candidates[i].directory);
     if (written > 0 && (size_t)written < MAX_PATH &&
         stat(source_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-      return true;
+      return candidates[i].kind;
     }
   }
 
   source_path[0] = '\0';
-  return false;
+  return FAKELIB_SOURCE_NONE;
 }
 
-static bool resolve_game_fakelib_source(const char *title_id,
-                                         char source_path[MAX_PATH]) {
+static fakelib_source_kind_t
+resolve_game_fakelib_source(const char *title_id,
+                            char source_path[MAX_PATH]) {
   char game_path[MAX_PATH];
   if (!read_mount_link(title_id, game_path, sizeof(game_path)))
     game_path[0] = '\0';
@@ -994,8 +1004,9 @@ static void prepare_title_cache(const char *title_id, const char *game_path) {
     return;
 
   char game_source_path[MAX_PATH];
-  if (!resolve_game_fakelib_source_for_path(title_id, game_path,
-                                             game_source_path)) {
+  fakelib_source_kind_t source_kind = resolve_game_fakelib_source_for_path(
+      title_id, game_path, game_source_path);
+  if (source_kind != FAKELIB_SOURCE_COMPOSABLE) {
     remove_title_cache(title_id);
     return;
   }
@@ -1151,12 +1162,16 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
     }
   }
 
-  char game_source_path[MAX_PATH];
-  char global_source_path[MAX_PATH];
-  char mount_path[MAX_PATH];
-  bool has_game = resolve_game_fakelib_source(title_id, game_source_path);
-  bool has_global =
-      resolve_global_fakelib_source(title_id, global_source_path);
+  char game_source_path[MAX_PATH] = {0};
+  char global_source_path[MAX_PATH] = {0};
+  char mount_path[MAX_PATH] = {0};
+  fakelib_source_kind_t source_kind =
+      resolve_game_fakelib_source(title_id, game_source_path);
+  bool has_game = source_kind != FAKELIB_SOURCE_NONE;
+  bool allows_composition = source_kind != FAKELIB_SOURCE_FAKELIB2;
+  bool has_global = allows_composition &&
+                    resolve_global_fakelib_source(title_id,
+                                                  global_source_path);
   if (!has_global && !has_game) {
     pthread_mutex_unlock(&g_fakelib_mutex);
     return;
@@ -1168,7 +1183,7 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
   size_t emulator_file_count = 0;
   bool cache_resolved = false;
   bool cache_includes_global = false;
-  if (has_game) {
+  if (source_kind == FAKELIB_SOURCE_COMPOSABLE) {
     char cache_path[MAX_PATH];
     cache_resolved = resolve_cached_fakelib(
         title_id, game_source_path, cache_path, &emulator_file_count,
@@ -1198,7 +1213,9 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
                 sizeof(g_fakelib_mount.mount_path));
 
   const char *source_path = has_game ? game_source_path : global_source_path;
-  const char *label = has_game ? "game" : "global";
+  const char *label = !allows_composition
+                          ? "fakelib2"
+                          : (has_game ? "game" : "global");
   if (!track_fakelib_overlay(title_id, source_path, mount_path, label)) {
     (void)cleanup_fakelib_mount();
     pthread_mutex_unlock(&g_fakelib_mutex);

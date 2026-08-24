@@ -135,7 +135,7 @@
 
 # Updates for multiple emulators in the game fakelib:
 # 1/true/yes/on  -> cache the game's fakelib before launch and replace matching
-#                   cached files from emulators_path
+#                   cached files from emulators_path; fakelib2 is never changed
 # 0/false/no/off -> disable emulator updates
 # Default: 1
 # update_emulators=1
@@ -159,7 +159,8 @@
 # ampr_update_url=https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx
 
 # Global fakelib overlay:
-# 1/true/yes/on  -> use global fakelib for every tracked game when present
+# 1/true/yes/on  -> use global fakelib for every tracked game when present;
+#                   fakelib2 always remains exclusive when present
 # 0/false/no/off -> do not use the global fakelib folder
 # Default: 1
 # global_fakelib=1

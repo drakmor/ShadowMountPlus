@@ -79,11 +79,11 @@ Supported keys (all optional):
 - `legacy_mount_pfsc=1|0` (outer `.ffpfsc`; `1` selects the version 1.6 mount profile; default: `1`)
 - `nested_pfs_index_cache=1|0` (cache the containing PFS compressed-file index before attaching a nested image in legacy mode; default: `0`; optimized mode always requests it; the old `legacy_gddr5_cache` name remains accepted)
 - `backport_fakelib=1|0` (`1` mounts sandbox `fakelib` overlays for running games; default: `1`)
-- `update_emulators=1|0` (`1` updates all emulators with matching files in a game's own fakelib; default: `1`)
+- `update_emulators=1|0` (`1` updates all emulators with matching files in a game's own fakelib; `fakelib2` is excluded; default: `1`)
 - `emulators_path=<absolute_path>` (folder containing emulator update files; default: `/data/shadowmount/emus`)
 - `auto_update_ampr=1|0` (check for a new `libSceAmpr.sprx` 30 seconds after startup and every four hours; default: `0`)
 - `ampr_update_url=<http_or_https_url>` (AMPR emulator download URL; default: `https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx`)
-- `global_fakelib=1|0` (`1` enables the global fakelib overlay when the folder exists; default: `1`)
+- `global_fakelib=1|0` (`1` enables the global fakelib overlay when the folder exists; `fakelib2` remains exclusive; default: `1`)
 - `global_fakelib_path=<absolute_path>` (global fakelib folder; default: `/data/shadowmount/fakelib`)
 - `global_fakelib_priority=game|global` (overlay priority when both global and game fakelib exist; default: `game`)
 - `global_fakelib_exclude=<TITLE_ID>` (repeatable; disables the global fakelib overlay for matching titles)
@@ -187,11 +187,11 @@ Backport overlay behavior:
 - The `backports` folder is ignored during normal game scanning.
 - A backport is applied automatically to the matching mounted game from any configured scan path.
 - If multiple scan paths provide the same title backport, the game's own scan path wins; otherwise scan path order is used.
-- ShadowMount+ checks the selected backport for `fakelib2` and then `fakelib`; if neither exists, it uses only `fakelib` from the original game source. The selected directory is mounted into the running game's sandbox `common/lib`.
-- If `update_emulators=1`, matching files from `emulators_path` replace files in the selected game fakelib. The cache is refreshed when its sources change and expires after seven days without a game launch.
+- ShadowMount+ checks the selected backport for `fakelib2` and then `fakelib`; if neither exists, it uses only `fakelib` from the original game source. The selected directory is mounted into the running game's sandbox `common/lib`. A backport `fakelib2` is always mounted directly and exclusively: neither emulator updates nor the global fakelib can replace or supplement it.
+- If `update_emulators=1`, matching files from `emulators_path` replace files in the selected game fakelib, except when `fakelib2` is selected. The cache is refreshed when its sources change and expires after seven days without a game launch.
 - With `auto_update_ampr=1`, ShadowMount+ checks for AMPR updates 30 seconds after startup and every four hours. It downloads a missing or newer emulator and displays a notification after a successful update.
 - The backport notification adds `Emulators updated` when emulator files are updated for the launched game.
-- If both global and per-game fakelib exist, they are combined in the game cache according to `global_fakelib_priority`. Without a per-game fakelib, the global folder is mounted directly.
+- If both global and per-game fakelib exist, they are combined in the game cache according to `global_fakelib_priority`, unless the selected backport contains `fakelib2`. Without a per-game fakelib, the global folder is mounted directly.
 - Use repeatable `global_fakelib_exclude=<TITLE_ID>` entries to skip the global fakelib for specific games without disabling per-game fakelib.
 - `backport_fakelib=0` disables the sandbox `fakelib` watcher, including global fakelib and emulator updates.
 - For `backport_fakelib` to work correctly, the standalone `BackPork` payload must be disabled. Running both at the same time will conflict.
