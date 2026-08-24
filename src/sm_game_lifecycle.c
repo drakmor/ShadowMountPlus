@@ -1108,6 +1108,8 @@ bool sm_game_lifecycle_has_active_game(void) {
 void sm_game_lifecycle_note_app_focus(uint32_t app_id) {
   atomic_store(&g_pending_app_focus_id, app_id);
   atomic_store(&g_pending_app_focus_valid, true);
+  sm_kstuff_note_app_focus(app_id);
+  wake_game_lifecycle_watcher();
 }
 
 bool refresh_game_lifecycle_watcher(void) {

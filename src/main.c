@@ -534,8 +534,6 @@ int main(void) {
   load_runtime_config();
   sm_notifications_init();
   stop_conflicting_backpork();
-  if (!sm_shellcore_flags_start())
-    log_debug("  [SHELLFLAG] monitor unavailable");
   sm_mdbg_init();
   sm_kstuff_init();
   if (!sm_shellcore_service_start())
@@ -547,6 +545,9 @@ int main(void) {
   }
   if (!refresh_game_lifecycle_watcher())
     log_debug("  [GAME] lifecycle watcher unavailable");
+  // Publish the initial AppFocus only after its lifecycle/kstuff consumers.
+  if (!sm_shellcore_flags_start())
+    log_debug("  [SHELLFLAG] monitor unavailable");
   if (!sm_ampr_updater_start())
     log_debug("  [AMPR] update service unavailable: %s", strerror(errno));
 
@@ -594,10 +595,11 @@ int main(void) {
 shutdown:
   sm_ampr_updater_stop();
   sm_api_service_stop();
-  sm_shellcore_hooks_stop();
-  sm_shellcore_service_stop();
+  // Stop ShellCore producers before their lifecycle and mount-state owners.
   sm_shellcore_flags_stop();
+  sm_shellcore_hooks_stop();
   stop_game_lifecycle_watcher();
+  sm_shellcore_service_stop();
   sm_scanner_shutdown();
   sm_kstuff_shutdown();
   sm_mdbg_shutdown();

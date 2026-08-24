@@ -20,12 +20,18 @@
 #include "sm_shellcore_service.h"
 #include "sm_socket_io.h"
 
-_Static_assert(sizeof(sm_shellcore_request_t) == 40,
+_Static_assert(MAX_TITLE_ID == SM_SHELLCORE_REQUEST_TITLE_ID_SIZE,
+               "ShellCore title id size mismatch");
+_Static_assert(sizeof(sm_shellcore_request_t) == SM_SHELLCORE_REQUEST_SIZE,
                "unexpected ShellCore request size");
 _Static_assert(offsetof(sm_shellcore_request_t, title_id) == 8,
                "unexpected ShellCore request title id offset");
-_Static_assert(sizeof(sm_shellcore_response_t) == 4,
+_Static_assert(sizeof(sm_shellcore_response_t) == SM_SHELLCORE_RESPONSE_SIZE,
                "unexpected ShellCore response size");
+_Static_assert(
+    sizeof(SM_SHELLCORE_SOCKET_PATH) <=
+        sizeof(((struct sockaddr_un *)0)->sun_path),
+    "ShellCore socket path is too long");
 
 typedef struct {
   char title_id[MAX_TITLE_ID];

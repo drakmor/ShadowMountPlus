@@ -8,6 +8,7 @@
 #include "sm_log.h"
 #include "sm_runtime.h"
 #include "sm_shellcore_hooks.h"
+#include "sm_shellcore_protocol_defs.h"
 #include "sm_shellcore_remote.h"
 
 #define SHELLCORE_BASE_HOOK_COUNT 1u
@@ -15,58 +16,12 @@
 #define MAX_HOOK_PROLOGUE_SIZE 32u
 #define ABSOLUTE_JUMP_SIZE 12u
 
-/*
- * Private payload-SDK ABI from src/crt/kernel.h.  The public
- * <ps5/kernel.h> intentionally omits dynlib_obj_t/kernel_dynlib_obj(), but
- * kernel_dynlib_obj() copies the complete 0x180-byte object.  Keep the local
- * definition layout-checked because ShellCore bridge placement needs the
- * module bounds and its executable eh_frame area.
- */
-typedef struct {
-  uintptr_t next;
-  uintptr_t path;
-  uintptr_t unknown0[2];
-  uint32_t refcount;
-  uintptr_t handle;
-  uintptr_t mapbase;
-  uintptr_t mapsize;
-  uintptr_t textsize;
-  uintptr_t database;
-  uintptr_t datasize;
-  uintptr_t unknown1;
-  uintptr_t unknown1size;
-  uintptr_t entry;
-  uintptr_t unknown2;
-  uintptr_t vaddrbase;
-  uint32_t tlsindex;
-  uintptr_t tlsinit;
-  uintptr_t tlsinitsize;
-  uintptr_t tlssize;
-  uintptr_t tlsoffset;
-  uintptr_t tlsalign;
-  uintptr_t pltgot;
-  uintptr_t unknown3[6];
-  uintptr_t init;
-  uintptr_t fini;
-  uintptr_t eh_frame_hdr;
-  uintptr_t eh_frame_hdr_size;
-  uintptr_t eh_frame;
-  uintptr_t eh_frame_size;
-  int32_t status;
-  int32_t flags;
-  uintptr_t unknown4[5];
-  uintptr_t dynsec;
-  uintptr_t unknown5[6];
-} shellcore_dynlib_obj_t;
+static const uint8_t k_expected_function_prologue[] = {0x55, 0x48, 0x89, 0xe5};
 
-_Static_assert(offsetof(shellcore_dynlib_obj_t, mapbase) == 0x30,
-               "unexpected dynlib_obj mapbase offset");
-_Static_assert(offsetof(shellcore_dynlib_obj_t, eh_frame) == 0x108,
-               "unexpected dynlib_obj eh_frame offset");
-_Static_assert(sizeof(shellcore_dynlib_obj_t) == 0x180,
-               "unexpected dynlib_obj size");
-
-int kernel_dynlib_obj(pid_t pid, uint32_t handle, shellcore_dynlib_obj_t *obj);
+_Static_assert(MAX_TITLE_ID == SM_SHELLCORE_REQUEST_TITLE_ID_SIZE,
+               "ShellCore bridge title id size mismatch");
+_Static_assert(MAX_PATH == SM_SHELLCORE_BRIDGE_INSTALL_DIR_SIZE,
+               "ShellCore bridge install dir size mismatch");
 
 extern const uint8_t sm_shellcore_bridge_blob_start[];
 extern const uint8_t sm_shellcore_bridge_blob_end[];
@@ -98,13 +53,25 @@ static const shellcore_import_t k_bridge_imports[] = {
 };
 
 typedef struct {
-  bool installed;
+  sm_shellcore_target_t target;
+  uint8_t original[MAX_HOOK_PROLOGUE_SIZE];
+  uint8_t original_size;
+} shellcore_hook_record_t;
+
+typedef enum {
+  SHELLCORE_HOOKS_EMPTY = 0,
+  SHELLCORE_HOOKS_READY,
+  SHELLCORE_HOOKS_ROLLBACK_PENDING,
+  SHELLCORE_HOOKS_STALE,
+} shellcore_hooks_status_t;
+
+typedef struct {
+  shellcore_hooks_status_t status;
   sm_shellcore_remote_t remote;
   uintptr_t bridge_address;
+  size_t bridge_size;
   size_t hook_count;
-  sm_shellcore_target_t target_ids[SHELLCORE_MAX_HOOK_COUNT];
-  uint8_t original[SHELLCORE_MAX_HOOK_COUNT][MAX_HOOK_PROLOGUE_SIZE];
-  uint8_t original_size[SHELLCORE_MAX_HOOK_COUNT];
+  shellcore_hook_record_t hooks[SHELLCORE_MAX_HOOK_COUNT];
 } shellcore_hooks_state_t;
 
 static shellcore_hooks_state_t g_hooks;
@@ -124,16 +91,24 @@ static void build_absolute_jump(uint8_t jump[ABSOLUTE_JUMP_SIZE],
   jump[11] = 0xe0;
 }
 
-static bool patch_remote_jump(pid_t pid, uintptr_t source,
-                              uintptr_t destination, size_t patch_size) {
-  if (patch_size < ABSOLUTE_JUMP_SIZE || patch_size > MAX_HOOK_PROLOGUE_SIZE) {
+static bool build_hook_patch(uint8_t patch[MAX_HOOK_PROLOGUE_SIZE],
+                             uintptr_t destination, size_t patch_size) {
+  if (patch_size < ABSOLUTE_JUMP_SIZE ||
+      patch_size > MAX_HOOK_PROLOGUE_SIZE) {
     return false;
   }
-  uint8_t patch[MAX_HOOK_PROLOGUE_SIZE];
   memset(patch, 0x90, patch_size);
   build_absolute_jump(patch, destination);
-  if (!sm_remote_process_write(pid, source, patch, patch_size))
+  return true;
+}
+
+static bool patch_remote_jump(pid_t pid, uintptr_t source,
+                              uintptr_t destination, size_t patch_size) {
+  uint8_t patch[MAX_HOOK_PROLOGUE_SIZE];
+  if (!build_hook_patch(patch, destination, patch_size) ||
+      !sm_remote_process_write(pid, source, patch, patch_size)) {
     return false;
+  }
   uint8_t verify[MAX_HOOK_PROLOGUE_SIZE];
   return sm_remote_process_read(pid, source, verify, patch_size) &&
          memcmp(verify, patch, patch_size) == 0;
@@ -152,6 +127,44 @@ static bool verify_remote_bytes(pid_t pid, uintptr_t address,
     address += chunk;
     bytes += chunk;
     size -= chunk;
+  }
+  return true;
+}
+
+static bool restore_remote_bytes(pid_t pid, uintptr_t address,
+                                 const void *original, size_t size) {
+  return sm_remote_process_write(pid, address, original, size) &&
+         verify_remote_bytes(pid, address, original, size);
+}
+
+static bool remote_hook_matches(pid_t pid, uintptr_t source,
+                                uintptr_t destination, size_t patch_size) {
+  uint8_t patch[MAX_HOOK_PROLOGUE_SIZE];
+  return build_hook_patch(patch, destination, patch_size) &&
+         verify_remote_bytes(pid, source, patch, patch_size);
+}
+
+static bool cleanup_remote_bridge(
+    pid_t pid, const sm_shellcore_remote_t *remote,
+    const shellcore_hook_record_t hooks[SHELLCORE_MAX_HOOK_COUNT],
+    size_t hook_count, uintptr_t bridge_address, size_t bridge_size) {
+  bool restored = true;
+  for (size_t i = 0; i < hook_count; ++i) {
+    uintptr_t target_address = remote->targets[hooks[i].target];
+    if (!restore_remote_bytes(pid, target_address, hooks[i].original,
+                              hooks[i].original_size)) {
+      restored = false;
+    }
+  }
+  if (!restored) {
+    log_debug("  [SHELLCORE] hook rollback incomplete; bridge kept mapped");
+    return false;
+  }
+  if (bridge_address &&
+      !sm_remote_process_unmap(pid, bridge_address, bridge_size)) {
+    log_debug("  [SHELLCORE] inactive bridge unmap failed: address=0x%lx "
+              "size=0x%zx",
+              (unsigned long)bridge_address, bridge_size);
   }
   return true;
 }
@@ -216,80 +229,89 @@ static bool install_hooks_for_pid(pid_t pid) {
   const size_t bridge_capacity =
       blob_size + SHELLCORE_MAX_HOOK_COUNT *
                       (MAX_HOOK_PROLOGUE_SIZE + ABSOLUTE_JUMP_SIZE + 16u);
+  if (bridge_capacity > SIZE_MAX - (PAGE_SIZE - 1u))
+    return false;
+  const size_t bridge_size =
+      (bridge_capacity + PAGE_SIZE - 1u) & ~(size_t)(PAGE_SIZE - 1u);
   uint8_t *bridge = calloc(1, bridge_capacity);
   if (!bridge)
     return false;
   memcpy(bridge, sm_shellcore_bridge_blob_start, blob_size);
 
-  if (kill(pid, SIGSTOP) != 0) {
+  if (!sm_remote_process_attach(pid)) {
+    log_debug("  [SHELLCORE] failed to attach to pid=%ld", (long)pid);
     free(bridge);
     return false;
   }
 
   bool ok = false;
-  sm_shellcore_remote_t remote;
-  shellcore_dynlib_obj_t object;
-  if (!sm_shellcore_remote_resolve(pid, &remote) ||
-      kernel_dynlib_obj(pid, 0, &object) != 0) {
-    log_debug("  [SHELLCORE] stopped-process layout resolution failed");
+  bool cleanup_pending = false;
+  size_t patched_count = 0;
+  uintptr_t bridge_address = 0;
+  shellcore_hooks_state_t hooks = {0};
+  if (!sm_shellcore_remote_resolve(pid, &hooks.remote)) {
+    log_debug("  [SHELLCORE] attached-process target resolution failed");
     goto done;
   }
-  if (object.mapbase != remote.image_base ||
-      object.mapbase > UINTPTR_MAX - object.mapsize ||
-      object.eh_frame < object.mapbase ||
-      object.eh_frame_size < bridge_capacity ||
-      object.eh_frame > UINTPTR_MAX - bridge_capacity ||
-      object.eh_frame + bridge_capacity > object.mapbase + object.mapsize) {
-    log_debug("  [SHELLCORE] invalid layout: base=0x%lx map=0x%lx+0x%lx "
-              "eh=0x%lx+0x%lx bridge=0x%zx",
-              (unsigned long)remote.image_base, (unsigned long)object.mapbase,
-              (unsigned long)object.mapsize, (unsigned long)object.eh_frame,
-              (unsigned long)object.eh_frame_size, bridge_capacity);
-    goto done;
-  }
-  log_debug("  [SHELLCORE] layout validated: map=0x%lx+0x%lx eh=0x%lx+0x%lx",
-            (unsigned long)object.mapbase, (unsigned long)object.mapsize,
-            (unsigned long)object.eh_frame,
-            (unsigned long)object.eh_frame_size);
 
-  const bool install_hook_enabled = sm_shellcore_install_bridge_enabled();
+  const bool install_hook_enabled = hooks.remote.offsets->firmware >= 0x1200u;
   const size_t hook_count = install_hook_enabled
                                 ? SHELLCORE_MAX_HOOK_COUNT
                                 : SHELLCORE_BASE_HOOK_COUNT;
-  uintptr_t targets[SHELLCORE_MAX_HOOK_COUNT] = {
-      remote.targets[SM_SHELLCORE_TARGET_LAUNCH_APP],
-      remote.targets[SM_SHELLCORE_TARGET_INSTALL_ALL],
-  };
-  sm_shellcore_target_t target_ids[SHELLCORE_MAX_HOOK_COUNT] = {
-      SM_SHELLCORE_TARGET_LAUNCH_APP,
-      SM_SHELLCORE_TARGET_INSTALL_ALL,
-  };
+  hooks.hooks[0].target = SM_SHELLCORE_TARGET_LAUNCH_APP;
+  hooks.hooks[1].target = SM_SHELLCORE_TARGET_INSTALL_ALL;
 
   for (size_t i = 0; i < hook_count; ++i) {
-    uint8_t patch_size = remote.offsets->targets[target_ids[i]].patch_size;
+    shellcore_hook_record_t *hook = &hooks.hooks[i];
+    uintptr_t target_address = hooks.remote.targets[hook->target];
+    uint8_t patch_size =
+        hooks.remote.offsets->targets[hook->target].patch_size;
     if (patch_size < ABSOLUTE_JUMP_SIZE ||
         patch_size > MAX_HOOK_PROLOGUE_SIZE ||
-        !sm_remote_process_read(pid, targets[i], g_hooks.original[i],
+        !sm_remote_process_read(pid, target_address, hook->original,
                                 patch_size)) {
       goto done;
     }
-    static const uint8_t function_prologue[] = {0x55, 0x48, 0x89, 0xe5};
-    if (memcmp(g_hooks.original[i], function_prologue,
-               sizeof(function_prologue)) != 0) {
+    if (memcmp(hook->original, k_expected_function_prologue,
+               sizeof(k_expected_function_prologue)) != 0) {
       log_debug("  [SHELLCORE] unexpected prologue: %s at 0x%lx",
-                sm_shellcore_target_name(target_ids[i]),
-                (unsigned long)targets[i]);
+                sm_shellcore_target_name(hook->target),
+                (unsigned long)target_address);
       goto done;
     }
-    g_hooks.original_size[i] = patch_size;
+    hook->original_size = patch_size;
+  }
+  if (install_hook_enabled &&
+      !verify_remote_bytes(
+          pid,
+          hooks.remote.targets[SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR],
+          k_expected_function_prologue, sizeof(k_expected_function_prologue))) {
+    log_debug("  [SHELLCORE] unexpected prologue: %s at 0x%lx",
+              sm_shellcore_target_name(SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR),
+              (unsigned long)hooks.remote.targets
+                  [SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR]);
+    goto done;
+  }
+
+  bridge_address = sm_remote_process_map(pid, bridge_size);
+  if (!bridge_address) {
+    log_debug("  [SHELLCORE] failed to allocate bridge memory: size=0x%zx",
+              bridge_size);
+    goto done;
   }
 
   size_t cursor = blob_size;
   uintptr_t launch_trampoline = 0;
   uintptr_t install_all_trampoline = 0;
-  if (!append_trampoline(bridge, bridge_capacity, &cursor, g_hooks.original[0],
-                         g_hooks.original_size[0],
-                         targets[0] + g_hooks.original_size[0], object.eh_frame,
+  shellcore_hook_record_t *launch_hook_record = &hooks.hooks[0];
+  uintptr_t launch_target = hooks.remote.targets[launch_hook_record->target];
+  shellcore_hook_record_t *install_hook_record = &hooks.hooks[1];
+  uintptr_t install_target = hooks.remote.targets[install_hook_record->target];
+  if (!append_trampoline(bridge, bridge_capacity, &cursor,
+                         launch_hook_record->original,
+                         launch_hook_record->original_size,
+                         launch_target + launch_hook_record->original_size,
+                         bridge_address,
                          &launch_trampoline)) {
     goto done;
   }
@@ -297,70 +319,102 @@ static bool install_hooks_for_pid(pid_t pid) {
                      launch_trampoline);
   if (install_hook_enabled) {
     if (!append_trampoline(bridge, bridge_capacity, &cursor,
-                           g_hooks.original[1], g_hooks.original_size[1],
-                           targets[1] + g_hooks.original_size[1],
-                           object.eh_frame, &install_all_trampoline)) {
+                           install_hook_record->original,
+                           install_hook_record->original_size,
+                           install_target + install_hook_record->original_size,
+                           bridge_address,
+                           &install_all_trampoline)) {
       goto done;
     }
     set_bridge_pointer(bridge, sm_shellcore_bridge_install_all_trampoline,
                        install_all_trampoline);
     set_bridge_pointer(
         bridge, sm_shellcore_bridge_install_title_dir,
-        remote.targets[SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR]);
+        hooks.remote.targets[SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR]);
   }
   if (!resolve_bridge_imports(pid, bridge))
     goto done;
 
-  if (kernel_mprotect(pid, (intptr_t)object.mapbase, object.mapsize,
-                      PROT_READ | PROT_WRITE | PROT_EXEC) != 0 ||
-      !sm_remote_process_write(pid, object.eh_frame, bridge, cursor) ||
-      !verify_remote_bytes(pid, object.eh_frame, bridge, cursor)) {
+  if (!sm_remote_process_write(pid, bridge_address, bridge, cursor) ||
+      !verify_remote_bytes(pid, bridge_address, bridge, cursor) ||
+      kernel_mprotect(pid, (intptr_t)bridge_address, bridge_size,
+                      PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
     log_debug("  [SHELLCORE] bridge write verification failed");
     goto done;
   }
 
   uintptr_t launch_hook =
-      object.eh_frame + (uintptr_t)(sm_shellcore_bridge_launch_hook -
-                                    sm_shellcore_bridge_blob_start);
+      bridge_address + (uintptr_t)(sm_shellcore_bridge_launch_hook -
+                                   sm_shellcore_bridge_blob_start);
   uintptr_t install_all_hook =
-      object.eh_frame +
+      bridge_address +
       (uintptr_t)(sm_shellcore_bridge_install_all_hook -
                   sm_shellcore_bridge_blob_start);
-  if (!patch_remote_jump(pid, targets[0], launch_hook,
-                         g_hooks.original_size[0]) ||
-      (install_hook_enabled &&
-       !patch_remote_jump(pid, targets[1], install_all_hook,
-                          g_hooks.original_size[1]))) {
-    goto rollback;
+  // A failed write verification can still mean that the target was modified.
+  // Publish rollback ownership before attempting each remote write.
+  patched_count = 1;
+  if (!patch_remote_jump(pid, launch_target, launch_hook,
+                         launch_hook_record->original_size)) {
+    goto done;
+  }
+  if (install_hook_enabled) {
+    patched_count = SHELLCORE_MAX_HOOK_COUNT;
+    if (!patch_remote_jump(pid, install_target, install_all_hook,
+                           install_hook_record->original_size)) {
+      goto done;
+    }
   }
 
-  g_hooks.remote = remote;
-  g_hooks.bridge_address = object.eh_frame;
-  g_hooks.hook_count = hook_count;
-  memcpy(g_hooks.target_ids, target_ids,
-         hook_count * sizeof(g_hooks.target_ids[0]));
-  g_hooks.installed = true;
+  hooks.bridge_address = bridge_address;
+  hooks.bridge_size = bridge_size;
+  hooks.hook_count = hook_count;
+  hooks.status = SHELLCORE_HOOKS_READY;
   ok = true;
-  log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld launch=1 install=%d",
-            remote.offsets->name, (long)pid, install_hook_enabled ? 1 : 0);
-  goto done;
-
-rollback:
-  for (size_t i = 0; i < hook_count; ++i) {
-    (void)sm_remote_process_write(pid, targets[i], g_hooks.original[i],
-                                  g_hooks.original_size[i]);
-  }
 
 done:
+  if (!ok) {
+    cleanup_pending = !cleanup_remote_bridge(
+                          pid, &hooks.remote, hooks.hooks, patched_count,
+                          bridge_address, bridge_size) &&
+                      patched_count != 0;
+  }
+  bool detached = sm_remote_process_detach(pid);
+  if (!detached) {
+    log_debug("  [SHELLCORE] failed to detach from pid=%ld", (long)pid);
+    if (ok) {
+      cleanup_pending = !cleanup_remote_bridge(
+          pid, &hooks.remote, hooks.hooks, hook_count, bridge_address,
+          bridge_size);
+    }
+    (void)sm_remote_process_detach(pid);
+    ok = false;
+  }
   free(bridge);
-  (void)kill(pid, SIGCONT);
+  if (ok) {
+    g_hooks = hooks;
+    log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld bridge=0x%lx+0x%zx "
+              "launch=1 install=%d",
+              hooks.remote.offsets->name, (long)pid,
+              (unsigned long)bridge_address, bridge_size,
+              install_hook_enabled ? 1 : 0);
+  } else if (cleanup_pending) {
+    hooks.bridge_address = bridge_address;
+    hooks.bridge_size = bridge_size;
+    hooks.hook_count = patched_count;
+    hooks.status = SHELLCORE_HOOKS_ROLLBACK_PENDING;
+    g_hooks = hooks;
+    log_debug("  [SHELLCORE] retaining bridge state for shutdown cleanup");
+  }
   return ok;
 }
 
 bool sm_shellcore_hooks_start(void) {
   pthread_mutex_lock(&g_install_mutex);
-  if (g_hooks.installed)
-    goto installed;
+  if (g_hooks.status != SHELLCORE_HOOKS_EMPTY) {
+    bool ready = g_hooks.status == SHELLCORE_HOOKS_READY;
+    pthread_mutex_unlock(&g_install_mutex);
+    return ready;
+  }
   memset(&g_hooks, 0, sizeof(g_hooks));
   pid_t pid = find_shellcore_pid();
   if (pid <= 0) {
@@ -371,28 +425,99 @@ bool sm_shellcore_hooks_start(void) {
   bool ok = install_hooks_for_pid(pid);
   pthread_mutex_unlock(&g_install_mutex);
   return ok;
-
-installed:
-  pthread_mutex_unlock(&g_install_mutex);
-  return true;
 }
 
 void sm_shellcore_hooks_stop(void) {
   pthread_mutex_lock(&g_install_mutex);
-  if (!g_hooks.installed) {
+  if (g_hooks.status == SHELLCORE_HOOKS_EMPTY) {
     pthread_mutex_unlock(&g_install_mutex);
     return;
   }
 
   pid_t pid = g_hooks.remote.pid;
-  if (kill(pid, SIGSTOP) == 0) {
-    for (size_t i = 0; i < g_hooks.hook_count; ++i) {
-      sm_shellcore_target_t target = g_hooks.target_ids[i];
-      (void)sm_remote_process_write(pid, g_hooks.remote.targets[target],
-                                    g_hooks.original[i],
-                                    g_hooks.original_size[i]);
+  pid_t current_pid = find_shellcore_pid();
+  if (current_pid > 0 && current_pid != pid) {
+    log_debug("  [SHELLCORE] stale hook state dropped: old pid=%ld current=%ld",
+              (long)pid, (long)current_pid);
+    memset(&g_hooks, 0, sizeof(g_hooks));
+    pthread_mutex_unlock(&g_install_mutex);
+    return;
+  }
+  if (!sm_remote_process_attach(pid)) {
+    if (kill(pid, 0) != 0 && errno == ESRCH)
+      memset(&g_hooks, 0, sizeof(g_hooks));
+    else
+      log_debug("  [SHELLCORE] failed to attach for hook cleanup: pid=%ld",
+                (long)pid);
+    pthread_mutex_unlock(&g_install_mutex);
+    return;
+  }
+
+  sm_shellcore_remote_t current_remote;
+  if (!sm_shellcore_remote_resolve(pid, &current_remote)) {
+    log_debug("  [SHELLCORE] cleanup target validation failed; state retained");
+    (void)sm_remote_process_detach(pid);
+    pthread_mutex_unlock(&g_install_mutex);
+    return;
+  }
+  if (current_remote.image_base != g_hooks.remote.image_base) {
+    log_debug("  [SHELLCORE] stale hook image detected during cleanup");
+    (void)sm_remote_process_detach(pid);
+    memset(&g_hooks, 0, sizeof(g_hooks));
+    pthread_mutex_unlock(&g_install_mutex);
+    return;
+  }
+
+  bool restored = true;
+  bool found_installed_hook = false;
+  for (size_t i = 0; i < g_hooks.hook_count; ++i) {
+    shellcore_hook_record_t *hook = &g_hooks.hooks[i];
+    uintptr_t target_address = g_hooks.remote.targets[hook->target];
+    if (g_hooks.status == SHELLCORE_HOOKS_ROLLBACK_PENDING) {
+      found_installed_hook = true;
+      if (!restore_remote_bytes(pid, target_address, hook->original,
+                                hook->original_size)) {
+        restored = false;
+      }
+      continue;
     }
-    (void)kill(pid, SIGCONT);
+    const uint8_t *hook_symbol =
+        hook->target == SM_SHELLCORE_TARGET_LAUNCH_APP
+            ? sm_shellcore_bridge_launch_hook
+            : sm_shellcore_bridge_install_all_hook;
+    uintptr_t hook_address =
+        g_hooks.bridge_address +
+        (uintptr_t)(hook_symbol - sm_shellcore_bridge_blob_start);
+    if (remote_hook_matches(pid, target_address, hook_address,
+                            hook->original_size)) {
+      found_installed_hook = true;
+      if (!restore_remote_bytes(pid, target_address, hook->original,
+                                hook->original_size)) {
+        restored = false;
+      }
+    } else if (!verify_remote_bytes(pid, target_address, hook->original,
+                                    hook->original_size)) {
+      restored = false;
+    }
+  }
+  if (restored &&
+      !sm_remote_process_unmap(pid, g_hooks.bridge_address,
+                               g_hooks.bridge_size)) {
+    log_debug("  [SHELLCORE] bridge unmap failed: address=0x%lx size=0x%zx",
+              (unsigned long)g_hooks.bridge_address, g_hooks.bridge_size);
+  }
+  if (!sm_remote_process_detach(pid)) {
+    log_debug("  [SHELLCORE] failed to detach after hook cleanup: pid=%ld",
+              (long)pid);
+    (void)sm_remote_process_detach(pid);
+  }
+  if (!restored) {
+    log_debug("  [SHELLCORE] hook cleanup incomplete; bridge kept mapped");
+    pthread_mutex_unlock(&g_install_mutex);
+    return;
+  }
+  if (!found_installed_hook) {
+    log_debug("  [SHELLCORE] hooks already absent; stale bridge state dropped");
   }
   memset(&g_hooks, 0, sizeof(g_hooks));
   pthread_mutex_unlock(&g_install_mutex);
@@ -412,8 +537,31 @@ bool sm_shellcore_install_title_dir(const char *title_id,
   }
 
   pthread_mutex_lock(&g_install_mutex);
-  if (!g_hooks.installed ||
+  if (g_hooks.status != SHELLCORE_HOOKS_READY ||
       g_hooks.hook_count < SHELLCORE_MAX_HOOK_COUNT) {
+    pthread_mutex_unlock(&g_install_mutex);
+    return false;
+  }
+
+  pid_t pid = g_hooks.remote.pid;
+  pid_t current_pid = find_shellcore_pid();
+  if (current_pid > 0 && current_pid != pid) {
+    memset(&g_hooks, 0, sizeof(g_hooks));
+    pthread_mutex_unlock(&g_install_mutex);
+    return false;
+  }
+  if (current_pid <= 0) {
+    pthread_mutex_unlock(&g_install_mutex);
+    return false;
+  }
+  uintptr_t install_hook =
+      remote_bridge_symbol(sm_shellcore_bridge_install_all_hook);
+  uintptr_t install_target =
+      g_hooks.remote.targets[SM_SHELLCORE_TARGET_INSTALL_ALL];
+  if (!remote_hook_matches(pid, install_target, install_hook,
+                           g_hooks.hooks[1].original_size)) {
+    g_hooks.status = SHELLCORE_HOOKS_STALE;
+    log_debug("  [SHELLCORE] AppInstallAll hook is no longer installed");
     pthread_mutex_unlock(&g_install_mutex);
     return false;
   }
@@ -423,7 +571,6 @@ bool sm_shellcore_install_title_dir(const char *title_id,
   memcpy(remote_title, title_id, title_len);
   memcpy(remote_dir, install_dir, dir_len);
 
-  pid_t pid = g_hooks.remote.pid;
   uint8_t armed = 1;
   bool written =
       sm_remote_process_write(pid,

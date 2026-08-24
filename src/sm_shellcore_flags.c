@@ -5,7 +5,6 @@
 #include <pthread.h>
 
 #include "sm_game_lifecycle.h"
-#include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_runtime.h"
@@ -618,6 +617,7 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
   uint64_t result_pattern = 0;
   int rc;
   bool changed = false;
+  bool publish_app_focus = false;
   bool entered_shutdown_on_going = false;
   bool entered_main_on_standby = false;
   bool entered_suspend_on_going = false;
@@ -677,15 +677,16 @@ static void poll_shellcore_flag(shellcore_flag_monitor_t *flag) {
           SYSTEM_STATE_MGR_STATUS_SHELLUI_SHUTDOWN_IN_PROGRESS) == 0);
   }
 
+  publish_app_focus =
+      strcmp(flag->name, "SceShellCoreUtilAppFocus") == 0 &&
+      (!flag->has_last_pattern || changed);
   flag->last_pattern = result_pattern;
   flag->has_last_pattern = true;
   flag->last_rc = 0;
   flag->has_last_rc = true;
 
-  if (changed && strcmp(flag->name, "SceShellCoreUtilAppFocus") == 0) {
+  if (publish_app_focus) {
     sm_game_lifecycle_note_app_focus((uint32_t)result_pattern);
-    sm_kstuff_note_app_focus((uint32_t)result_pattern);
-    wake_game_lifecycle_watcher();
   }
   if (entered_shutdown_on_going) {
     request_shutdown_stop("SceSystemStateMgrInfo=SHUTDOWN_ON_GOING");

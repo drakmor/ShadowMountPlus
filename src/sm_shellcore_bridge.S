@@ -1,4 +1,6 @@
 /* Position-independent bridge copied into SceShellCore executable memory. */
+#include "sm_shellcore_protocol_defs.h"
+
     .text
     .p2align 4
     .global sm_shellcore_bridge_blob_start
@@ -33,7 +35,7 @@ sm_shellcore_bridge_launch_hook:
     pushq %r10
     pushq %r11
     subq $8, %rsp
-    movl $1, %edi
+    movl $SM_SHELLCORE_REQUEST_LAUNCH_VALUE, %edi
     /* RSI still contains title_id. */
     call sm_shellcore_bridge_exchange
     addq $8, %rsp
@@ -53,7 +55,7 @@ sm_shellcore_bridge_launch_hook:
     movq %rax, %rbx
     testl %eax, %eax
     jns 1f
-    movl $2, %edi
+    movl $SM_SHELLCORE_REQUEST_LAUNCH_FAILED_VALUE, %edi
     movq %r12, %rsi
     subq $8, %rsp
     call sm_shellcore_bridge_exchange
@@ -92,19 +94,19 @@ sm_shellcore_bridge_exchange:
     pushq %r12
     subq $160, %rsp
 
-    /* Build the fixed 40-byte request. */
+    /* Build the fixed-size request. */
     movq $0, -64(%rbp)
     movq $0, -56(%rbp)
     movq $0, -48(%rbp)
     movq $0, -40(%rbp)
     movq $0, -32(%rbp)
-    movl $0x534d5343, -64(%rbp)
-    movw $1, -60(%rbp)
+    movl $SM_SHELLCORE_PROTOCOL_MAGIC, -64(%rbp)
+    movw $SM_SHELLCORE_PROTOCOL_VERSION, -60(%rbp)
     movw %di, -58(%rbp)
     testq %rsi, %rsi
     je 2f
     leaq -56(%rbp), %rdi
-    movl $31, %ecx
+    movl $(SM_SHELLCORE_REQUEST_TITLE_ID_SIZE - 1), %ecx
 1:
     movb (%rsi), %al
     testb %al, %al
@@ -127,7 +129,7 @@ sm_shellcore_bridge_exchange:
     /* connect(fd, &sockaddr, sockaddr.sun_len) */
     movl %ebx, %edi
     leaq sm_shellcore_bridge_sockaddr(%rip), %rsi
-    movl $31, %edx
+    movzbl sm_shellcore_bridge_sockaddr(%rip), %edx
     call *sm_shellcore_bridge_connect(%rip)
     testl %eax, %eax
     jne 7f
@@ -135,17 +137,17 @@ sm_shellcore_bridge_exchange:
     /* write(fd, &request, sizeof(request)) */
     movl %ebx, %edi
     leaq -64(%rbp), %rsi
-    movl $40, %edx
+    movl $SM_SHELLCORE_REQUEST_SIZE, %edx
     call *sm_shellcore_bridge_write(%rip)
-    cmpq $40, %rax
+    cmpq $SM_SHELLCORE_REQUEST_SIZE, %rax
     jne 7f
 
     /* Only status is needed by launch and launch-failure requests. */
     movl %ebx, %edi
     leaq -68(%rbp), %rsi
-    movl $4, %edx
+    movl $SM_SHELLCORE_RESPONSE_SIZE, %edx
     call *sm_shellcore_bridge_read(%rip)
-    cmpq $4, %rax
+    cmpq $SM_SHELLCORE_RESPONSE_SIZE, %rax
     jne 7f
     movl -68(%rbp), %r12d
     jmp 5f
@@ -183,15 +185,15 @@ sm_shellcore_bridge_write:
 sm_shellcore_bridge_close:
     .quad 0
 sm_shellcore_bridge_sockaddr:
-    .byte 31, 1
-    .asciz "/system_tmp/shadowmount.sock"
-    .zero 75
+    .byte sm_shellcore_bridge_sockaddr_end - sm_shellcore_bridge_sockaddr, 1
+    .asciz SM_SHELLCORE_SOCKET_PATH
+sm_shellcore_bridge_sockaddr_end:
     .p2align 3
 sm_shellcore_bridge_install_armed:
     .byte 0
 sm_shellcore_bridge_install_title_id:
-    .zero 32
+    .zero SM_SHELLCORE_REQUEST_TITLE_ID_SIZE
 sm_shellcore_bridge_install_dir:
-    .zero 1024
+    .zero SM_SHELLCORE_BRIDGE_INSTALL_DIR_SIZE
 sm_shellcore_bridge_blob_end:
     .section .note.GNU-stack,"",@progbits

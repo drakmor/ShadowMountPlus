@@ -4,14 +4,12 @@
 #include <stdint.h>
 
 #include "sm_limits.h"
-
-#define SM_SHELLCORE_SOCKET_PATH "/system_tmp/shadowmount.sock"
-#define SM_SHELLCORE_PROTOCOL_MAGIC 0x534d5343u
-#define SM_SHELLCORE_PROTOCOL_VERSION 1u
+#include "sm_shellcore_protocol_defs.h"
 
 typedef enum {
-  SM_SHELLCORE_REQUEST_LAUNCH = 1,
-  SM_SHELLCORE_REQUEST_LAUNCH_FAILED = 2
+  SM_SHELLCORE_REQUEST_LAUNCH = SM_SHELLCORE_REQUEST_LAUNCH_VALUE,
+  SM_SHELLCORE_REQUEST_LAUNCH_FAILED =
+      SM_SHELLCORE_REQUEST_LAUNCH_FAILED_VALUE
 } sm_shellcore_request_op_t;
 
 typedef struct {
