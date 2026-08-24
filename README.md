@@ -138,6 +138,7 @@ Supported notification languages:
 | Swedish | `sv-SE` |
 | Thai | `th-TH` |
 | Turkish | `tr-TR` |
+| Ukrainian | `uk-UA` |
 | Vietnamese | `vi-VN` |
 
 The public API routes and JSON schemas are documented in [docs/socket-api.md](docs/socket-api.md)

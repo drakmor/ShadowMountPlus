@@ -8,6 +8,7 @@
 
 #define SCE_SYSTEM_SERVICE_PARAM_ID_LANG 1
 #define SM_LANGUAGE_EN_US 1
+#define SM_SYSTEM_LANGUAGE_COUNT 31
 #define SM_LANGUAGE_UNINITIALIZED (-2)
 
 #include "lang/ar_sa.inc"
@@ -37,6 +38,7 @@
 #include "lang/sv_se.inc"
 #include "lang/th_th.inc"
 #include "lang/tr_tr.inc"
+#include "lang/uk_ua.inc"
 #include "lang/vi_vn.inc"
 #include "lang/zh_cn.inc"
 #include "lang/zh_tw.inc"
@@ -64,16 +66,22 @@ static const sm_region_t g_regions[] = {
     {"hu", "hu", "hu-HU", g_hu_hu}, {"gr", "el", "el-GR", g_el_gr},
     {"ro", "ro", "ro-RO", g_ro_ro}, {"th", "th", "th-TH", g_th_th},
     {"vn", "vi", "vi-VN", g_vi_vn}, {"id", "id", "id-ID", g_id_id},
+    {"ua", "uk", "uk-UA", g_uk_ua},
 };
 
 #define SM_REGION_COUNT (sizeof(g_regions) / sizeof(g_regions[0]))
 
-_Static_assert(SM_REGION_COUNT == 30, "unexpected SCE language count");
+_Static_assert(SM_REGION_COUNT == SM_SYSTEM_LANGUAGE_COUNT,
+               "unexpected language count");
 
 static atomic_int g_active_lang = ATOMIC_VAR_INIT(SM_LANGUAGE_UNINITIALIZED);
 
 static bool is_valid_language_id(int32_t language_id) {
   return language_id >= 0 && language_id < (int32_t)SM_REGION_COUNT;
+}
+
+static bool is_valid_system_language_id(int32_t language_id) {
+  return language_id >= 0 && language_id < SM_SYSTEM_LANGUAGE_COUNT;
 }
 
 static bool language_code_matches(const char *value, const char *code) {
@@ -131,7 +139,7 @@ void sm_l10n_init(void) {
   if (auto_language &&
       sceSystemServiceParamGetInt(SCE_SYSTEM_SERVICE_PARAM_ID_LANG,
                                   &sys_lang) == 0 &&
-      is_valid_language_id(sys_lang)) {
+      is_valid_system_language_id(sys_lang)) {
     active_lang = sys_lang;
   } else if (auto_language) {
     active_lang = SM_LANGUAGE_EN_US;
