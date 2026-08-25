@@ -22,6 +22,43 @@ static bool unmount_completed(unmount_result_t result) {
          result.directory_removed;
 }
 
+static bool invalidate_matching_image_cache_entry(
+    int index, const image_cache_entry_t *expected) {
+  image_cache_entry_t current;
+  if (!expected || !get_image_cache_entry(index, &current) ||
+      current.generation != expected->generation ||
+      strcmp(current.path, expected->path) != 0 ||
+      strcmp(current.mount_point, expected->mount_point) != 0 ||
+      current.unit_id != expected->unit_id ||
+      current.backend != expected->backend ||
+      (expected->detach_state.node_identity_valid &&
+       (!current.detach_state.node_identity_valid ||
+        current.detach_state.node_device != expected->detach_state.node_device ||
+        current.detach_state.node_inode != expected->detach_state.node_inode ||
+        current.detach_state.node_rdev != expected->detach_state.node_rdev))) {
+    errno = ESTALE;
+    return false;
+  }
+  return invalidate_image_cache_entry(index, &current);
+}
+
+static void rollback_unpublished_attached_unit(attach_backend_t backend,
+                                               int unit_id,
+                                               const char *devname) {
+  attached_unit_detach_state_t detach_state = {0};
+  bool detached = detach_attached_unit(backend, unit_id, &detach_state);
+  if (!detached && !detach_state.node_identity_valid &&
+      wait_for_dev_node_state(devname, true)) {
+    detached = detach_attached_unit(backend, unit_id, &detach_state);
+  }
+  if (!detached && detach_state.requested)
+    detached = wait_for_attached_unit_release(backend, unit_id, &detach_state);
+  if (!detached) {
+    log_debug("  [IMG][%s] unpublished unit rollback pending: unit=%d error=%s",
+              attach_backend_name(backend), unit_id, strerror(errno));
+  }
+}
+
 static bool image_fs_type_is_pfs(image_fs_type_t fs_type) {
   return fs_type == IMAGE_FS_PFS || fs_type == IMAGE_FS_PFSC_CONTAINER;
 }
@@ -798,9 +835,9 @@ static attach_backend_t select_image_backend(const runtime_config_t *cfg,
 }
 
 static bool attach_image_device(
-    const char *file_path, const char *mount_point, image_fs_type_t fs_type,
-    bool mount_read_only, off_t file_size, attach_backend_t attach_backend,
-    int *unit_id_out, char *devname_out, size_t devname_size,
+    const char *file_path, image_fs_type_t fs_type, bool mount_read_only,
+    off_t file_size, attach_backend_t attach_backend, int *unit_id_out,
+    char *devname_out, size_t devname_size,
     const image_mount_profile_t *profile, uint16_t lvd_image_type,
     uint64_t generation) {
   bool attached = false;
@@ -827,14 +864,9 @@ static bool attach_image_device(
                                 attach_backend)) {
     log_debug("  [IMG][%s] failed to publish attached unit: unit=%d source=%s",
               attach_backend_name(attach_backend), *unit_id_out, file_path);
-    if (cache_image_mount(file_path, mount_point, *unit_id_out,
-                          attach_backend)) {
-      (void)release_runtime_image_mount(file_path);
-    } else {
-      attached_unit_detach_state_t detach_state;
-      memset(&detach_state, 0, sizeof(detach_state));
-      (void)detach_attached_unit(attach_backend, *unit_id_out, &detach_state);
-    }
+    (void)cancel_image_attachment(file_path, generation);
+    rollback_unpublished_attached_unit(attach_backend, *unit_id_out,
+                                       devname_out);
     errno = EIO;
     return false;
   }
@@ -1074,7 +1106,7 @@ static bool try_exfat_lvd_type_fallback(
       .nested_backing_cache = false,
   };
   if (!attach_image_device(
-          file_path, mount_point, IMAGE_FS_EXFAT, mount_read_only, file_size,
+          file_path, IMAGE_FS_EXFAT, mount_read_only, file_size,
           ATTACH_BACKEND_LVD, unit_id_out, devname_out, devname_size,
           &fallback_profile, LVD_ATTACH_IMAGE_TYPE_SINGLE, generation)) {
     return false;
@@ -1228,8 +1260,8 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   memset(devname, 0, sizeof(devname));
   bool attached =
       attach_image_device(
-          file_path, mount_point, fs_type, mount_read_only, st.st_size,
-          attach_backend, &unit_id, devname, sizeof(devname), &profile,
+          file_path, fs_type, mount_read_only, st.st_size, attach_backend,
+          &unit_id, devname, sizeof(devname), &profile,
           get_lvd_image_type(file_path, fs_type, profile.legacy),
           attachment_generation);
   int attach_errno = errno;
@@ -1320,7 +1352,7 @@ static bool unmount_child_image_mounts_for_container(
             : unmount_runtime_image(cached_entry.path, cached_entry.unit_id,
                                     cached_entry.backend);
     if (unmount_completed(result)) {
-      (void)invalidate_image_cache_entry(k, cached_entry.generation);
+      (void)invalidate_matching_image_cache_entry(k, &cached_entry);
       continue;
     }
 
@@ -1335,26 +1367,18 @@ static bool unmount_child_image_mounts_for_container(
 }
 
 static bool detach_cached_image_device(const char *file_path,
+                                       uint64_t generation,
                                        attach_backend_t backend, int unit_id) {
   image_cache_entry_t cached_entry;
-  bool cached_device = claim_image_cache_detach(
-      file_path, unit_id, backend, &cached_entry);
-  if (!cached_device && errno == EINPROGRESS)
+  if (!claim_image_cache_detach(file_path, generation, unit_id, backend,
+                                &cached_entry))
     return false;
 
-  attached_unit_detach_state_t detach_state;
-  memset(&detach_state, 0, sizeof(detach_state));
-  bool detach_was_requested = false;
-  if (cached_device) {
-    detach_state = cached_entry.detach_state;
-    detach_was_requested = detach_state.requested;
-  }
+  attached_unit_detach_state_t detach_state = cached_entry.detach_state;
+  bool detach_was_requested = detach_state.requested;
 
-  bool detached = detach_attached_unit(
-      backend, unit_id, cached_device ? &detach_state : NULL);
+  bool detached = detach_attached_unit(backend, unit_id, &detach_state);
   int detach_errno = errno;
-  if (!cached_device)
-    return detached;
 
   if (!finish_image_cache_detach_attempt(
           file_path, cached_entry.generation, unit_id, backend,
@@ -1402,6 +1426,7 @@ static unmount_result_t unmount_image_impl(const char *file_path, int unit_id,
   build_image_mount_point_for_fs(file_path, fs_type, mount_point);
   int resolved_unit = unit_id;
   attach_backend_t resolved_backend = backend;
+  uint64_t tracked_generation = 0;
 
   if (resolved_unit < 0 || resolved_backend == ATTACH_BACKEND_NONE) {
     if (!resolve_device_from_mount(mount_point, &resolved_backend,
@@ -1412,9 +1437,11 @@ static unmount_result_t unmount_image_impl(const char *file_path, int unit_id,
   }
 
   image_cache_entry_t tracked_entry;
-  if (find_image_cache_entry(file_path, &tracked_entry, NULL) &&
+  bool has_tracked_device =
+      find_image_cache_entry(file_path, &tracked_entry, NULL) &&
       tracked_entry.backend != ATTACH_BACKEND_NONE &&
-      tracked_entry.unit_id >= 0) {
+      tracked_entry.unit_id >= 0;
+  if (has_tracked_device) {
     if (tracked_entry.unit_id != resolved_unit ||
         tracked_entry.backend != resolved_backend) {
       result.error = ESTALE;
@@ -1429,10 +1456,19 @@ static unmount_result_t unmount_image_impl(const char *file_path, int unit_id,
     if (!mark_image_cache_detach_requested(
             tracked_entry.path, tracked_entry.generation,
             tracked_entry.unit_id, tracked_entry.backend)) {
-      result.error = ESTALE;
+      result.error = errno != 0 ? errno : ESTALE;
+      log_debug("  [IMG][%s] unmount deferred before detach reservation: "
+                "source=%s unit=%d error=%s",
+                attach_backend_name(tracked_entry.backend), tracked_entry.path,
+                tracked_entry.unit_id, strerror(result.error));
       errno = result.error;
       return result;
     }
+    tracked_generation = tracked_entry.generation;
+  } else if (resolved_backend != ATTACH_BACKEND_NONE && resolved_unit >= 0) {
+    result.error = ESTALE;
+    errno = result.error;
+    return result;
   }
 
   log_debug("  [IMG][%s] unmount start: source=%s mount=%s unit=%d",
@@ -1482,7 +1518,7 @@ static unmount_result_t unmount_image_impl(const char *file_path, int unit_id,
   result.device_released = true;
   if (resolved_backend != ATTACH_BACKEND_NONE && resolved_unit >= 0) {
     result.device_released = detach_cached_image_device(
-        file_path, resolved_backend, resolved_unit);
+        file_path, tracked_generation, resolved_backend, resolved_unit);
     if (!result.device_released)
       result.error = errno != 0 ? errno : EIO;
   }
@@ -1530,16 +1566,11 @@ static bool release_runtime_image_attachment(const char *file_path,
   }
   if (entry.backend == ATTACH_BACKEND_NONE || entry.unit_id < 0)
     return cancel_image_attachment(file_path, generation);
-  if (!mark_image_cache_detach_requested(
-          entry.path, generation, entry.unit_id, entry.backend)) {
-    errno = ESTALE;
-    return false;
-  }
   unmount_result_t result =
       unmount_runtime_image(entry.path, entry.unit_id, entry.backend);
   if (!unmount_completed(result))
     return false;
-  (void)invalidate_image_cache_entry(index, generation);
+  (void)invalidate_matching_image_cache_entry(index, &entry);
   return true;
 }
 
@@ -1554,15 +1585,11 @@ bool release_runtime_image_mount(const char *file_path) {
   }
   if (entry.backend == ATTACH_BACKEND_NONE || entry.unit_id < 0)
     return true;
-  if (!mark_image_cache_detach_requested(
-          entry.path, entry.generation, entry.unit_id, entry.backend)) {
-    return false;
-  }
   unmount_result_t result =
       unmount_runtime_image(entry.path, entry.unit_id, entry.backend);
   if (!unmount_completed(result))
     return false;
-  (void)invalidate_image_cache_entry(index, entry.generation);
+  (void)invalidate_matching_image_cache_entry(index, &entry);
   return true;
 }
 
@@ -1585,7 +1612,7 @@ bool release_runtime_image_mounts(void) {
       unmount_result_t result =
           unmount_runtime_image(entry.path, entry.unit_id, entry.backend);
       if (unmount_completed(result)) {
-        (void)invalidate_image_cache_entry(k, entry.generation);
+        (void)invalidate_matching_image_cache_entry(k, &entry);
         progress = true;
       } else {
         any_remaining = true;
@@ -1608,7 +1635,7 @@ static bool service_pending_image_detach(
   unmount_result_t result =
       unmount_runtime_image(entry->path, entry->unit_id, entry->backend);
   if (unmount_completed(result))
-    (void)invalidate_image_cache_entry(cache_index, entry->generation);
+    (void)invalidate_matching_image_cache_entry(cache_index, entry);
   return true;
 }
 
@@ -1655,7 +1682,7 @@ void cleanup_stale_image_mounts(void) {
           unmount_image(cached_entry.path, cached_entry.unit_id,
                         cached_entry.backend);
       if (unmount_completed(result))
-        (void)invalidate_image_cache_entry(k, cached_entry.generation);
+        (void)invalidate_matching_image_cache_entry(k, &cached_entry);
       continue;
     }
 
@@ -1714,7 +1741,7 @@ void cleanup_stale_image_mounts_for_root(const char *root) {
           unmount_image(cached_entry.path, cached_entry.unit_id,
                         cached_entry.backend);
       if (unmount_completed(result))
-        (void)invalidate_image_cache_entry(k, cached_entry.generation);
+        (void)invalidate_matching_image_cache_entry(k, &cached_entry);
       continue;
     }
 
@@ -1764,7 +1791,7 @@ bool unmount_usb_image_mounts_for_suspend(void) {
     if (unmount_completed(result)) {
       log_debug("  [IMG][%s] USB suspend unmounted: %s",
                 attach_backend_name(cached_entry.backend), cached_entry.path);
-      (void)invalidate_image_cache_entry(k, cached_entry.generation);
+      (void)invalidate_matching_image_cache_entry(k, &cached_entry);
       continue;
     }
 
@@ -1868,7 +1895,7 @@ bool shutdown_image_mounts(void) {
       unmount_result_t result = unmount_runtime_image(
           cached_entry.path, cached_entry.unit_id, cached_entry.backend);
       if (unmount_completed(result)) {
-        (void)invalidate_image_cache_entry(k, cached_entry.generation);
+        (void)invalidate_matching_image_cache_entry(k, &cached_entry);
         progress = true;
         continue;
       }

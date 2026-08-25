@@ -31,20 +31,25 @@ static uint64_t next_cache_generation(void) {
   return g_image_cache_generation;
 }
 
+static bool attach_backend_is_valid(attach_backend_t backend) {
+  return backend == ATTACH_BACKEND_MD || backend == ATTACH_BACKEND_LVD;
+}
+
 static bool device_identity_matches(
     const attached_unit_detach_state_t *left,
     const attached_unit_detach_state_t *right) {
   if (!left->node_identity_valid || !right->node_identity_valid)
-    return true;
+    return false;
   return left->node_device == right->node_device &&
          left->node_inode == right->node_inode &&
          left->node_rdev == right->node_rdev;
 }
 
-static void capture_attached_unit_identity(struct ImageCache *entry) {
-  memset(&entry->detach_state, 0, sizeof(entry->detach_state));
-  if (entry->backend == ATTACH_BACKEND_NONE || entry->unit_id < 0)
-    return;
+static bool refresh_attached_unit_identity(struct ImageCache *entry) {
+  if (!attach_backend_is_valid(entry->backend) || entry->unit_id < 0)
+    return false;
+  if (entry->detach_state.node_identity_valid)
+    return true;
 
   const char *prefix =
       entry->backend == ATTACH_BACKEND_MD ? "/dev/md" : "/dev/lvd";
@@ -53,12 +58,18 @@ static void capture_attached_unit_identity(struct ImageCache *entry) {
 
   struct stat st;
   if (stat(devname, &st) != 0)
-    return;
+    return false;
 
   entry->detach_state.node_identity_valid = true;
   entry->detach_state.node_device = (uint64_t)st.st_dev;
   entry->detach_state.node_inode = (uint64_t)st.st_ino;
   entry->detach_state.node_rdev = (uint64_t)st.st_rdev;
+  return true;
+}
+
+static void reset_attached_unit_identity(struct ImageCache *entry) {
+  memset(&entry->detach_state, 0, sizeof(entry->detach_state));
+  (void)refresh_attached_unit_identity(entry);
 }
 
 static void copy_cache_entry(int index, image_cache_entry_t *entry_out) {
@@ -285,7 +296,8 @@ bool cancel_image_attachment(const char *path, uint64_t generation) {
 bool publish_image_attachment(const char *path, uint64_t generation,
                               int unit_id, attach_backend_t backend) {
   if (!path || generation == 0 || unit_id < 0 ||
-      backend == ATTACH_BACKEND_NONE) {
+      !attach_backend_is_valid(backend)) {
+    errno = EINVAL;
     return false;
   }
 
@@ -302,15 +314,18 @@ bool publish_image_attachment(const char *path, uint64_t generation,
   struct ImageCache *entry = &g_image_cache[index];
   entry->unit_id = unit_id;
   entry->backend = backend;
-  capture_attached_unit_identity(entry);
+  (void)refresh_attached_unit_identity(entry);
   pthread_mutex_unlock(&g_image_cache_mutex);
   return true;
 }
 
 bool complete_image_attachment(const char *path, uint64_t generation,
                                int unit_id, attach_backend_t backend) {
-  if (!path || generation == 0)
+  if (!path || generation == 0 || unit_id < 0 ||
+      !attach_backend_is_valid(backend)) {
+    errno = EINVAL;
     return false;
+  }
 
   pthread_mutex_lock(&g_image_cache_mutex);
   int index = find_source_path_index(path);
@@ -323,13 +338,19 @@ bool complete_image_attachment(const char *path, uint64_t generation,
   }
 
   g_image_cache[index].state = ATTACHED_DEVICE_MOUNTED;
-  capture_attached_unit_identity(&g_image_cache[index]);
+  (void)refresh_attached_unit_identity(&g_image_cache[index]);
   pthread_mutex_unlock(&g_image_cache_mutex);
   return true;
 }
 
 bool cache_image_mount(const char *path, const char *mount_point, int unit_id,
                        attach_backend_t backend) {
+  if (!path || !mount_point || unit_id < 0 ||
+      !attach_backend_is_valid(backend)) {
+    errno = EINVAL;
+    return false;
+  }
+
   pthread_mutex_lock(&g_image_cache_mutex);
   int entry_index = upsert_image_source_mapping(path, mount_point);
   if (entry_index < 0) {
@@ -343,7 +364,7 @@ bool cache_image_mount(const char *path, const char *mount_point, int unit_id,
   entry->backend = backend;
   entry->state = ATTACHED_DEVICE_MOUNTED;
   entry->detach_attempt_active = false;
-  capture_attached_unit_identity(entry);
+  reset_attached_unit_identity(entry);
   pthread_mutex_unlock(&g_image_cache_mutex);
   return true;
 }
@@ -381,47 +402,62 @@ bool find_image_cache_entry(const char *path, image_cache_entry_t *entry_out,
 bool mark_image_cache_detach_requested(const char *path, uint64_t generation,
                                        int unit_id,
                                        attach_backend_t backend) {
-  if (!path || generation == 0)
+  if (!path || generation == 0 || unit_id < 0 ||
+      !attach_backend_is_valid(backend)) {
+    errno = EINVAL;
     return false;
+  }
 
   pthread_mutex_lock(&g_image_cache_mutex);
   struct ImageCache *entry = find_attachment_record(
       path, generation, unit_id, backend);
   if (!entry) {
     pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = ESTALE;
+    return false;
+  }
+  entry->state = ATTACHED_DEVICE_DETACH_REQUESTED;
+  if (!refresh_attached_unit_identity(entry)) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = EAGAIN;
     return false;
   }
 
-  entry->state = ATTACHED_DEVICE_DETACH_REQUESTED;
   pthread_mutex_unlock(&g_image_cache_mutex);
   return true;
 }
 
-bool claim_image_cache_detach(const char *path, int unit_id,
-                              attach_backend_t backend,
+bool claim_image_cache_detach(const char *path, uint64_t generation,
+                              int unit_id, attach_backend_t backend,
                               image_cache_entry_t *entry_out) {
-  if (!path || !entry_out) {
+  if (!path || generation == 0 || unit_id < 0 ||
+      !attach_backend_is_valid(backend) || !entry_out) {
     errno = EINVAL;
     return false;
   }
 
   pthread_mutex_lock(&g_image_cache_mutex);
-  int index = find_source_path_index(path);
-  if (index < 0 || g_image_cache[index].unit_id != unit_id ||
-      g_image_cache[index].backend != backend) {
+  struct ImageCache *entry =
+      find_attachment_record(path, generation, unit_id, backend);
+  if (!entry) {
     pthread_mutex_unlock(&g_image_cache_mutex);
-    errno = ENOENT;
+    errno = ESTALE;
     return false;
   }
-  if (g_image_cache[index].detach_attempt_active) {
+  if (entry->detach_attempt_active) {
     pthread_mutex_unlock(&g_image_cache_mutex);
     errno = EINPROGRESS;
     return false;
   }
+  if (!refresh_attached_unit_identity(entry)) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = EAGAIN;
+    return false;
+  }
 
-  g_image_cache[index].state = ATTACHED_DEVICE_DETACH_REQUESTED;
-  g_image_cache[index].detach_attempt_active = true;
-  copy_cache_entry(index, entry_out);
+  entry->state = ATTACHED_DEVICE_DETACH_REQUESTED;
+  entry->detach_attempt_active = true;
+  copy_cache_entry((int)(entry - g_image_cache), entry_out);
   pthread_mutex_unlock(&g_image_cache_mutex);
   return true;
 }
@@ -430,8 +466,12 @@ bool finish_image_cache_detach_attempt(
     const char *path, uint64_t generation, int unit_id,
     attach_backend_t backend,
     const attached_unit_detach_state_t *detach_state) {
-  if (!path || !detach_state)
+  if (!path || generation == 0 || unit_id < 0 ||
+      !attach_backend_is_valid(backend) || !detach_state ||
+      !detach_state->node_identity_valid) {
+    errno = EINVAL;
     return false;
+  }
 
   pthread_mutex_lock(&g_image_cache_mutex);
   struct ImageCache *entry = find_attachment_record(
@@ -439,6 +479,7 @@ bool finish_image_cache_detach_attempt(
   if (!entry || !entry->detach_attempt_active ||
       !device_identity_matches(&entry->detach_state, detach_state)) {
     pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = ESTALE;
     return false;
   }
 
@@ -449,12 +490,32 @@ bool finish_image_cache_detach_attempt(
   return true;
 }
 
-bool invalidate_image_cache_entry(int index, uint64_t generation) {
+bool invalidate_image_cache_entry(int index,
+                                  const image_cache_entry_t *expected) {
+  if (!expected) {
+    errno = EINVAL;
+    return false;
+  }
+
   pthread_mutex_lock(&g_image_cache_mutex);
   if (index < 0 || index >= MAX_IMAGE_MOUNTS ||
-      !g_image_cache[index].valid ||
-      g_image_cache[index].generation != generation) {
+      !g_image_cache[index].valid) {
     pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = ESTALE;
+    return false;
+  }
+  const struct ImageCache *entry = &g_image_cache[index];
+  if (entry->generation != expected->generation ||
+      strcmp(entry->path, expected->path) != 0 ||
+      strcmp(entry->mount_point, expected->mount_point) != 0 ||
+      entry->unit_id != expected->unit_id ||
+      entry->backend != expected->backend ||
+      entry->state != expected->state || entry->detach_attempt_active ||
+      entry->detach_state.requested != expected->detach_state.requested ||
+      !device_identity_matches(&entry->detach_state,
+                               &expected->detach_state)) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = ESTALE;
     return false;
   }
   g_image_cache[index].state = ATTACHED_DEVICE_RELEASED;

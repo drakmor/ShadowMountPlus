@@ -212,6 +212,11 @@ static bool device_node_is_mounted(const char *devname,
 static bool detach_target_is_released_or_reused(
     attach_backend_t backend, int unit_id, const char *devname,
     const attached_unit_detach_state_t *state) {
+  if (!state || !state->node_identity_valid) {
+    errno = EAGAIN;
+    return false;
+  }
+
   struct stat st;
   if (stat(devname, &st) != 0) {
     if (errno != ENOENT && errno != ENOTDIR)
@@ -221,10 +226,9 @@ static bool detach_target_is_released_or_reused(
     return true;
   }
 
-  if (state && state->node_identity_valid &&
-      (state->node_device != (uint64_t)st.st_dev ||
-       state->node_inode != (uint64_t)st.st_ino ||
-       state->node_rdev != (uint64_t)st.st_rdev)) {
+  if (state->node_device != (uint64_t)st.st_dev ||
+      state->node_inode != (uint64_t)st.st_ino ||
+      state->node_rdev != (uint64_t)st.st_rdev) {
     log_debug("  [IMG][%s] detach target released: unit=%d node identity "
               "changed",
               attach_backend_name(backend), unit_id);
@@ -252,43 +256,39 @@ static attached_unit_detach_prepare_t prepare_attached_unit_detach(
     const attached_unit_detach_state_t *state, char devname[64],
     attached_unit_detach_state_t *request_state) {
   build_attached_unit_devname(backend, unit_id, devname);
+  *request_state = *state;
+  if (!request_state->node_identity_valid &&
+      !read_device_node_identity(devname, request_state)) {
+    log_debug("  [IMG][%s] detach deferred without device identity: unit=%d",
+              attach_backend_name(backend), unit_id);
+    errno = EAGAIN;
+    return ATTACHED_UNIT_DETACH_PENDING;
+  }
+
   // A freshly attached unit may not have published its device node yet. An
   // absent node is only proof of release after the node identity was observed
   // or a detach request was accepted.
-  bool release_can_be_observed =
-      !state || state->requested || state->node_identity_valid;
-  if (release_can_be_observed &&
-      detach_target_is_released_or_reused(backend, unit_id, devname, state)) {
+  if (detach_target_is_released_or_reused(backend, unit_id, devname,
+                                          request_state)) {
     return ATTACHED_UNIT_DETACH_COMPLETE;
   }
-  if (!release_can_be_observed) {
-    struct stat st;
-    char mount_point[MNAMELEN];
-    if (stat(devname, &st) == 0 &&
-        device_node_is_mounted(devname, mount_point)) {
-      log_debug("  [IMG][%s] detach target released: unit=%d reused at %s",
-                attach_backend_name(backend), unit_id, mount_point);
-      return ATTACHED_UNIT_DETACH_COMPLETE;
-    }
-  }
 
-  if (state && state->requested) {
+  if (request_state->requested) {
     errno = EINPROGRESS;
     return ATTACHED_UNIT_DETACH_PENDING;
   }
 
-  if (state)
-    *request_state = *state;
-  else
-    memset(request_state, 0, sizeof(*request_state));
-  if (!request_state->node_identity_valid)
-    (void)read_device_node_identity(devname, request_state);
   return ATTACHED_UNIT_DETACH_REQUEST;
 }
 
 bool wait_for_attached_unit_release(
     attach_backend_t backend, int unit_id,
     const attached_unit_detach_state_t *state) {
+  if (!state || !state->node_identity_valid) {
+    errno = EAGAIN;
+    return false;
+  }
+
   char devname[64];
   build_attached_unit_devname(backend, unit_id, devname);
   if (wait_for_dev_node_state(devname, false))
@@ -303,17 +303,12 @@ bool wait_for_attached_unit_release(
 }
 
 static bool finish_accepted_detach(
-    attach_backend_t backend, int unit_id,
     attached_unit_detach_state_t *state,
     attached_unit_detach_state_t *request_state) {
   request_state->requested = true;
-  if (state) {
-    *state = *request_state;
-    errno = EINPROGRESS;
-    return false;
-  }
-
-  return wait_for_attached_unit_release(backend, unit_id, request_state);
+  *state = *request_state;
+  errno = EINPROGRESS;
+  return false;
 }
 
 static bool finish_failed_detach(attach_backend_t backend, int unit_id,
@@ -322,7 +317,7 @@ static bool finish_failed_detach(attach_backend_t backend, int unit_id,
                                  int detach_errno) {
   // Before a detach request is accepted, an unobserved node may still belong
   // to the freshly attached unit. Keep it queued when the ioctl itself fails.
-  if (state && state->node_identity_valid &&
+  if (state->node_identity_valid &&
       detach_target_is_released_or_reused(backend, unit_id, devname, state)) {
     return true;
   }
@@ -332,9 +327,6 @@ static bool finish_failed_detach(attach_backend_t backend, int unit_id,
 
 static bool detach_lvd_unit(int unit_id,
                             attached_unit_detach_state_t *state) {
-  if (unit_id < 0)
-    return true;
-
   char devname[64];
   attached_unit_detach_state_t request_state;
   attached_unit_detach_prepare_t prepare = prepare_attached_unit_detach(
@@ -367,15 +359,11 @@ static bool detach_lvd_unit(int unit_id,
   }
   close(fd);
 
-  return finish_accepted_detach(ATTACH_BACKEND_LVD, unit_id, state,
-                                &request_state);
+  return finish_accepted_detach(state, &request_state);
 }
 
 static bool detach_md_unit(int unit_id,
                            attached_unit_detach_state_t *state) {
-  if (unit_id < 0)
-    return true;
-
   char devname[64];
   attached_unit_detach_state_t request_state;
   attached_unit_detach_prepare_t prepare = prepare_attached_unit_detach(
@@ -409,15 +397,17 @@ static bool detach_md_unit(int unit_id,
   }
   close(fd);
 
-  return finish_accepted_detach(ATTACH_BACKEND_MD, unit_id, state,
-                                &request_state);
+  return finish_accepted_detach(state, &request_state);
 }
 
 bool detach_attached_unit(attach_backend_t backend, int unit_id,
                           attached_unit_detach_state_t *state) {
+  if (!state || unit_id < 0 ||
+      (backend != ATTACH_BACKEND_MD && backend != ATTACH_BACKEND_LVD)) {
+    errno = EINVAL;
+    return false;
+  }
   if (backend == ATTACH_BACKEND_MD)
     return detach_md_unit(unit_id, state);
-  else if (backend == ATTACH_BACKEND_LVD)
-    return detach_lvd_unit(unit_id, state);
-  return true;
+  return detach_lvd_unit(unit_id, state);
 }

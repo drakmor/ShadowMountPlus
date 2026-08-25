@@ -43,16 +43,17 @@ bool mark_image_cache_detach_requested(const char *path, uint64_t generation,
                                        int unit_id,
                                        attach_backend_t backend);
 // Claim one detach attempt and return a stable snapshot of its record.
-bool claim_image_cache_detach(const char *path, int unit_id,
-                              attach_backend_t backend,
+bool claim_image_cache_detach(const char *path, uint64_t generation,
+                              int unit_id, attach_backend_t backend,
                               image_cache_entry_t *entry_out);
 // Publish the result of a claimed detach attempt and release its claim.
 bool finish_image_cache_detach_attempt(
     const char *path, uint64_t generation, int unit_id,
     attach_backend_t backend,
     const attached_unit_detach_state_t *detach_state);
-// Invalidate the same generation of a cached image mount entry.
-bool invalidate_image_cache_entry(int index, uint64_t generation);
+// Invalidate only when the slot still owns the complete expected attachment.
+bool invalidate_image_cache_entry(int index,
+                                  const image_cache_entry_t *expected);
 // Resolve a device mapping from the in-memory mount cache.
 bool resolve_device_from_mount_cache(const char *mount_point,
                                      attach_backend_t *backend_out,
