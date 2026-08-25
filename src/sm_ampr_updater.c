@@ -922,11 +922,13 @@ void sm_ampr_updater_stop(void) {
   g_ampr_updater.stop_requested = true;
   g_ampr_updater.wake_requested = true;
   g_ampr_updater.config_generation++;
-  if (g_ampr_updater.active_request_id >= 0)
-    (void)sceHttp2AbortRequest(g_ampr_updater.active_request_id);
+  int active_request_id = g_ampr_updater.active_request_id;
+  g_ampr_updater.active_request_id = -1;
   pthread_cond_broadcast(&g_ampr_updater.cond);
   pthread_mutex_unlock(&g_ampr_updater.mutex);
 
+  if (active_request_id >= 0)
+    (void)sceHttp2AbortRequest(active_request_id);
   (void)pthread_join(g_ampr_updater.thread, NULL);
 
   pthread_mutex_lock(&g_ampr_updater.mutex);
@@ -950,8 +952,11 @@ void sm_ampr_updater_on_config_reload(const runtime_config_t *old_cfg,
   pthread_mutex_lock(&g_ampr_updater.mutex);
   g_ampr_updater.config_generation++;
   g_ampr_updater.wake_requested = true;
-  if (g_ampr_updater.active_request_id >= 0)
-    (void)sceHttp2AbortRequest(g_ampr_updater.active_request_id);
+  int active_request_id = g_ampr_updater.active_request_id;
+  g_ampr_updater.active_request_id = -1;
   pthread_cond_broadcast(&g_ampr_updater.cond);
   pthread_mutex_unlock(&g_ampr_updater.mutex);
+
+  if (active_request_id >= 0)
+    (void)sceHttp2AbortRequest(active_request_id);
 }
