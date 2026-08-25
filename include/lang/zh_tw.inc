@@ -1,8 +1,8 @@
 static const char *const g_zh_tw[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "前往除錯設定",
-    /* English: ShadowMount+ v%s © Drakmor and Community */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor 與社群",
+    /* English: ShadowMount+ v%s\n© Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor 與社群",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 已淘汰，將使用 scan_depth=2。",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -89,4 +89,8 @@ static const char *const g_zh_tw[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+：無法安裝 ShellCore 掛鉤",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "目標溫度 %u °C → %u °C",
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    [SM_L10N_USB_CONNECTED_SCANNING] = "外接磁碟機 %s 已連接。\n可用：%llu.%llu / %llu.%llu GB（區塊大小 %llu KB）\n磁碟機上的遊戲：%d",
+    /* English: External drive %s disconnected */
+    [SM_L10N_USB_DISCONNECTED] = "外接磁碟機 %s 已中斷連接",
 };

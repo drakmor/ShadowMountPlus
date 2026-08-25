@@ -1,8 +1,8 @@
 static const char *const g_cs_cz[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Přejít do nastavení ladění",
-    /* English: ShadowMount+ v%s © Drakmor and Community */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor a komunita",
+    /* English: ShadowMount+ v%s\n© Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor a komunita",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 je zastaralé, používá se scan_depth=2.",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -89,4 +89,8 @@ static const char *const g_cs_cz[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: instalace hooků ShellCore se nezdařila",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Cílová teplota %u °C → %u °C",
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Externí disk %s připojen.\nVolné místo: %llu.%llu z %llu.%llu GB (blok %llu KB)\nHer na disku: %d",
+    /* English: External drive %s disconnected */
+    [SM_L10N_USB_DISCONNECTED] = "Externí disk %s odpojen",
 };

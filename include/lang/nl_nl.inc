@@ -1,8 +1,8 @@
 static const char *const g_nl_nl[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Ga naar debug-instellingen",
-    /* English: ShadowMount+ v%s © Drakmor and Community */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor en de community",
+    /* English: ShadowMount+ v%s\n© Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor en de community",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 is verouderd, scan_depth=2 wordt gebruikt.",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -89,4 +89,8 @@ static const char *const g_nl_nl[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: installeren van ShellCore-hooks mislukt",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Doeltemperatuur %u °C → %u °C",
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Externe schijf %s aangesloten.\nVrij: %llu.%llu van %llu.%llu GB (blokgrootte %llu KB)\nGames op de schijf: %d",
+    /* English: External drive %s disconnected */
+    [SM_L10N_USB_DISCONNECTED] = "Externe schijf %s losgekoppeld",
 };

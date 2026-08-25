@@ -1,8 +1,8 @@
 static const char *const g_uk_ua[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Перейти до налаштувань налагодження",
-    /* English: ShadowMount+ v%s © Drakmor and Community */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor і спільнота",
+    /* English: ShadowMount+ v%s\n© Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor і спільнота",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: параметр recursive_scan=1 застарів; використовується scan_depth=2.",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -89,4 +89,8 @@ static const char *const g_uk_ua[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: не вдалося встановити хуки ShellCore",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Цільова температура %u °C → %u °C",
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Зовнішній диск %s підключено.\nВільно %llu.%llu із %llu.%llu ГБ (блок %llu КБ)\nІгор на диску: %d",
+    /* English: External drive %s disconnected */
+    [SM_L10N_USB_DISCONNECTED] = "Зовнішній диск %s відключено",
 };

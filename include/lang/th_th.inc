@@ -1,8 +1,8 @@
 static const char *const g_th_th[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "ไปที่การตั้งค่าดีบัก",
-    /* English: ShadowMount+ v%s © Drakmor and Community */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor และชุมชน",
+    /* English: ShadowMount+ v%s\n© Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor และชุมชน",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 เลิกใช้แล้ว จะใช้ scan_depth=2",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -89,4 +89,8 @@ static const char *const g_th_th[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ไม่สามารถติดตั้งฮุก ShellCore ได้",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "อุณหภูมิเป้าหมาย %u °C → %u °C",
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    [SM_L10N_USB_CONNECTED_SCANNING] = "เชื่อมต่อไดรฟ์ภายนอก %s แล้ว\nว่าง: %llu.%llu จาก %llu.%llu GB (ขนาดบล็อก %llu KB)\nเกมในไดรฟ์: %d",
+    /* English: External drive %s disconnected */
+    [SM_L10N_USB_DISCONNECTED] = "ตัดการเชื่อมต่อไดรฟ์ภายนอก %s แล้ว",
 };

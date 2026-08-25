@@ -1,8 +1,8 @@
 static const char *const g_el_gr[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Μετάβαση στις ρυθμίσεις αποσφαλμάτωσης",
-    /* English: ShadowMount+ v%s © Drakmor and Community */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor και η κοινότητα",
+    /* English: ShadowMount+ v%s\n© Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor και η κοινότητα",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: το recursive_scan=1 είναι παρωχημένο, χρησιμοποιείται scan_depth=2.",
     /* English: ShadowMount+: scan depth %u enabled. */
@@ -89,4 +89,8 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: απέτυχε η εγκατάσταση των hooks του ShellCore",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Θερμοκρασία-στόχος %u °C → %u °C",
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Ο εξωτερικός δίσκος %s συνδέθηκε.\nΕλεύθερα: %llu.%llu από %llu.%llu GB (μέγεθος μπλοκ %llu KB)\nΠαιχνίδια στον δίσκο: %d",
+    /* English: External drive %s disconnected */
+    [SM_L10N_USB_DISCONNECTED] = "Ο εξωτερικός δίσκος %s αποσυνδέθηκε",
 };

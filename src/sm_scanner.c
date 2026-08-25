@@ -39,6 +39,9 @@
 #define SCANNER_CONFIG_PROBE_INTERVAL_US 10000000ull
 #define SCANNER_MANUAL_RELOAD_DEBOUNCE_US 250000ull
 #define SCANNER_MANUAL_PROBE_INTERVAL_US 10000000ull
+#define SCANNER_USB_SLOT_COUNT 8
+#define SCANNER_USB_MOUNT_PROBE_DELAY_US 1000000ull
+#define SCANNER_GIB_BYTES (1024ull * 1024ull * 1024ull)
 #define SCANNER_FAKELIB_CACHE_CLEANUP_INTERVAL_US                         \
   (24ull * 60ull * 60ull * 1000000ull)
 
@@ -65,11 +68,13 @@ typedef struct {
   bool cleanup_pending;
   bool watch_tree_stale;
   bool root_present;
+  bool usb_connect_counted;
   uint8_t watch_tree_rebuild_depth;
   scanner_watch_kind_t watch_tree_rebuild_kind;
   uint64_t root_device;
   uint64_t root_inode;
   uint64_t ready_after_us;
+  int usb_connect_found_games;
   char watch_tree_rebuild_path[MAX_PATH];
 } scanner_root_state_t;
 
@@ -78,6 +83,12 @@ typedef struct {
   uint8_t depth;
   scanner_watch_kind_t kind;
 } scanner_event_subscription_t;
+
+typedef struct {
+  uint64_t available_tenths;
+  uint64_t capacity_tenths;
+  uint64_t block_size_kb;
+} scanner_usb_info_t;
 
 static int g_scanner_wake_pipe[2] = {-1, -1};
 static atomic_bool g_usb_watches_suspended = ATOMIC_VAR_INIT(true);
@@ -97,6 +108,10 @@ static uint64_t g_scanner_config_reload_ready_after_us = 0;
 static uint64_t g_scanner_config_probe_due_us = 0;
 static uint64_t g_scanner_manual_scan_due_us = 0;
 static uint64_t g_scanner_manual_probe_due_us = 0;
+static uint8_t g_scanner_usb_mounted_mask = 0;
+static uint8_t g_scanner_usb_scan_result_pending_mask = 0;
+static scanner_usb_info_t g_scanner_usb_info[SCANNER_USB_SLOT_COUNT];
+static uint64_t g_scanner_usb_mount_probe_due_us = 0;
 
 static uint64_t scanner_stability_wait_us(void) {
   return (uint64_t)runtime_config()->stability_wait_seconds * 1000000ull;
@@ -126,6 +141,130 @@ static void schedule_manual_probe(uint64_t now_us) {
 
 static void reset_scanner_root_states(void) {
   memset(g_scanner_root_states, 0, sizeof(g_scanner_root_states));
+}
+
+static int scanner_usb_slot_for_path(const char *path) {
+  static const char prefix[] = "/mnt/usb";
+  const size_t prefix_len = sizeof(prefix) - 1u;
+
+  if (!path || strncmp(path, prefix, prefix_len) != 0)
+    return -1;
+
+  char slot = path[prefix_len];
+  char suffix = path[prefix_len + 1u];
+  if (slot < '0' || slot >= '0' + SCANNER_USB_SLOT_COUNT ||
+      (suffix != '\0' && suffix != '/')) {
+    return -1;
+  }
+  return slot - '0';
+}
+
+static void build_scanner_usb_root_path(int slot,
+                                        char usb_root[sizeof("/mnt/usb0")]) {
+  (void)strlcpy(usb_root, "/mnt/usb0", sizeof("/mnt/usb0"));
+  usb_root[8] = (char)('0' + slot);
+}
+
+static bool scanner_usb_slot_has_scan_root(int slot) {
+  for (int i = 0; i < get_scan_path_count(); i++) {
+    if (scanner_usb_slot_for_path(get_scan_path(i)) == slot)
+      return true;
+  }
+  return false;
+}
+
+static void reset_scanner_usb_scan_counts(int slot) {
+  for (int i = 0; i < get_scan_path_count(); i++) {
+    if (scanner_usb_slot_for_path(get_scan_path(i)) != slot)
+      continue;
+    g_scanner_root_states[i].usb_connect_counted = false;
+    g_scanner_root_states[i].usb_connect_found_games = 0;
+  }
+}
+
+static void reset_scanner_usb_mount_state(void) {
+  g_scanner_usb_mounted_mask = 0;
+  g_scanner_usb_scan_result_pending_mask = 0;
+  memset(g_scanner_usb_info, 0, sizeof(g_scanner_usb_info));
+  g_scanner_usb_mount_probe_due_us = 0;
+  for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; slot++) {
+    char usb_root[sizeof("/mnt/usb0")];
+    build_scanner_usb_root_path(slot, usb_root);
+    if (usb_storage_root_mounted(usb_root))
+      g_scanner_usb_mounted_mask |= (uint8_t)(1u << slot);
+  }
+}
+
+static uint64_t bytes_to_gib_tenths(uint64_t bytes) {
+  uint64_t whole = bytes / SCANNER_GIB_BYTES;
+  uint64_t remainder = bytes % SCANNER_GIB_BYTES;
+  return whole * 10ull +
+         (remainder * 10ull + SCANNER_GIB_BYTES / 2ull) /
+             SCANNER_GIB_BYTES;
+}
+
+static bool notify_scanner_usb_mount_change(const char *path) {
+  int slot = scanner_usb_slot_for_path(path);
+  if (slot < 0)
+    return false;
+
+  char usb_root[sizeof("/mnt/usb0")];
+  build_scanner_usb_root_path(slot, usb_root);
+  uint8_t slot_mask = (uint8_t)(1u << slot);
+  bool mounted = usb_storage_root_mounted(usb_root);
+  bool was_mounted = (g_scanner_usb_mounted_mask & slot_mask) != 0;
+  if (mounted == was_mounted)
+    return false;
+
+  if (mounted) {
+    struct statfs sfs;
+    if (statfs(usb_root, &sfs) != 0) {
+      log_debug("[SCAN] USB storage info unavailable for %s: %s", usb_root,
+                strerror(errno));
+      return false;
+    }
+
+    uint64_t block_size = (uint64_t)sfs.f_bsize;
+    uint64_t capacity_bytes = (uint64_t)sfs.f_blocks * block_size;
+    uint64_t available_bytes = (uint64_t)sfs.f_bavail * block_size;
+    uint64_t capacity_tenths = bytes_to_gib_tenths(capacity_bytes);
+    uint64_t available_tenths = bytes_to_gib_tenths(available_bytes);
+    uint64_t block_size_kb = (block_size + 1023ull) / 1024ull;
+
+    g_scanner_usb_mounted_mask |= slot_mask;
+    if (scanner_usb_slot_has_scan_root(slot)) {
+      g_scanner_usb_scan_result_pending_mask |= slot_mask;
+      reset_scanner_usb_scan_counts(slot);
+    }
+    g_scanner_usb_info[slot].available_tenths = available_tenths;
+    g_scanner_usb_info[slot].capacity_tenths = capacity_tenths;
+    g_scanner_usb_info[slot].block_size_kb = block_size_kb;
+    log_debug("[SCAN] USB storage connected; scan scheduled: %s "
+              "capacity=%lluB available=%lluB block_size=%lluB",
+              usb_root, (unsigned long long)capacity_bytes,
+              (unsigned long long)available_bytes,
+              (unsigned long long)block_size);
+    return true;
+  }
+
+  g_scanner_usb_mounted_mask &= (uint8_t)~slot_mask;
+  g_scanner_usb_scan_result_pending_mask &= (uint8_t)~slot_mask;
+  reset_scanner_usb_scan_counts(slot);
+  memset(&g_scanner_usb_info[slot], 0, sizeof(g_scanner_usb_info[slot]));
+  log_debug("[SCAN] USB storage disconnected: %s", usb_root);
+  notify_system_info_l10n(SM_L10N_USB_DISCONNECTED, usb_root);
+  return false;
+}
+
+static void schedule_scanner_usb_mount_probe(const char *path,
+                                             uint64_t now_us) {
+  int slot = scanner_usb_slot_for_path(path);
+  if (slot < 0 ||
+      (g_scanner_usb_mounted_mask & (uint8_t)(1u << slot)) != 0 ||
+      g_scanner_usb_mount_probe_due_us != 0) {
+    return;
+  }
+  g_scanner_usb_mount_probe_due_us = now_us + SCANNER_USB_MOUNT_PROBE_DELAY_US;
 }
 
 static void reset_scanner_root_watch_heads(void) {
@@ -790,6 +929,84 @@ static bool suspend_usb_scan_root_watch_trees(void) {
 static void schedule_scan_root_dirty(int scan_root_index, uint64_t now_us,
                                      bool immediate);
 
+static void schedule_scan_roots_for_usb_slot_except(int slot,
+                                                    int excluded_root_index,
+                                                    uint64_t now_us) {
+  for (int i = 0; i < get_scan_path_count(); i++) {
+    if (i != excluded_root_index &&
+        scanner_usb_slot_for_path(get_scan_path(i)) == slot) {
+      schedule_scan_root_dirty(i, now_us, true);
+    }
+  }
+}
+
+static void schedule_scan_roots_for_usb_slot(int slot, uint64_t now_us) {
+  schedule_scan_roots_for_usb_slot_except(slot, -1, now_us);
+}
+
+static bool scanner_usb_slot_scan_incomplete(int slot) {
+  for (int i = 0; i < get_scan_path_count(); i++) {
+    if (scanner_usb_slot_for_path(get_scan_path(i)) != slot)
+      continue;
+    if (g_scanner_root_states[i].dirty ||
+        !g_scanner_root_states[i].usb_connect_counted) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void notify_scanner_usb_scan_complete(int slot) {
+  uint8_t slot_mask = (uint8_t)(1u << slot);
+  if ((g_scanner_usb_scan_result_pending_mask & slot_mask) == 0 ||
+      (g_scanner_usb_mounted_mask & slot_mask) == 0 ||
+      scanner_usb_slot_scan_incomplete(slot)) {
+    return;
+  }
+
+  char usb_root[sizeof("/mnt/usb0")];
+  build_scanner_usb_root_path(slot, usb_root);
+  int game_count = 0;
+  for (int i = 0; i < get_scan_path_count(); i++) {
+    if (scanner_usb_slot_for_path(get_scan_path(i)) == slot)
+      game_count += g_scanner_root_states[i].usb_connect_found_games;
+  }
+
+  g_scanner_usb_scan_result_pending_mask &= (uint8_t)~slot_mask;
+  log_debug("[SCAN] USB storage scan complete: %s games=%d", usb_root,
+            game_count);
+  const scanner_usb_info_t *info = &g_scanner_usb_info[slot];
+  notify_system_info_l10n(
+      SM_L10N_USB_CONNECTED_SCANNING, usb_root,
+      (unsigned long long)(info->available_tenths / 10ull),
+      (unsigned long long)(info->available_tenths % 10ull),
+      (unsigned long long)(info->capacity_tenths / 10ull),
+      (unsigned long long)(info->capacity_tenths % 10ull),
+      (unsigned long long)info->block_size_kb, game_count);
+}
+
+static void schedule_pending_scanner_usb_scans(uint64_t now_us) {
+  for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; slot++) {
+    if ((g_scanner_usb_scan_result_pending_mask & (uint8_t)(1u << slot)) != 0)
+      schedule_scan_roots_for_usb_slot(slot, now_us);
+  }
+}
+
+static void process_due_scanner_usb_mount_probes(uint64_t now_us) {
+  if (g_scanner_usb_mount_probe_due_us == 0 ||
+      g_scanner_usb_mount_probe_due_us > now_us) {
+    return;
+  }
+
+  g_scanner_usb_mount_probe_due_us = 0;
+  for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; slot++) {
+    char usb_root[sizeof("/mnt/usb0")];
+    build_scanner_usb_root_path(slot, usb_root);
+    if (notify_scanner_usb_mount_change(usb_root))
+      schedule_scan_roots_for_usb_slot(slot, now_us);
+  }
+}
+
 static bool resume_usb_scan_root_watch_trees(int kq) {
   uint64_t now_us = monotonic_time_us();
   for (int i = 0; i < get_scan_path_count(); i++) {
@@ -822,6 +1039,12 @@ static void schedule_scan_root_cleanup(int scan_root_index) {
 static void schedule_scan_root_dirty(int scan_root_index, uint64_t now_us,
                                      bool immediate) {
   scanner_root_state_t *state = &g_scanner_root_states[scan_root_index];
+  int usb_slot = scanner_usb_slot_for_path(get_scan_path(scan_root_index));
+  if (usb_slot >= 0 &&
+      (g_scanner_usb_scan_result_pending_mask &
+       (uint8_t)(1u << usb_slot)) != 0) {
+    state->usb_connect_counted = false;
+  }
   uint64_t ready_after_us =
       immediate ? now_us : now_us + scanner_stability_wait_us();
 
@@ -1054,6 +1277,14 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
   if (should_abort_scan_cycle())
     return false;
 
+  if (!startup_sync) {
+    for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; slot++) {
+      char usb_root[sizeof("/mnt/usb0")];
+      build_scanner_usb_root_path(slot, usb_root);
+      (void)notify_scanner_usb_mount_change(usb_root);
+    }
+  }
+
   bool unstable_found = false;
   cleanup_lost_sources_before_scan();
   if (should_abort_scan_cycle())
@@ -1101,20 +1332,34 @@ static bool run_targeted_scan_cycle(int scan_root_index,
   const char *scan_root = get_scan_path(scan_root_index);
   scan_candidate_t *candidates = g_scanner_scan_candidates;
 
-  log_debug("[SCAN] running targeted scan for %s", scan_root);
-
   if (should_abort_scan_cycle())
     return false;
+
+  int usb_slot = scanner_usb_slot_for_path(scan_root);
+  if (notify_scanner_usb_mount_change(scan_root)) {
+    schedule_scan_roots_for_usb_slot_except(usb_slot, scan_root_index,
+                                            monotonic_time_us());
+  }
+  log_debug("[SCAN] running targeted scan for %s", scan_root);
 
   bool unstable_found = false;
   cleanup_lost_sources_for_scan_root(scan_root);
   if (should_abort_scan_cycle())
     return false;
 
+  int total_found_games = 0;
   int candidate_count = collect_scan_candidates_for_scan_root(
-      scan_root, candidates, MAX_PENDING, NULL, &unstable_found);
+      scan_root, candidates, MAX_PENDING, &total_found_games, &unstable_found);
   if (should_abort_scan_cycle())
     return false;
+
+  if (usb_slot >= 0 && !unstable_found &&
+      (g_scanner_usb_scan_result_pending_mask &
+       (uint8_t)(1u << usb_slot)) != 0) {
+    scanner_root_state_t *state = &g_scanner_root_states[scan_root_index];
+    state->usb_connect_found_games = total_found_games;
+    state->usb_connect_counted = true;
+  }
 
   process_scan_candidates(candidates, candidate_count);
   if (should_abort_scan_cycle())
@@ -1198,6 +1443,12 @@ static uint64_t compute_next_scan_deadline_us(uint64_t now_us,
   if (g_scanner_manual_fd < 0 && g_scanner_manual_probe_due_us != 0 &&
       (next_deadline == 0 || g_scanner_manual_probe_due_us < next_deadline)) {
     next_deadline = g_scanner_manual_probe_due_us;
+  }
+
+  if (g_scanner_usb_mount_probe_due_us != 0 &&
+      (next_deadline == 0 ||
+       g_scanner_usb_mount_probe_due_us < next_deadline)) {
+    next_deadline = g_scanner_usb_mount_probe_due_us;
   }
 
   if (include_scan_work) {
@@ -1356,10 +1607,23 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
           };
     }
 
+    uint8_t checked_usb_slots = 0;
     for (size_t subscription_index = 0;
          subscription_index < subscription_count; subscription_index++) {
       const scanner_event_subscription_t *subscription =
           &subscriptions[subscription_index];
+      const char *scan_root = get_scan_path(subscription->scan_root_index);
+      int usb_slot = scanner_usb_slot_for_path(scan_root);
+      if (usb_slot >= 0) {
+        uint8_t slot_mask = (uint8_t)(1u << usb_slot);
+        if ((checked_usb_slots & slot_mask) == 0) {
+          checked_usb_slots |= slot_mask;
+          if (notify_scanner_usb_mount_change(scan_root))
+            schedule_scan_roots_for_usb_slot(usb_slot, now_us);
+        }
+      }
+      if (subscription->kind == SCANNER_WATCH_SCAN_ROOT_PARENT)
+        schedule_scanner_usb_mount_probe(scan_root, now_us);
 
       if (subscription->kind == SCANNER_WATCH_SCAN_ROOT_PARENT) {
         if (!handle_scan_root_parent_event(kq, subscription, watched_path,
@@ -1436,6 +1700,7 @@ bool sm_scanner_init(void) {
   reset_scanner_root_states();
   clear_scanner_config_reload_state();
   clear_scanner_manual_scan_state();
+  reset_scanner_usb_mount_state();
   atomic_store_explicit(&g_usb_watches_suspended, true,
                         memory_order_release);
 
@@ -1561,6 +1826,7 @@ void sm_scanner_run_loop(void) {
           return;
         }
         clear_all_dirty_scan_roots();
+        g_scanner_usb_mount_probe_due_us = 0;
         atomic_store_explicit(&g_usb_watches_suspended, true,
                               memory_order_release);
         wake_game_lifecycle_watcher();
@@ -1623,6 +1889,7 @@ void sm_scanner_run_loop(void) {
         request_scanner_shutdown("scanner watcher refresh failed");
         return;
       }
+      schedule_pending_scanner_usb_scans(monotonic_time_us());
 
       uint64_t now_us = monotonic_time_us();
       next_full_resync_us = now_us + scanner_full_resync_interval_us();
@@ -1635,6 +1902,7 @@ void sm_scanner_run_loop(void) {
     }
 
     uint64_t now_us = monotonic_time_us();
+    process_due_scanner_usb_mount_probes(now_us);
     game_mount_busy = sm_game_lifecycle_has_active_game() ||
                       sm_shellcore_service_has_prepared_mount();
     if (game_mount_busy) {
@@ -1718,6 +1986,7 @@ void sm_scanner_run_loop(void) {
         request_scanner_shutdown("scanner watcher refresh after manual scan failed");
         return;
       }
+      schedule_pending_scanner_usb_scans(monotonic_time_us());
 
       now_us = monotonic_time_us();
       next_full_resync_us = now_us + scanner_full_resync_interval_us();
@@ -1758,6 +2027,7 @@ void sm_scanner_run_loop(void) {
         request_scanner_shutdown("scanner watcher refresh after full resync failed");
         return;
       }
+      schedule_pending_scanner_usb_scans(monotonic_time_us());
 
       now_us = monotonic_time_us();
       next_full_resync_us = now_us + scanner_full_resync_interval_us();
@@ -1838,6 +2108,9 @@ void sm_scanner_run_loop(void) {
 
       if (unstable_found)
         schedule_scan_root_dirty(dirty_root_index, monotonic_time_us(), false);
+      int usb_slot = scanner_usb_slot_for_path(get_scan_path(dirty_root_index));
+      if (usb_slot >= 0)
+        notify_scanner_usb_scan_complete(usb_slot);
       continue;
     }
 
@@ -1875,6 +2148,10 @@ void sm_scanner_shutdown(void) {
   reset_scanner_root_states();
   clear_scanner_config_reload_state();
   clear_scanner_manual_scan_state();
+  g_scanner_usb_mounted_mask = 0;
+  g_scanner_usb_scan_result_pending_mask = 0;
+  memset(g_scanner_usb_info, 0, sizeof(g_scanner_usb_info));
+  g_scanner_usb_mount_probe_due_us = 0;
   atomic_store_explicit(&g_usb_watches_suspended, true,
                         memory_order_release);
 }

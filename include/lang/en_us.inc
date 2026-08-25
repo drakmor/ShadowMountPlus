@@ -1,6 +1,6 @@
 static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Go to Debug Settings",
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s © Drakmor and Community",
+    [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor and Community",
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] =
         "ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2.",
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: scan depth %u enabled.",
@@ -76,4 +76,9 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
         "ShadowMount+: failed to install ShellCore hooks",
     [SM_L10N_TEMPERATURE_TRANSITION] =
         "Target temperature %u °C → %u °C",
+    [SM_L10N_USB_CONNECTED_SCANNING] =
+        "External drive %s connected\n"
+        "Free %llu.%llu GB of %llu.%llu (Block size %llu KB)\n"
+        "Games on drive: %d",
+    [SM_L10N_USB_DISCONNECTED] = "External drive %s disconnected",
 };
