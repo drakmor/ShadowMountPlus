@@ -5,15 +5,23 @@
 
 #include "sm_types.h"
 
+typedef struct unmount_result {
+  bool filesystem_released;
+  bool device_released;
+  bool directory_removed;
+  int error;
+} unmount_result_t;
+
 // Log filesystem statistics for a mounted path.
 void log_fs_stats(const char *tag, const char *path, const char *type_hint);
 // Attach and mount an image file to its runtime mount point.
 bool mount_image(const char *file_path, image_fs_type_t fs_type);
 // Unmount an image mount point and detach its backing device.
-bool unmount_image(const char *file_path, int unit_id, attach_backend_t backend);
+unmount_result_t unmount_image(const char *file_path, int unit_id,
+                               attach_backend_t backend);
 // Unmount a runtime image without deleting persistent title metadata links.
-bool unmount_runtime_image(const char *file_path, int unit_id,
-                           attach_backend_t backend);
+unmount_result_t unmount_runtime_image(const char *file_path, int unit_id,
+                                       attach_backend_t backend);
 // Release one cached runtime image mount. An absent live mount is harmless.
 bool release_runtime_image_mount(const char *file_path);
 // Release all discovery/runtime image mounts without deleting title metadata.

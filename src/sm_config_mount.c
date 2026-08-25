@@ -1,6 +1,7 @@
 #include "sm_platform.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <sys/socket.h>
 
 #include "sm_api_protocol.h"
@@ -67,6 +68,7 @@ static runtime_config_state_t
 static _Atomic int g_runtime_state_active_index = 0;
 static atomic_bool g_runtime_cfg_ready = false;
 static config_file_stamp_t g_config_file_stamp;
+static pthread_mutex_t g_autotune_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static char *trim_ascii(char *s);
 static bool parse_ini_line(char *line, char **key_out, char **value_out);
@@ -411,8 +413,11 @@ bool get_image_sector_size_override(const char *filename,
   if (!filename || !sector_size_out)
     return false;
 
-  if (lookup_image_sector_override_in_file(AUTOTUNE_FILE, filename,
-                                           sector_size_out)) {
+  pthread_mutex_lock(&g_autotune_file_mutex);
+  bool autotuned = lookup_image_sector_override_in_file(
+      AUTOTUNE_FILE, filename, sector_size_out);
+  pthread_mutex_unlock(&g_autotune_file_mutex);
+  if (autotuned) {
     return true;
   }
 
@@ -492,8 +497,11 @@ bool get_kstuff_pause_delay_override_for_title(const char *title_id,
 
 bool get_kstuff_autotune_pause_delay_for_title(const char *title_id,
                                                uint32_t *delay_seconds_out) {
-  return lookup_kstuff_delay_override_in_file(AUTOTUNE_FILE, title_id,
-                                              delay_seconds_out);
+  pthread_mutex_lock(&g_autotune_file_mutex);
+  bool found = lookup_kstuff_delay_override_in_file(
+      AUTOTUNE_FILE, title_id, delay_seconds_out);
+  pthread_mutex_unlock(&g_autotune_file_mutex);
+  return found;
 }
 
 bool upsert_kstuff_autotune_pause_delay(const char *title_id,
@@ -511,8 +519,11 @@ bool upsert_kstuff_autotune_pause_delay(const char *title_id,
     tuned_delay_seconds = 1;
   if (tuned_delay_seconds > MAX_KSTUFF_PAUSE_DELAY_SECONDS)
     tuned_delay_seconds = MAX_KSTUFF_PAUSE_DELAY_SECONDS;
-  if (!upsert_kstuff_delay_override_in_file(AUTOTUNE_FILE, normalized,
-                                            (uint32_t)tuned_delay_seconds)) {
+  pthread_mutex_lock(&g_autotune_file_mutex);
+  bool updated = upsert_kstuff_delay_override_in_file(
+      AUTOTUNE_FILE, normalized, (uint32_t)tuned_delay_seconds);
+  pthread_mutex_unlock(&g_autotune_file_mutex);
+  if (!updated) {
     return false;
   }
   if (delay_seconds_out)
@@ -532,8 +543,11 @@ bool upsert_image_sector_size_autotune(const char *filename,
   if (!normalize_image_filename_value(filename, normalized_filename))
     return false;
 
-  if (!upsert_image_sector_override_in_file(AUTOTUNE_FILE, normalized_filename,
-                                            sector_size)) {
+  pthread_mutex_lock(&g_autotune_file_mutex);
+  bool updated = upsert_image_sector_override_in_file(
+      AUTOTUNE_FILE, normalized_filename, sector_size);
+  pthread_mutex_unlock(&g_autotune_file_mutex);
+  if (!updated) {
     return false;
   }
 
