@@ -20,6 +20,10 @@ static struct ImageCache g_image_cache[MAX_IMAGE_MOUNTS];
 static pthread_mutex_t g_image_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_image_cache_generation;
 
+enum {
+  IMAGE_CACHE_INDEX_CONFLICT = -2,
+};
+
 static uint64_t next_cache_generation(void) {
   ++g_image_cache_generation;
   if (g_image_cache_generation == 0)
@@ -70,24 +74,99 @@ static void copy_cache_entry(int index, image_cache_entry_t *entry_out) {
   entry_out->detach_state = g_image_cache[index].detach_state;
 }
 
-static int find_cache_index(const char *path, const char *mount_point) {
+static int find_source_path_index(const char *path) {
+  if (!path)
+    return -1;
+
   for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
     if (!g_image_cache[k].valid)
       continue;
-    if (mount_point && strcmp(g_image_cache[k].mount_point, mount_point) == 0) {
-      return k;
-    }
-    if (path && strcmp(g_image_cache[k].path, path) == 0)
+    if (strcmp(g_image_cache[k].path, path) == 0)
       return k;
   }
 
   return -1;
 }
 
+static int find_mount_point_index(const char *mount_point) {
+  if (!mount_point)
+    return -1;
+
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; k++) {
+    if (!g_image_cache[k].valid)
+      continue;
+    if (strcmp(g_image_cache[k].mount_point, mount_point) == 0)
+      return k;
+  }
+
+  return -1;
+}
+
+static bool cache_entry_is_metadata_only(const struct ImageCache *entry) {
+  return entry->state == ATTACHED_DEVICE_RELEASED && entry->unit_id < 0 &&
+         entry->backend == ATTACH_BACKEND_NONE &&
+         !entry->detach_attempt_active;
+}
+
+static bool find_mapping_indices(const char *path, const char *mount_point,
+                                 int *path_index_out,
+                                 int *mount_index_out) {
+  *path_index_out = -1;
+  *mount_index_out = -1;
+
+  for (int k = 0; k < MAX_IMAGE_MOUNTS; ++k) {
+    if (!g_image_cache[k].valid)
+      continue;
+    if (strcmp(g_image_cache[k].path, path) == 0) {
+      if (*path_index_out >= 0) {
+        errno = EEXIST;
+        return false;
+      }
+      *path_index_out = k;
+    }
+    if (strcmp(g_image_cache[k].mount_point, mount_point) == 0) {
+      if (*mount_index_out >= 0) {
+        errno = EEXIST;
+        return false;
+      }
+      *mount_index_out = k;
+    }
+  }
+
+  return true;
+}
+
+static int resolve_or_merge_mapping_index(const char *path,
+                                          const char *mount_point,
+                                          bool *merged_out) {
+  int path_index = -1;
+  int mount_index = -1;
+  *merged_out = false;
+  if (!find_mapping_indices(path, mount_point, &path_index, &mount_index))
+    return IMAGE_CACHE_INDEX_CONFLICT;
+
+  if (path_index < 0 || mount_index < 0 || path_index == mount_index)
+    return path_index >= 0 ? path_index : mount_index;
+
+  struct ImageCache *path_entry = &g_image_cache[path_index];
+  struct ImageCache *mount_entry = &g_image_cache[mount_index];
+  if (!cache_entry_is_metadata_only(path_entry) ||
+      !cache_entry_is_metadata_only(mount_entry)) {
+    errno = EBUSY;
+    return IMAGE_CACHE_INDEX_CONFLICT;
+  }
+
+  // Both IDs are metadata-only. The requested pair supersedes their stale
+  // half-mappings, so merge them into the source-path owner.
+  memset(mount_entry, 0, sizeof(*mount_entry));
+  *merged_out = true;
+  return path_index;
+}
+
 static struct ImageCache *find_attachment_record(
     const char *path, uint64_t generation, int unit_id,
     attach_backend_t backend) {
-  int index = find_cache_index(path, NULL);
+  int index = find_source_path_index(path);
   if (index < 0 || g_image_cache[index].generation != generation ||
       g_image_cache[index].unit_id != unit_id ||
       g_image_cache[index].backend != backend) {
@@ -96,12 +175,35 @@ static struct ImageCache *find_attachment_record(
   return &g_image_cache[index];
 }
 
-static int upsert_image_source_mapping(const char *path, const char *mount_point) {
-  int entry_index = find_cache_index(path, mount_point);
+static int upsert_image_source_mapping(const char *path,
+                                       const char *mount_point) {
+  if (!path || path[0] == '\0' || !mount_point || mount_point[0] == '\0') {
+    errno = EINVAL;
+    return -1;
+  }
+  if (strnlen(path, MAX_PATH) >= MAX_PATH ||
+      strnlen(mount_point, MAX_PATH) >= MAX_PATH) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+
+  bool merged = false;
+  int entry_index =
+      resolve_or_merge_mapping_index(path, mount_point, &merged);
+  if (entry_index == IMAGE_CACHE_INDEX_CONFLICT)
+    return -1;
   if (entry_index >= 0) {
     struct ImageCache *entry = &g_image_cache[entry_index];
+    bool mapping_changed = merged || strcmp(entry->path, path) != 0 ||
+                           strcmp(entry->mount_point, mount_point) != 0;
+    if (!cache_entry_is_metadata_only(entry) && mapping_changed) {
+      errno = EBUSY;
+      return -1;
+    }
     (void)strlcpy(entry->path, path, sizeof(entry->path));
     (void)strlcpy(entry->mount_point, mount_point, sizeof(entry->mount_point));
+    if (mapping_changed)
+      entry->generation = next_cache_generation();
     return entry_index;
   }
 
@@ -119,23 +221,12 @@ static int upsert_image_source_mapping(const char *path, const char *mount_point
     }
   }
 
+  errno = ENOSPC;
   return -1;
 }
 
 bool cache_image_source_mapping(const char *path, const char *mount_point) {
   pthread_mutex_lock(&g_image_cache_mutex);
-  int entry_index = find_cache_index(path, mount_point);
-  if (entry_index >= 0) {
-    const struct ImageCache *entry = &g_image_cache[entry_index];
-    // A metadata-only path mapping must never retarget a live mount entry.
-    // The live entry owns its actual filesystem mount point until release.
-    if (entry->state != ATTACHED_DEVICE_RELEASED &&
-        (strcmp(entry->path, path) != 0 ||
-         strcmp(entry->mount_point, mount_point) != 0)) {
-      pthread_mutex_unlock(&g_image_cache_mutex);
-      return true;
-    }
-  }
   bool ok = upsert_image_source_mapping(path, mount_point) >= 0;
   pthread_mutex_unlock(&g_image_cache_mutex);
   return ok;
@@ -149,17 +240,14 @@ bool begin_image_attachment(const char *path, const char *mount_point,
   }
 
   pthread_mutex_lock(&g_image_cache_mutex);
-  int entry_index = find_cache_index(path, mount_point);
-  if (entry_index >= 0 &&
-      g_image_cache[entry_index].state != ATTACHED_DEVICE_RELEASED) {
-    pthread_mutex_unlock(&g_image_cache_mutex);
-    errno = EBUSY;
-    return false;
-  }
-  entry_index = upsert_image_source_mapping(path, mount_point);
+  int entry_index = upsert_image_source_mapping(path, mount_point);
   if (entry_index < 0) {
     pthread_mutex_unlock(&g_image_cache_mutex);
-    errno = ENOSPC;
+    return false;
+  }
+  if (!cache_entry_is_metadata_only(&g_image_cache[entry_index])) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = EBUSY;
     return false;
   }
 
@@ -180,7 +268,7 @@ bool cancel_image_attachment(const char *path, uint64_t generation) {
     return false;
 
   pthread_mutex_lock(&g_image_cache_mutex);
-  int index = find_cache_index(path, NULL);
+  int index = find_source_path_index(path);
   if (index < 0 || g_image_cache[index].generation != generation ||
       g_image_cache[index].state != ATTACHED_DEVICE_ATTACHING ||
       g_image_cache[index].unit_id >= 0 ||
@@ -202,7 +290,7 @@ bool publish_image_attachment(const char *path, uint64_t generation,
   }
 
   pthread_mutex_lock(&g_image_cache_mutex);
-  int index = find_cache_index(path, NULL);
+  int index = find_source_path_index(path);
   if (index < 0 || g_image_cache[index].generation != generation ||
       g_image_cache[index].state != ATTACHED_DEVICE_ATTACHING ||
       g_image_cache[index].unit_id >= 0 ||
@@ -225,7 +313,7 @@ bool complete_image_attachment(const char *path, uint64_t generation,
     return false;
 
   pthread_mutex_lock(&g_image_cache_mutex);
-  int index = find_cache_index(path, NULL);
+  int index = find_source_path_index(path);
   if (index < 0 || g_image_cache[index].generation != generation ||
       g_image_cache[index].unit_id != unit_id ||
       g_image_cache[index].backend != backend ||
@@ -278,7 +366,7 @@ bool find_image_cache_entry(const char *path, image_cache_entry_t *entry_out,
     return false;
 
   pthread_mutex_lock(&g_image_cache_mutex);
-  int index = find_cache_index(path, NULL);
+  int index = find_source_path_index(path);
   if (index < 0) {
     pthread_mutex_unlock(&g_image_cache_mutex);
     return false;
@@ -318,7 +406,7 @@ bool claim_image_cache_detach(const char *path, int unit_id,
   }
 
   pthread_mutex_lock(&g_image_cache_mutex);
-  int index = find_cache_index(path, NULL);
+  int index = find_source_path_index(path);
   if (index < 0 || g_image_cache[index].unit_id != unit_id ||
       g_image_cache[index].backend != backend) {
     pthread_mutex_unlock(&g_image_cache_mutex);
@@ -379,7 +467,7 @@ bool resolve_device_from_mount_cache(const char *mount_point,
                                      attach_backend_t *backend_out,
                                      int *unit_out) {
   pthread_mutex_lock(&g_image_cache_mutex);
-  int entry_index = find_cache_index(NULL, mount_point);
+  int entry_index = find_mount_point_index(mount_point);
   if (entry_index < 0) {
     pthread_mutex_unlock(&g_image_cache_mutex);
     return false;
@@ -399,7 +487,7 @@ bool resolve_image_source_from_mount_cache(const char *mount_point,
                                            char *path_out,
                                            size_t path_out_size) {
   pthread_mutex_lock(&g_image_cache_mutex);
-  int entry_index = find_cache_index(NULL, mount_point);
+  int entry_index = find_mount_point_index(mount_point);
   if (entry_index < 0) {
     pthread_mutex_unlock(&g_image_cache_mutex);
     return false;

@@ -27,10 +27,11 @@ bool publish_image_attachment(const char *path, uint64_t generation,
 bool complete_image_attachment(const char *path, uint64_t generation,
                                int unit_id, attach_backend_t backend);
 // Cache a successful image mount and its attached device.
-// Returns false when no free cache slot is available.
+// Returns false when no slot is available or either key has another owner.
 bool cache_image_mount(const char *path, const char *mount_point,
                        int unit_id, attach_backend_t backend);
-// Cache an image source mapping without attach metadata.
+// Cache an image source mapping without attach metadata. Conflicting active
+// source-path and mount-point owners are never retargeted.
 bool cache_image_source_mapping(const char *path, const char *mount_point);
 // Return a cached image mount entry by index.
 bool get_image_cache_entry(int index, image_cache_entry_t *entry_out);
