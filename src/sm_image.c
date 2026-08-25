@@ -484,13 +484,6 @@ static bool attach_md_backend(const char *file_path, image_fs_type_t fs_type,
   }
 
   snprintf(devname_out, devname_size, "/dev/md%d", unit_id);
-  if (!wait_for_dev_node_state(devname_out, true)) {
-    log_debug("  [IMG][%s] device node did not appear: %s",
-              attach_backend_name(ATTACH_BACKEND_MD), devname_out);
-    (void)detach_attached_unit(ATTACH_BACKEND_MD, unit_id, NULL);
-    return false;
-  }
-
   log_debug("  [IMG][%s] attach returned unit=%d",
             attach_backend_name(ATTACH_BACKEND_MD), unit_id);
   *unit_id_out = unit_id;
@@ -571,26 +564,8 @@ static bool attach_lvd_backend_as(
             attach_backend_name(ATTACH_BACKEND_LVD), unit_id);
 
   snprintf(devname_out, devname_size, "/dev/lvd%d", unit_id);
-  if (!wait_for_dev_node_state(devname_out, true)) {
-    log_debug("  [IMG][%s] device node did not appear: %s",
-              attach_backend_name(ATTACH_BACKEND_LVD), devname_out);
-    (void)detach_attached_unit(ATTACH_BACKEND_LVD, unit_id, NULL);
-    return false;
-  }
-
   *unit_id_out = unit_id;
   return true;
-}
-
-static bool attach_lvd_backend(const char *file_path, image_fs_type_t fs_type,
-                               bool mount_read_only, off_t file_size,
-                               int *unit_id_out, char *devname_out,
-                               size_t devname_size,
-                               const image_mount_profile_t *profile) {
-  return attach_lvd_backend_as(
-      file_path, fs_type, mount_read_only, file_size, unit_id_out, devname_out,
-      devname_size, profile,
-      get_lvd_image_type(file_path, fs_type, profile->legacy));
 }
 
 static bool get_cached_image_mount(const char *file_path,
@@ -642,7 +617,7 @@ static bool is_image_mount_root_accessible(const char *mount_point,
 }
 
 static bool reject_mounted_image_io(const char *file_path,
-                                    attach_backend_t attach_backend, int unit_id,
+                                    attach_backend_t attach_backend,
                                     const char *devname,
                                     const char *mount_point, int io_err,
                                     const char *stage) {
@@ -651,7 +626,7 @@ static bool reject_mounted_image_io(const char *file_path,
   log_debug("  [IMG][%s] unreadable or damaged mount (%s -> %s, %s): %s",
             attach_backend_name(attach_backend), devname, mount_point, stage,
             strerror(io_err));
-  (void)unmount_runtime_image(file_path, unit_id, attach_backend);
+  (void)release_runtime_image_mount(file_path);
   errno = io_err;
   return false;
 }
@@ -746,6 +721,15 @@ static bool handle_cached_or_existing_image_mount_locked(
   image_cache_entry_t cached_entry;
   int cached_index = -1;
   if (get_cached_image_mount(file_path, &cached_entry, &cached_index)) {
+    if (cached_entry.state == ATTACHED_DEVICE_DETACH_REQUESTED) {
+      log_debug("  [IMG][%s] detach still pending, mount deferred: %s",
+                attach_backend_name(cached_entry.backend), file_path);
+      (void)release_runtime_image_mount(file_path);
+      return true;
+    }
+    if (cached_entry.state == ATTACHED_DEVICE_ATTACHING)
+      return true;
+
     int root_err = 0;
     if (is_active_image_mount_point(mount_point) &&
         is_image_mount_root_accessible(mount_point, &root_err)) {
@@ -762,7 +746,8 @@ static bool handle_cached_or_existing_image_mount_locked(
                                cached_entry.backend)) {
       return true;
     }
-    invalidate_image_cache_entry(cached_index);
+    (void)invalidate_image_cache_entry(cached_index,
+                                       cached_entry.generation);
   }
 
   bool cache_failed = false;
@@ -805,36 +790,72 @@ static attach_backend_t select_image_backend(const runtime_config_t *cfg,
   return ATTACH_BACKEND_LVD;
 }
 
-static bool attach_image_device(const char *file_path, image_fs_type_t fs_type,
-                                bool mount_read_only, off_t file_size,
-                                attach_backend_t attach_backend, int *unit_id_out,
-                                char *devname_out, size_t devname_size,
-                                const image_mount_profile_t *profile) {
+static bool attach_image_device(
+    const char *file_path, const char *mount_point, image_fs_type_t fs_type,
+    bool mount_read_only, off_t file_size, attach_backend_t attach_backend,
+    int *unit_id_out, char *devname_out, size_t devname_size,
+    const image_mount_profile_t *profile, uint16_t lvd_image_type,
+    uint64_t *generation_out) {
+  uint64_t generation = 0;
+  if (!begin_image_attachment(file_path, mount_point, &generation)) {
+    log_debug("  [IMG] cannot reserve attachment record for %s: %s",
+              file_path, strerror(errno));
+    return false;
+  }
+
   bool attached = false;
   if (attach_backend == ATTACH_BACKEND_MD) {
     attached = attach_md_backend(file_path, fs_type, mount_read_only, file_size,
                                  unit_id_out, devname_out, devname_size);
   } else if (attach_backend == ATTACH_BACKEND_LVD) {
-    attached = attach_lvd_backend(
+    attached = attach_lvd_backend_as(
         file_path, fs_type, mount_read_only, file_size, unit_id_out,
-        devname_out, devname_size, profile);
+        devname_out, devname_size, profile, lvd_image_type);
   } else {
     log_debug("  [IMG] unsupported attach backend for %s", file_path);
     errno = EINVAL;
+  }
+
+  if (!attached) {
+    int attach_errno = errno;
+    (void)cancel_image_attachment(file_path, generation);
+    errno = attach_errno;
     return false;
   }
 
-  if (!attached)
+  if (!publish_image_attachment(file_path, generation, *unit_id_out,
+                                attach_backend)) {
+    log_debug("  [IMG][%s] failed to publish attached unit: unit=%d source=%s",
+              attach_backend_name(attach_backend), *unit_id_out, file_path);
+    if (cache_image_mount(file_path, mount_point, *unit_id_out,
+                          attach_backend)) {
+      (void)release_runtime_image_mount(file_path);
+    } else {
+      attached_unit_detach_state_t detach_state;
+      memset(&detach_state, 0, sizeof(detach_state));
+      (void)detach_attached_unit(attach_backend, *unit_id_out, &detach_state);
+    }
+    errno = EIO;
     return false;
+  }
+
+  if (!wait_for_dev_node_state(devname_out, true)) {
+    log_debug("  [IMG][%s] device node did not appear: %s",
+              attach_backend_name(attach_backend), devname_out);
+    (void)release_runtime_image_mount(file_path);
+    errno = ETIMEDOUT;
+    return false;
+  }
 
   log_debug("  [IMG][%s] Attached as %s", attach_backend_name(attach_backend),
             devname_out);
+  *generation_out = generation;
   return true;
 }
 
 static bool verify_exfat_nmount_result(const char *file_path,
                                        attach_backend_t attach_backend,
-                                       int unit_id, const char *devname,
+                                       const char *devname,
                                        const char *mount_point,
                                        bool *retry_safe_out) {
   struct statfs sfs;
@@ -857,7 +878,7 @@ static bool verify_exfat_nmount_result(const char *file_path,
               strerror(verify_errno));
   }
 
-  bool released = unmount_runtime_image(file_path, unit_id, attach_backend);
+  bool released = release_runtime_image_mount(file_path);
   int result_errno = (!released && errno != 0) ? errno : verify_errno;
   if (retry_safe_out)
     *retry_safe_out = released;
@@ -866,7 +887,7 @@ static bool verify_exfat_nmount_result(const char *file_path,
 }
 
 static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
-                                 attach_backend_t attach_backend, int unit_id,
+                                 attach_backend_t attach_backend,
                                  const char *devname, const char *mount_point,
                                  bool mount_read_only, bool force_mount,
                                  const image_mount_profile_t *profile,
@@ -992,7 +1013,7 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   } else {
     log_debug("  [IMG][%s] unsupported fstype=%s",
               attach_backend_name(attach_backend), image_fs_name(fs_type));
-    bool released = detach_attached_unit(attach_backend, unit_id, NULL);
+    bool released = release_runtime_image_mount(file_path);
     if (retry_safe_out)
       *retry_safe_out = released;
     errno = EINVAL;
@@ -1004,8 +1025,8 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
       get_nmount_flags(fs_type, mount_read_only, profile->legacy, &mount_mode);
   if (nmount(iov, iovlen, (int)mount_flags) == 0) {
     return fs_type != IMAGE_FS_EXFAT ||
-           verify_exfat_nmount_result(file_path, attach_backend, unit_id,
-                                      devname, mount_point, retry_safe_out);
+           verify_exfat_nmount_result(file_path, attach_backend, devname,
+                                      mount_point, retry_safe_out);
   }
 
   int mount_errno = errno;
@@ -1017,7 +1038,7 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
   log_debug("  [IMG][%s] nmount %s failed: %s",
             attach_backend_name(attach_backend), mount_mode,
             strerror(mount_errno));
-  bool released = detach_attached_unit(attach_backend, unit_id, NULL);
+  bool released = release_runtime_image_mount(file_path);
   if (retry_safe_out)
     *retry_safe_out = released;
   errno = mount_errno;
@@ -1027,7 +1048,7 @@ static bool perform_image_nmount(const char *file_path, image_fs_type_t fs_type,
 static bool try_exfat_lvd_type_fallback(
     const char *file_path, bool mount_read_only, bool force_mount,
     off_t file_size, int *unit_id_out, char *devname_out, size_t devname_size,
-    const char *mount_point) {
+    const char *mount_point, uint64_t *generation_out) {
   if (runtime_sleep_mode_active() || !path_exists(file_path))
     return false;
 
@@ -1040,19 +1061,19 @@ static bool try_exfat_lvd_type_fallback(
       // The first attach attempt already prepared this vnode's cache.
       .nested_backing_cache = false,
   };
-  if (!attach_lvd_backend_as(
-          file_path, IMAGE_FS_EXFAT, mount_read_only, file_size, unit_id_out,
-          devname_out, devname_size, &fallback_profile,
-          LVD_ATTACH_IMAGE_TYPE_SINGLE)) {
+  if (!attach_image_device(
+          file_path, mount_point, IMAGE_FS_EXFAT, mount_read_only, file_size,
+          ATTACH_BACKEND_LVD, unit_id_out, devname_out, devname_size,
+          &fallback_profile, LVD_ATTACH_IMAGE_TYPE_SINGLE, generation_out)) {
     return false;
   }
 
   if (runtime_sleep_mode_active()) {
-    (void)detach_attached_unit(ATTACH_BACKEND_LVD, *unit_id_out, NULL);
+    (void)release_runtime_image_mount(file_path);
     return false;
   }
   if (!perform_image_nmount(file_path, IMAGE_FS_EXFAT, ATTACH_BACKEND_LVD,
-                            *unit_id_out, devname_out, mount_point,
+                            devname_out, mount_point,
                             mount_read_only, force_mount, &fallback_profile,
                             NULL)) {
     return false;
@@ -1065,12 +1086,12 @@ static bool try_exfat_lvd_type_fallback(
 }
 
 static bool validate_mounted_image(const char *file_path, image_fs_type_t fs_type,
-                                   attach_backend_t attach_backend, int unit_id,
+                                   attach_backend_t attach_backend,
                                    const char *devname,
                                    const char *mount_point) {
   struct statfs mounted_sfs;
   if (statfs(mount_point, &mounted_sfs) != 0) {
-    return reject_mounted_image_io(file_path, attach_backend, unit_id, devname,
+    return reject_mounted_image_io(file_path, attach_backend, devname,
                                    mount_point, errno, "statfs");
   }
 
@@ -1102,14 +1123,14 @@ static bool validate_mounted_image(const char *file_path, image_fs_type_t fs_typ
                          (unsigned long long)fs_block_size, min_device_sector);
     }
     sm_error_mark_notified();
-    (void)unmount_runtime_image(file_path, unit_id, attach_backend);
+    (void)release_runtime_image_mount(file_path);
     errno = EINVAL;
     return false;
   }
 
   int root_err = 0;
   if (!is_image_mount_root_accessible(mount_point, &root_err)) {
-    return reject_mounted_image_io(file_path, attach_backend, unit_id, devname,
+    return reject_mounted_image_io(file_path, attach_backend, devname,
                                    mount_point, root_err, "root access");
   }
 
@@ -1182,23 +1203,26 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
             attach_backend_name(attach_backend), file_path);
 
   int unit_id = -1;
+  uint64_t attachment_generation = 0;
   char devname[64];
   memset(devname, 0, sizeof(devname));
   bool attached =
-      attach_image_device(file_path, fs_type, mount_read_only, st.st_size,
-                          attach_backend, &unit_id, devname, sizeof(devname),
-                          &profile);
+      attach_image_device(
+          file_path, mount_point, fs_type, mount_read_only, st.st_size,
+          attach_backend, &unit_id, devname, sizeof(devname), &profile,
+          get_lvd_image_type(file_path, fs_type, profile.legacy),
+          &attachment_generation);
   int attach_errno = errno;
   bool mounted = false;
   bool retry_safe = false;
   if (attached) {
     if (runtime_sleep_mode_active()) {
-      (void)detach_attached_unit(attach_backend, unit_id, NULL);
+      (void)release_runtime_image_mount(file_path);
       runtime_mount_state_unlock();
       return false;
     }
     mounted = perform_image_nmount(
-        file_path, fs_type, attach_backend, unit_id, devname, mount_point,
+        file_path, fs_type, attach_backend, devname, mount_point,
         mount_read_only, force_mount, &profile, &retry_safe);
   }
   if (!mounted) {
@@ -1209,19 +1233,20 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
     if (!can_retry ||
         !try_exfat_lvd_type_fallback(
             file_path, mount_read_only, force_mount, st.st_size, &unit_id,
-            devname, sizeof(devname), mount_point)) {
+            devname, sizeof(devname), mount_point,
+            &attachment_generation)) {
       runtime_mount_state_unlock();
       return false;
     }
   }
   if (runtime_sleep_mode_active()) {
-    (void)unmount_runtime_image(file_path, unit_id, attach_backend);
+    (void)release_runtime_image_mount(file_path);
     runtime_mount_state_unlock();
     return false;
   }
 
-  if (!validate_mounted_image(file_path, fs_type, attach_backend, unit_id,
-                              devname, mount_point)) {
+  if (!validate_mounted_image(file_path, fs_type, attach_backend, devname,
+                              mount_point)) {
     runtime_mount_state_unlock();
     return false;
   }
@@ -1231,14 +1256,13 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
             devname, mount_point);
   log_fs_stats("IMG", mount_point, image_fs_name(fs_type));
 
-  if (!cache_image_mount(file_path, mount_point, unit_id, attach_backend)) {
-    sm_error_set_l10n("IMG", ENOSPC, file_path,
-                      SM_L10N_IMAGE_CACHE_FULL_ROLLBACK,
-                      (unsigned)MAX_IMAGE_MOUNTS);
-    log_debug("  [IMG] image cache full, rolling back mount: %s -> %s",
-              file_path, mount_point);
-    (void)unmount_runtime_image(file_path, unit_id, attach_backend);
-    errno = ENOSPC;
+  if (!complete_image_attachment(file_path, attachment_generation, unit_id,
+                                 attach_backend)) {
+    log_debug("  [IMG][%s] failed to publish mounted attachment: unit=%d "
+              "source=%s",
+              attach_backend_name(attach_backend), unit_id, file_path);
+    (void)release_runtime_image_mount(file_path);
+    errno = EIO;
     runtime_mount_state_unlock();
     return false;
   }
@@ -1271,7 +1295,7 @@ static bool unmount_child_image_mounts_for_container(
                                                  cached_entry.unit_id,
                                                  cached_entry.backend);
     if (unmounted) {
-      invalidate_image_cache_entry(k);
+      (void)invalidate_image_cache_entry(k, cached_entry.generation);
       continue;
     }
 
@@ -1286,32 +1310,42 @@ static bool unmount_child_image_mounts_for_container(
 static bool detach_cached_image_device(const char *file_path,
                                        attach_backend_t backend, int unit_id) {
   image_cache_entry_t cached_entry;
-  bool cached_device =
-      find_image_cache_entry(file_path, &cached_entry, NULL) &&
-      cached_entry.backend == backend && cached_entry.unit_id == unit_id;
+  bool cached_device = claim_image_cache_detach(
+      file_path, unit_id, backend, &cached_entry);
+  if (!cached_device && errno == EINPROGRESS)
+    return false;
 
   attached_unit_detach_state_t detach_state;
   memset(&detach_state, 0, sizeof(detach_state));
-  if (cached_device)
+  bool detach_was_requested = false;
+  if (cached_device) {
     detach_state = cached_entry.detach_state;
-
-  if (detach_state.requested)
-    return detach_attached_unit(backend, unit_id, &detach_state);
+    detach_was_requested = detach_state.requested;
+  }
 
   bool detached = detach_attached_unit(
       backend, unit_id, cached_device ? &detach_state : NULL);
-  if (detached || !cached_device || !detach_state.requested)
+  int detach_errno = errno;
+  if (!cached_device)
     return detached;
 
-  if (!update_image_cache_detach_state(file_path, unit_id, backend,
-                                       &detach_state)) {
-    log_debug("  [IMG][%s] failed to publish pending detach: unit=%d "
+  if (!finish_image_cache_detach_attempt(
+          file_path, cached_entry.generation, unit_id, backend,
+          &detach_state)) {
+    log_debug("  [IMG][%s] failed to finish detach attempt: unit=%d "
               "source=%s",
               attach_backend_name(backend), unit_id, file_path);
     return false;
   }
 
-  return wait_for_attached_unit_release(backend, unit_id, &detach_state);
+  if (detached)
+    return true;
+  if (!detach_was_requested && detach_state.requested) {
+    return wait_for_attached_unit_release(backend, unit_id, &detach_state);
+  }
+
+  errno = detach_errno;
+  return false;
 }
 
 static void log_image_unmount_result(const char *file_path,
@@ -1432,9 +1466,13 @@ bool release_runtime_image_mount(const char *file_path) {
       entry.backend == ATTACH_BACKEND_NONE || entry.unit_id < 0) {
     return true;
   }
+  if (!mark_image_cache_detach_requested(
+          entry.path, entry.generation, entry.unit_id, entry.backend)) {
+    return false;
+  }
   if (!unmount_runtime_image(entry.path, entry.unit_id, entry.backend))
     return false;
-  invalidate_image_cache_entry(index);
+  (void)invalidate_image_cache_entry(index, entry.generation);
   return true;
 }
 
@@ -1450,7 +1488,7 @@ bool release_runtime_image_mounts(void) {
       if (entry.backend == ATTACH_BACKEND_NONE || entry.unit_id < 0)
         continue;
       if (unmount_runtime_image(entry.path, entry.unit_id, entry.backend)) {
-        invalidate_image_cache_entry(k);
+        (void)invalidate_image_cache_entry(k, entry.generation);
         progress = true;
       } else {
         any_remaining = true;
@@ -1467,11 +1505,11 @@ bool release_runtime_image_mounts(void) {
 
 static bool service_pending_image_detach(
     int cache_index, const image_cache_entry_t *entry) {
-  if (!entry->detach_state.requested)
+  if (entry->state != ATTACHED_DEVICE_DETACH_REQUESTED)
     return false;
 
-  if (detach_cached_image_device(entry->path, entry->backend, entry->unit_id))
-    invalidate_image_cache_entry(cache_index);
+  if (unmount_runtime_image(entry->path, entry->unit_id, entry->backend))
+    (void)invalidate_image_cache_entry(cache_index, entry->generation);
   return true;
 }
 
@@ -1507,16 +1545,18 @@ void cleanup_stale_image_mounts(void) {
               attach_backend_name(cached_entry.backend), k, cached_entry.path,
               cached_entry.mount_point);
 
+    if (service_pending_image_detach(k, &cached_entry))
+      continue;
+    if (cached_entry.state == ATTACHED_DEVICE_ATTACHING)
+      continue;
     if (!path_exists(cached_entry.path)) {
       log_debug("  [IMG][%s] Source removed, unmounting: %s",
                 attach_backend_name(cached_entry.backend), cached_entry.path);
       if (unmount_image(cached_entry.path, cached_entry.unit_id,
                         cached_entry.backend))
-        invalidate_image_cache_entry(k);
+        (void)invalidate_image_cache_entry(k, cached_entry.generation);
       continue;
     }
-    if (service_pending_image_detach(k, &cached_entry))
-      continue;
 
     image_fs_type_t fs_type =
         detect_image_fs_type_for_path(cached_entry.path, NULL);
@@ -1525,7 +1565,7 @@ void cleanup_stale_image_mounts(void) {
     if (!prepare_image_mount_retry(&cached_entry, mount_point, source_path))
       continue;
 
-    invalidate_image_cache_entry(k);
+    (void)invalidate_image_cache_entry(k, cached_entry.generation);
     if (mount_image(source_path, fs_type)) {
       clear_image_mount_attempts(source_path);
       continue;
@@ -1563,16 +1603,18 @@ void cleanup_stale_image_mounts_for_root(const char *root) {
       continue;
     }
 
+    if (service_pending_image_detach(k, &cached_entry))
+      continue;
+    if (cached_entry.state == ATTACHED_DEVICE_ATTACHING)
+      continue;
     if (!path_exists(cached_entry.path)) {
       log_debug("  [IMG][%s] Source removed, unmounting: %s",
                 attach_backend_name(cached_entry.backend), cached_entry.path);
       if (unmount_image(cached_entry.path, cached_entry.unit_id,
                         cached_entry.backend))
-        invalidate_image_cache_entry(k);
+        (void)invalidate_image_cache_entry(k, cached_entry.generation);
       continue;
     }
-    if (service_pending_image_detach(k, &cached_entry))
-      continue;
 
     image_fs_type_t fs_type =
         detect_image_fs_type_for_path(cached_entry.path, NULL);
@@ -1581,7 +1623,7 @@ void cleanup_stale_image_mounts_for_root(const char *root) {
     if (!prepare_image_mount_retry(&cached_entry, mount_point, source_path))
       continue;
 
-    invalidate_image_cache_entry(k);
+    (void)invalidate_image_cache_entry(k, cached_entry.generation);
     if (mount_image(source_path, fs_type)) {
       clear_image_mount_attempts(source_path);
       continue;
@@ -1614,7 +1656,7 @@ bool unmount_usb_image_mounts_for_suspend(void) {
                               cached_entry.backend)) {
       log_debug("  [IMG][%s] USB suspend unmounted: %s",
                 attach_backend_name(cached_entry.backend), cached_entry.path);
-      invalidate_image_cache_entry(k);
+      (void)invalidate_image_cache_entry(k, cached_entry.generation);
       continue;
     }
 
@@ -1717,7 +1759,7 @@ bool shutdown_image_mounts(void) {
 
       if (unmount_runtime_image(cached_entry.path, cached_entry.unit_id,
                                 cached_entry.backend)) {
-        invalidate_image_cache_entry(k);
+        (void)invalidate_image_cache_entry(k, cached_entry.generation);
         progress = true;
         continue;
       }

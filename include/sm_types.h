@@ -103,6 +103,13 @@ typedef enum {
   ATTACH_BACKEND_MD,
 } attach_backend_t;
 
+typedef enum {
+  ATTACHED_DEVICE_RELEASED = 0,
+  ATTACHED_DEVICE_ATTACHING,
+  ATTACHED_DEVICE_MOUNTED,
+  ATTACHED_DEVICE_DETACH_REQUESTED,
+} attached_device_state_t;
+
 typedef struct {
   // A detach ioctl was accepted for this specific device instance. Once set,
   // the same unit number must not receive another detach request because the

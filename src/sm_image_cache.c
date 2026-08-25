@@ -5,16 +5,27 @@
 #include "sm_limits.h"
 
 struct ImageCache {
+  uint64_t generation;
   char path[MAX_PATH];
   char mount_point[MAX_PATH];
   int unit_id;
   attach_backend_t backend;
+  attached_device_state_t state;
   attached_unit_detach_state_t detach_state;
+  bool detach_attempt_active;
   bool valid;
 };
 
 static struct ImageCache g_image_cache[MAX_IMAGE_MOUNTS];
 static pthread_mutex_t g_image_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t g_image_cache_generation;
+
+static uint64_t next_cache_generation(void) {
+  ++g_image_cache_generation;
+  if (g_image_cache_generation == 0)
+    ++g_image_cache_generation;
+  return g_image_cache_generation;
+}
 
 static bool device_identity_matches(
     const attached_unit_detach_state_t *left,
@@ -48,12 +59,14 @@ static void capture_attached_unit_identity(struct ImageCache *entry) {
 
 static void copy_cache_entry(int index, image_cache_entry_t *entry_out) {
   memset(entry_out, 0, sizeof(*entry_out));
+  entry_out->generation = g_image_cache[index].generation;
   (void)strlcpy(entry_out->path, g_image_cache[index].path,
                 sizeof(entry_out->path));
   (void)strlcpy(entry_out->mount_point, g_image_cache[index].mount_point,
                 sizeof(entry_out->mount_point));
   entry_out->unit_id = g_image_cache[index].unit_id;
   entry_out->backend = g_image_cache[index].backend;
+  entry_out->state = g_image_cache[index].state;
   entry_out->detach_state = g_image_cache[index].detach_state;
 }
 
@@ -69,6 +82,18 @@ static int find_cache_index(const char *path, const char *mount_point) {
   }
 
   return -1;
+}
+
+static struct ImageCache *find_attachment_record(
+    const char *path, uint64_t generation, int unit_id,
+    attach_backend_t backend) {
+  int index = find_cache_index(path, NULL);
+  if (index < 0 || g_image_cache[index].generation != generation ||
+      g_image_cache[index].unit_id != unit_id ||
+      g_image_cache[index].backend != backend) {
+    return NULL;
+  }
+  return &g_image_cache[index];
 }
 
 static int upsert_image_source_mapping(const char *path, const char *mount_point) {
@@ -87,6 +112,8 @@ static int upsert_image_source_mapping(const char *path, const char *mount_point
                     sizeof(g_image_cache[k].mount_point));
       g_image_cache[k].unit_id = -1;
       g_image_cache[k].backend = ATTACH_BACKEND_NONE;
+      g_image_cache[k].state = ATTACHED_DEVICE_RELEASED;
+      g_image_cache[k].generation = next_cache_generation();
       g_image_cache[k].valid = true;
       return k;
     }
@@ -102,7 +129,7 @@ bool cache_image_source_mapping(const char *path, const char *mount_point) {
     const struct ImageCache *entry = &g_image_cache[entry_index];
     // A metadata-only path mapping must never retarget a live mount entry.
     // The live entry owns its actual filesystem mount point until release.
-    if (entry->backend != ATTACH_BACKEND_NONE && entry->unit_id >= 0 &&
+    if (entry->state != ATTACHED_DEVICE_RELEASED &&
         (strcmp(entry->path, path) != 0 ||
          strcmp(entry->mount_point, mount_point) != 0)) {
       pthread_mutex_unlock(&g_image_cache_mutex);
@@ -112,6 +139,105 @@ bool cache_image_source_mapping(const char *path, const char *mount_point) {
   bool ok = upsert_image_source_mapping(path, mount_point) >= 0;
   pthread_mutex_unlock(&g_image_cache_mutex);
   return ok;
+}
+
+bool begin_image_attachment(const char *path, const char *mount_point,
+                            uint64_t *generation_out) {
+  if (!path || !mount_point || !generation_out) {
+    errno = EINVAL;
+    return false;
+  }
+
+  pthread_mutex_lock(&g_image_cache_mutex);
+  int entry_index = find_cache_index(path, mount_point);
+  if (entry_index >= 0 &&
+      g_image_cache[entry_index].state != ATTACHED_DEVICE_RELEASED) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = EBUSY;
+    return false;
+  }
+  entry_index = upsert_image_source_mapping(path, mount_point);
+  if (entry_index < 0) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = ENOSPC;
+    return false;
+  }
+
+  struct ImageCache *entry = &g_image_cache[entry_index];
+  entry->generation = next_cache_generation();
+  entry->unit_id = -1;
+  entry->backend = ATTACH_BACKEND_NONE;
+  entry->state = ATTACHED_DEVICE_ATTACHING;
+  memset(&entry->detach_state, 0, sizeof(entry->detach_state));
+  entry->detach_attempt_active = false;
+  *generation_out = entry->generation;
+  pthread_mutex_unlock(&g_image_cache_mutex);
+  return true;
+}
+
+bool cancel_image_attachment(const char *path, uint64_t generation) {
+  if (!path || generation == 0)
+    return false;
+
+  pthread_mutex_lock(&g_image_cache_mutex);
+  int index = find_cache_index(path, NULL);
+  if (index < 0 || g_image_cache[index].generation != generation ||
+      g_image_cache[index].state != ATTACHED_DEVICE_ATTACHING ||
+      g_image_cache[index].unit_id >= 0 ||
+      g_image_cache[index].backend != ATTACH_BACKEND_NONE) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    return false;
+  }
+
+  memset(&g_image_cache[index], 0, sizeof(g_image_cache[index]));
+  pthread_mutex_unlock(&g_image_cache_mutex);
+  return true;
+}
+
+bool publish_image_attachment(const char *path, uint64_t generation,
+                              int unit_id, attach_backend_t backend) {
+  if (!path || generation == 0 || unit_id < 0 ||
+      backend == ATTACH_BACKEND_NONE) {
+    return false;
+  }
+
+  pthread_mutex_lock(&g_image_cache_mutex);
+  int index = find_cache_index(path, NULL);
+  if (index < 0 || g_image_cache[index].generation != generation ||
+      g_image_cache[index].state != ATTACHED_DEVICE_ATTACHING ||
+      g_image_cache[index].unit_id >= 0 ||
+      g_image_cache[index].backend != ATTACH_BACKEND_NONE) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    return false;
+  }
+
+  struct ImageCache *entry = &g_image_cache[index];
+  entry->unit_id = unit_id;
+  entry->backend = backend;
+  capture_attached_unit_identity(entry);
+  pthread_mutex_unlock(&g_image_cache_mutex);
+  return true;
+}
+
+bool complete_image_attachment(const char *path, uint64_t generation,
+                               int unit_id, attach_backend_t backend) {
+  if (!path || generation == 0)
+    return false;
+
+  pthread_mutex_lock(&g_image_cache_mutex);
+  int index = find_cache_index(path, NULL);
+  if (index < 0 || g_image_cache[index].generation != generation ||
+      g_image_cache[index].unit_id != unit_id ||
+      g_image_cache[index].backend != backend ||
+      g_image_cache[index].state != ATTACHED_DEVICE_ATTACHING) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    return false;
+  }
+
+  g_image_cache[index].state = ATTACHED_DEVICE_MOUNTED;
+  capture_attached_unit_identity(&g_image_cache[index]);
+  pthread_mutex_unlock(&g_image_cache_mutex);
+  return true;
 }
 
 bool cache_image_mount(const char *path, const char *mount_point, int unit_id,
@@ -124,8 +250,11 @@ bool cache_image_mount(const char *path, const char *mount_point, int unit_id,
   }
 
   struct ImageCache *entry = &g_image_cache[entry_index];
+  entry->generation = next_cache_generation();
   entry->unit_id = unit_id;
   entry->backend = backend;
+  entry->state = ATTACHED_DEVICE_MOUNTED;
+  entry->detach_attempt_active = false;
   capture_attached_unit_identity(entry);
   pthread_mutex_unlock(&g_image_cache_mutex);
   return true;
@@ -161,36 +290,89 @@ bool find_image_cache_entry(const char *path, image_cache_entry_t *entry_out,
   return true;
 }
 
-bool update_image_cache_detach_state(
-    const char *path, int unit_id, attach_backend_t backend,
+bool mark_image_cache_detach_requested(const char *path, uint64_t generation,
+                                       int unit_id,
+                                       attach_backend_t backend) {
+  if (!path || generation == 0)
+    return false;
+
+  pthread_mutex_lock(&g_image_cache_mutex);
+  struct ImageCache *entry = find_attachment_record(
+      path, generation, unit_id, backend);
+  if (!entry) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    return false;
+  }
+
+  entry->state = ATTACHED_DEVICE_DETACH_REQUESTED;
+  pthread_mutex_unlock(&g_image_cache_mutex);
+  return true;
+}
+
+bool claim_image_cache_detach(const char *path, int unit_id,
+                              attach_backend_t backend,
+                              image_cache_entry_t *entry_out) {
+  if (!path || !entry_out) {
+    errno = EINVAL;
+    return false;
+  }
+
+  pthread_mutex_lock(&g_image_cache_mutex);
+  int index = find_cache_index(path, NULL);
+  if (index < 0 || g_image_cache[index].unit_id != unit_id ||
+      g_image_cache[index].backend != backend) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = ENOENT;
+    return false;
+  }
+  if (g_image_cache[index].detach_attempt_active) {
+    pthread_mutex_unlock(&g_image_cache_mutex);
+    errno = EINPROGRESS;
+    return false;
+  }
+
+  g_image_cache[index].state = ATTACHED_DEVICE_DETACH_REQUESTED;
+  g_image_cache[index].detach_attempt_active = true;
+  copy_cache_entry(index, entry_out);
+  pthread_mutex_unlock(&g_image_cache_mutex);
+  return true;
+}
+
+bool finish_image_cache_detach_attempt(
+    const char *path, uint64_t generation, int unit_id,
+    attach_backend_t backend,
     const attached_unit_detach_state_t *detach_state) {
   if (!path || !detach_state)
     return false;
 
   pthread_mutex_lock(&g_image_cache_mutex);
-  int index = find_cache_index(path, NULL);
-  if (index < 0 ||
-      g_image_cache[index].unit_id != unit_id ||
-      g_image_cache[index].backend != backend ||
-      !device_identity_matches(&g_image_cache[index].detach_state,
-                               detach_state)) {
+  struct ImageCache *entry = find_attachment_record(
+      path, generation, unit_id, backend);
+  if (!entry || !entry->detach_attempt_active ||
+      !device_identity_matches(&entry->detach_state, detach_state)) {
     pthread_mutex_unlock(&g_image_cache_mutex);
     return false;
   }
 
-  g_image_cache[index].detach_state = *detach_state;
+  entry->detach_state = *detach_state;
+  entry->state = ATTACHED_DEVICE_DETACH_REQUESTED;
+  entry->detach_attempt_active = false;
   pthread_mutex_unlock(&g_image_cache_mutex);
   return true;
 }
 
-void invalidate_image_cache_entry(int index) {
+bool invalidate_image_cache_entry(int index, uint64_t generation) {
   pthread_mutex_lock(&g_image_cache_mutex);
-  if (index < 0 || index >= MAX_IMAGE_MOUNTS) {
+  if (index < 0 || index >= MAX_IMAGE_MOUNTS ||
+      !g_image_cache[index].valid ||
+      g_image_cache[index].generation != generation) {
     pthread_mutex_unlock(&g_image_cache_mutex);
-    return;
+    return false;
   }
+  g_image_cache[index].state = ATTACHED_DEVICE_RELEASED;
   memset(&g_image_cache[index], 0, sizeof(g_image_cache[index]));
   pthread_mutex_unlock(&g_image_cache_mutex);
+  return true;
 }
 
 bool resolve_device_from_mount_cache(const char *mount_point,

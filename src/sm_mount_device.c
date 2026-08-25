@@ -252,8 +252,25 @@ static attached_unit_detach_prepare_t prepare_attached_unit_detach(
     const attached_unit_detach_state_t *state, char devname[64],
     attached_unit_detach_state_t *request_state) {
   build_attached_unit_devname(backend, unit_id, devname);
-  if (detach_target_is_released_or_reused(backend, unit_id, devname, state))
+  // A freshly attached unit may not have published its device node yet. An
+  // absent node is only proof of release after the node identity was observed
+  // or a detach request was accepted.
+  bool release_can_be_observed =
+      !state || state->requested || state->node_identity_valid;
+  if (release_can_be_observed &&
+      detach_target_is_released_or_reused(backend, unit_id, devname, state)) {
     return ATTACHED_UNIT_DETACH_COMPLETE;
+  }
+  if (!release_can_be_observed) {
+    struct stat st;
+    char mount_point[MNAMELEN];
+    if (stat(devname, &st) == 0 &&
+        device_node_is_mounted(devname, mount_point)) {
+      log_debug("  [IMG][%s] detach target released: unit=%d reused at %s",
+                attach_backend_name(backend), unit_id, mount_point);
+      return ATTACHED_UNIT_DETACH_COMPLETE;
+    }
+  }
 
   if (state && state->requested) {
     errno = EINPROGRESS;
@@ -303,8 +320,12 @@ static bool finish_failed_detach(attach_backend_t backend, int unit_id,
                                  const char *devname,
                                  const attached_unit_detach_state_t *state,
                                  int detach_errno) {
-  if (detach_target_is_released_or_reused(backend, unit_id, devname, state))
+  // Before a detach request is accepted, an unobserved node may still belong
+  // to the freshly attached unit. Keep it queued when the ioctl itself fails.
+  if (state && state->node_identity_valid &&
+      detach_target_is_released_or_reused(backend, unit_id, devname, state)) {
     return true;
+  }
   errno = detach_errno;
   return false;
 }
