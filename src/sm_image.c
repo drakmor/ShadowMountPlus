@@ -97,28 +97,20 @@ typedef struct {
 } image_mount_profile_t;
 
 static image_mount_profile_t
-get_image_mount_profile(const runtime_config_t *cfg,
+get_image_mount_profile(const runtime_config_t *cfg, const char *file_path,
                         image_fs_type_t fs_type) {
-  image_mount_profile_t profile = {0};
-  switch (fs_type) {
-  case IMAGE_FS_UFS:
-    profile.legacy = cfg->legacy_mount_ufs;
-    break;
-  case IMAGE_FS_EXFAT:
-    profile.legacy = cfg->legacy_mount_exfat;
-    break;
-  case IMAGE_FS_PFS:
-    profile.legacy = cfg->legacy_mount_pfs;
-    break;
-  case IMAGE_FS_PFSC_CONTAINER:
-    profile.legacy = cfg->legacy_mount_pfsc;
-    break;
-  default:
-    break;
-  }
-  profile.nested_backing_cache =
-      !profile.legacy || cfg->nested_pfs_index_cache_enabled;
-  return profile;
+  bool optimized_source = path_matches_root_or_child(file_path, "/data") ||
+                          path_matches_root_or_child(file_path, "/user");
+  bool path_selected_profile =
+      fs_type == IMAGE_FS_UFS || fs_type == IMAGE_FS_EXFAT ||
+      (fs_type == IMAGE_FS_PFS &&
+       !pfs_path_is_nested_inner(file_path, fs_type));
+  bool legacy = path_selected_profile && !optimized_source;
+
+  return (image_mount_profile_t){
+      .legacy = legacy,
+      .nested_backing_cache = cfg->nested_pfs_index_cache_enabled,
+  };
 }
 
 static bool should_prepare_nested_backing_cache(
@@ -888,8 +880,7 @@ static bool verify_exfat_nmount_result(const char *file_path,
                                        uint64_t generation,
                                        attach_backend_t attach_backend,
                                        const char *devname,
-                                       const char *mount_point,
-                                       bool *retry_safe_out) {
+                                       const char *mount_point) {
   struct statfs sfs;
   int verify_errno = EINVAL;
   if (statfs(mount_point, &sfs) == 0) {
@@ -912,8 +903,6 @@ static bool verify_exfat_nmount_result(const char *file_path,
 
   bool released = release_runtime_image_attachment(file_path, generation);
   int result_errno = (!released && errno != 0) ? errno : verify_errno;
-  if (retry_safe_out)
-    *retry_safe_out = released;
   errno = result_errno;
   return false;
 }
@@ -923,12 +912,7 @@ static bool perform_image_nmount(const char *file_path, uint64_t generation,
                                  attach_backend_t attach_backend,
                                  const char *devname, const char *mount_point,
                                  bool mount_read_only, bool force_mount,
-                                 const image_mount_profile_t *profile,
-                                 bool *retry_safe_out) {
-  // A fallback may attach another device only after this one is fully released.
-  if (retry_safe_out)
-    *retry_safe_out = false;
-
+                                 const image_mount_profile_t *profile) {
   struct iovec *iov = NULL;
   unsigned int iovlen = 0;
   char mount_errmsg[256];
@@ -1046,9 +1030,7 @@ static bool perform_image_nmount(const char *file_path, uint64_t generation,
   } else {
     log_debug("  [IMG][%s] unsupported fstype=%s",
               attach_backend_name(attach_backend), image_fs_name(fs_type));
-    bool released = release_runtime_image_attachment(file_path, generation);
-    if (retry_safe_out)
-      *retry_safe_out = released;
+    (void)release_runtime_image_attachment(file_path, generation);
     errno = EINVAL;
     return false;
   }
@@ -1059,7 +1041,7 @@ static bool perform_image_nmount(const char *file_path, uint64_t generation,
   if (nmount(iov, iovlen, (int)mount_flags) == 0) {
     return fs_type != IMAGE_FS_EXFAT ||
            verify_exfat_nmount_result(file_path, generation, attach_backend,
-                                      devname, mount_point, retry_safe_out);
+                                      devname, mount_point);
   }
 
   int mount_errno = errno;
@@ -1071,63 +1053,9 @@ static bool perform_image_nmount(const char *file_path, uint64_t generation,
   log_debug("  [IMG][%s] nmount %s failed: %s",
             attach_backend_name(attach_backend), mount_mode,
             strerror(mount_errno));
-  bool released = release_runtime_image_attachment(file_path, generation);
-  if (retry_safe_out)
-    *retry_safe_out = released;
+  (void)release_runtime_image_attachment(file_path, generation);
   errno = mount_errno;
   return false;
-}
-
-static bool try_exfat_lvd_type_fallback(
-    const char *file_path, bool mount_read_only, bool force_mount,
-    off_t file_size, int *unit_id_out, char *devname_out, size_t devname_size,
-    const char *mount_point, uint64_t *generation_out) {
-  if (runtime_sleep_mode_active() || !path_exists(file_path))
-    return false;
-
-  uint64_t generation = 0;
-  runtime_mount_state_lock();
-  bool reserved = !runtime_sleep_mode_active() &&
-                  begin_image_attachment(file_path, mount_point, &generation);
-  runtime_mount_state_unlock();
-  if (!reserved) {
-    log_debug("  [IMG] cannot reserve fallback attachment for %s: %s",
-              file_path, strerror(errno));
-    return false;
-  }
-
-  ensure_mount_dirs(mount_point);
-  log_debug("  [IMG][%s] retrying exFAT with img=%u",
-            attach_backend_name(ATTACH_BACKEND_LVD),
-            LVD_ATTACH_IMAGE_TYPE_SINGLE);
-  const image_mount_profile_t fallback_profile = {
-      .legacy = false,
-      // The first attach attempt already prepared this vnode's cache.
-      .nested_backing_cache = false,
-  };
-  if (!attach_image_device(
-          file_path, IMAGE_FS_EXFAT, mount_read_only, file_size,
-          ATTACH_BACKEND_LVD, unit_id_out, devname_out, devname_size,
-          &fallback_profile, LVD_ATTACH_IMAGE_TYPE_SINGLE, generation)) {
-    return false;
-  }
-
-  if (runtime_sleep_mode_active()) {
-    (void)release_runtime_image_attachment(file_path, generation);
-    return false;
-  }
-  if (!perform_image_nmount(file_path, generation, IMAGE_FS_EXFAT,
-                            ATTACH_BACKEND_LVD, devname_out, mount_point,
-                            mount_read_only, force_mount, &fallback_profile,
-                            NULL)) {
-    return false;
-  }
-
-  *generation_out = generation;
-  sm_error_clear();
-  log_debug("  [IMG][%s] exFAT type fallback succeeded: %s",
-            attach_backend_name(ATTACH_BACKEND_LVD), file_path);
-  return true;
 }
 
 static bool validate_mounted_image(const char *file_path, uint64_t generation,
@@ -1142,9 +1070,9 @@ static bool validate_mounted_image(const char *file_path, uint64_t generation,
   }
 
   uint32_t min_device_sector =
-      (attach_backend == ATTACH_BACKEND_MD) ? get_md_sector_size_for_path(file_path, fs_type)
-                                            : get_lvd_sector_size(file_path,
-                                                                  fs_type);
+      (attach_backend == ATTACH_BACKEND_MD)
+          ? get_md_sector_size_for_path(file_path, fs_type)
+          : get_lvd_sector_size(file_path, fs_type);
   uint64_t fs_block_size = (uint64_t)mounted_sfs.f_bsize;
   if (fs_block_size < (uint64_t)min_device_sector) {
     uint32_t tuned_sector_size = 0;
@@ -1192,8 +1120,6 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   bool mount_mode_overridden = false;
   bool force_mount = cfg->force_mount;
   attach_backend_t attach_backend = select_image_backend(cfg, fs_type);
-  const image_mount_profile_t profile =
-      get_image_mount_profile(cfg, fs_type);
   const char *filename = get_filename_component(file_path);
   if (filename[0] != '\0')
     mount_mode_overridden =
@@ -1216,6 +1142,11 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   struct stat st;
   if (!stat_image_file(file_path, &st))
     return false;
+
+  image_mount_profile_t profile =
+      get_image_mount_profile(cfg, file_path, fs_type);
+  uint16_t image_type =
+      get_lvd_image_type(file_path, fs_type, profile.legacy);
 
   uint64_t attachment_generation = 0;
   runtime_mount_state_lock();
@@ -1258,38 +1189,19 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   int unit_id = -1;
   char devname[64];
   memset(devname, 0, sizeof(devname));
-  bool attached =
-      attach_image_device(
-          file_path, fs_type, mount_read_only, st.st_size, attach_backend,
-          &unit_id, devname, sizeof(devname), &profile,
-          get_lvd_image_type(file_path, fs_type, profile.legacy),
-          attachment_generation);
-  int attach_errno = errno;
-  bool mounted = false;
-  bool retry_safe = false;
-  if (attached) {
-    if (runtime_sleep_mode_active()) {
-      (void)release_runtime_image_attachment(file_path,
-                                             attachment_generation);
-      return false;
-    }
-    mounted = perform_image_nmount(
-        file_path, attachment_generation, fs_type, attach_backend, devname,
-        mount_point,
-        mount_read_only, force_mount, &profile, &retry_safe);
+  if (!attach_image_device(file_path, fs_type, mount_read_only, st.st_size,
+                           attach_backend, &unit_id, devname, sizeof(devname),
+                           &profile, image_type, attachment_generation)) {
+    return false;
   }
-  if (!mounted) {
-    bool can_retry = !profile.legacy && attach_backend == ATTACH_BACKEND_LVD &&
-                     fs_type == IMAGE_FS_EXFAT &&
-                     ((attached && retry_safe) ||
-                      (!attached && attach_errno == EINVAL));
-    if (!can_retry ||
-        !try_exfat_lvd_type_fallback(
-            file_path, mount_read_only, force_mount, st.st_size, &unit_id,
-            devname, sizeof(devname), mount_point,
-            &attachment_generation)) {
-      return false;
-    }
+  if (runtime_sleep_mode_active()) {
+    (void)release_runtime_image_attachment(file_path, attachment_generation);
+    return false;
+  }
+  if (!perform_image_nmount(file_path, attachment_generation, fs_type,
+                            attach_backend, devname, mount_point,
+                            mount_read_only, force_mount, &profile)) {
+    return false;
   }
   if (runtime_sleep_mode_active()) {
     (void)release_runtime_image_attachment(file_path, attachment_generation);
@@ -1418,7 +1330,8 @@ static void log_image_unmount_result(const char *file_path,
 
 static unmount_result_t unmount_image_impl(const char *file_path, int unit_id,
                                            attach_backend_t backend,
-                                           bool cleanup_source_state) {
+                                           bool cleanup_source_state,
+                                           uint64_t expected_generation) {
   unmount_result_t result = {0};
 
   char mount_point[MAX_PATH];
@@ -1442,13 +1355,16 @@ static unmount_result_t unmount_image_impl(const char *file_path, int unit_id,
       tracked_entry.backend != ATTACH_BACKEND_NONE &&
       tracked_entry.unit_id >= 0;
   if (has_tracked_device) {
-    if (tracked_entry.unit_id != resolved_unit ||
+    if ((expected_generation != 0 &&
+         tracked_entry.generation != expected_generation) ||
+        tracked_entry.unit_id != resolved_unit ||
         tracked_entry.backend != resolved_backend) {
       result.error = ESTALE;
       errno = result.error;
       return result;
     }
-    if (tracked_entry.state == ATTACHED_DEVICE_ATTACHING) {
+    if (tracked_entry.state == ATTACHED_DEVICE_ATTACHING &&
+        expected_generation == 0) {
       result.error = EBUSY;
       errno = result.error;
       return result;
@@ -1547,12 +1463,12 @@ static unmount_result_t unmount_image_impl(const char *file_path, int unit_id,
 
 unmount_result_t unmount_image(const char *file_path, int unit_id,
                                attach_backend_t backend) {
-  return unmount_image_impl(file_path, unit_id, backend, true);
+  return unmount_image_impl(file_path, unit_id, backend, true, 0);
 }
 
 unmount_result_t unmount_runtime_image(const char *file_path, int unit_id,
                                        attach_backend_t backend) {
-  return unmount_image_impl(file_path, unit_id, backend, false);
+  return unmount_image_impl(file_path, unit_id, backend, false, 0);
 }
 
 static bool release_runtime_image_attachment(const char *file_path,
@@ -1566,12 +1482,11 @@ static bool release_runtime_image_attachment(const char *file_path,
   }
   if (entry.backend == ATTACH_BACKEND_NONE || entry.unit_id < 0)
     return cancel_image_attachment(file_path, generation);
-  unmount_result_t result =
-      unmount_runtime_image(entry.path, entry.unit_id, entry.backend);
+  unmount_result_t result = unmount_image_impl(
+      entry.path, entry.unit_id, entry.backend, false, generation);
   if (!unmount_completed(result))
     return false;
-  (void)invalidate_matching_image_cache_entry(index, &entry);
-  return true;
+  return invalidate_matching_image_cache_entry(index, &entry);
 }
 
 bool release_runtime_image_mount(const char *file_path) {

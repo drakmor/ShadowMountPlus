@@ -73,11 +73,7 @@ Supported keys (all optional):
 - `stability_wait_seconds=<0..3600>` (minimum source age before processing; default: `10`)
 - `exfat_backend=lvd|md` (default: `lvd`)
 - `ufs_backend=lvd|md` (default: `lvd`)
-- `legacy_mount_ufs=1|0` (`.ffpkg`; `1` selects the version 1.6 mount profile; default: `1`)
-- `legacy_mount_exfat=1|0` (`.exfat`; `1` selects the version 1.6 mount profile; default: `1`)
-- `legacy_mount_pfs=1|0` (`.ffpfs` and nested `pfs_image.dat`; `1` selects the version 1.6 mount profile; default: `1`)
-- `legacy_mount_pfsc=1|0` (outer `.ffpfsc`; `1` selects the version 1.6 mount profile; default: `1`)
-- `nested_pfs_index_cache=1|0` (cache the containing PFS compressed-file index before attaching a nested image in legacy mode; default: `0`; optimized mode always requests it; the old `legacy_gddr5_cache` name remains accepted)
+- `nested_pfs_index_cache=1|0` (request the containing PFS compressed-file index cache before attaching a nested image; default: `0`)
 - `backport_fakelib=1|0` (`1` mounts sandbox `fakelib` overlays for running games; default: `1`)
 - `update_emulators=1|0` (`1` updates all emulators with matching files in a game's own fakelib; `fakelib2` is excluded; default: `1`)
 - `emulators_path=<absolute_path>` (folder containing emulator update files; default: `/data/shadowmount/emus`)
@@ -103,7 +99,7 @@ Supported keys (all optional):
 - `lvd_ufs_sector_size=<value>` (default: `4096`)
 - `lvd_pfs_sector_size=<value>` (default: `4096`; the optimized profile uses a `65536`-byte LVD mapping unit)
 - `md_exfat_sector_size=<value>` (default: `512`)
-- `md_ufs_sector_size=<value>` (default: `512` with the legacy UFS profile, `4096` with the optimized profile)
+- `md_ufs_sector_size=<value>` (default: `4096`)
 
 Supported notification languages:
 
@@ -240,7 +236,7 @@ PFSC container layout requirement (`.ffpfsc`):
 - Do not place game files directly in the container root.
 - Place supported nested image files inside the container; ShadowMountPlus mounts those nested images and scans them for the game.
 - A nested `pfs_image.dat` file inside a PFSC container is treated as a PFS image.
-- `.ffpfsc` uses the nested outer PFS profile (`img_type=0x02`); `.ffpfs` and `pfs_image.dat` files mounted from inside it use the nested inner profile (`img_type=0x82`). Signature verification remains disabled for unsigned images; nested inner images request the PFSC compressed-offset cache before LVD attach.
+- `.ffpfsc` always uses the optimized nested outer PFS profile (`img_type=0x02`). A standalone `.ffpfs` source uses the optimized profile only under `/data/...` or `/user/...`; other standalone sources use the version 1.6 parameters. Nested `.ffpfs`/`pfs_image.dat` images always use the optimized inner profile with `img_type=0x82`. Signature verification remains disabled for unsigned images; set `nested_pfs_index_cache=1` to request the PFSC compressed-offset cache before attaching nested images.
 
 ## Compressed PFS containers (`.ffpfsc`)
 
@@ -398,9 +394,9 @@ Recommended only for titles that need external-drive-style compatibility. For ge
 
 ### LVD type-5 / BFS fast-path requirements
 
-With `legacy_mount_exfat=0`, ShadowMount attaches `.exfat` through LVD as
-`img_type=5 (Sv)`, with a 512-byte
-logical sector and a 64 KiB `secondary_unit`. This lets the LVD worker collect
+For direct source paths under `/data/...` or `/user/...`, ShadowMount attaches
+`.exfat` through LVD as `img_type=5 (Sv)`, with a 512-byte logical sector and a
+64 KiB `secondary_unit`. This lets the LVD worker collect
 up to 31 queued, 64-KiB-aligned requests of exactly 64 KiB and
 submit them through `bfs_iosession_rw_sdimg`/`BfsSdimg`. Non-matching requests
 continue through the normal vnode path.
@@ -409,8 +405,8 @@ All of the following are required for the kernel to consider that fast path:
 
 - Use `exfat_backend=lvd` (the default). `/dev/mdctl` has no LVD image type or
   BFS sdimg batching.
-- Set `legacy_mount_exfat=0`; the default version 1.6 profile uses
-  `img_type=0` and does not request this fast path.
+- A `.exfat` source outside `/data/...` and `/user/...` uses the `img_type=0`
+  profile directly. No second mount attempt is made after failure.
 - Store the final `.exfat` file directly on the internal BFS, normally below
   `/data`. An image on USB/UFS/exFAT/PFS, or an exFAT image nested in compressed
   PFS, uses the normal path.
@@ -428,7 +424,7 @@ All of the following are required for the kernel to consider that fast path:
 
 The 64 KiB cluster improves eligibility but cannot force every access through
 the batch path: exFAT metadata and small or unaligned application I/O still use
-the safe fallback. In the ShadowMount debug log, an eligible profile request is
+the normal vnode path. In the ShadowMount debug log, an eligible profile request is
 shown by `img=5 sec=512 sec2=65536`; the kernel still makes the final BFS and
 platform checks internally.
 

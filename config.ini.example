@@ -106,24 +106,10 @@
 # exfat_backend=lvd
 # ufs_backend=lvd
 
-# Mount profile per image type:
-# 1/true/yes/on  -> use the version 1.6 attach/nmount profile (default)
-# 0/false/no/off -> use the optimized version 1.7 profile
-# Changes apply the next time an image is mounted; active mounts are not reset.
-# ufs   = .ffpkg
-# exfat = .exfat
-# pfs   = .ffpfs and nested pfs_image.dat
-# pfsc  = outer .ffpfsc container
-# legacy_mount_ufs=1
-# legacy_mount_exfat=1
-# legacy_mount_pfs=1
-# legacy_mount_pfsc=1
-
-# PFS compressed-file index cache for nested images in legacy mode:
+# PFS compressed-file index cache for nested images:
 # 1/true/yes/on  -> cache the containing PFS compressed-file index before
 #                   attaching a nested image
-# 0/false/no/off -> keep the version 1.6 behavior (default)
-# The optimized profile always requests this cache when supported.
+# 0/false/no/off -> skip this optional request (default)
 # The old legacy_gddr5_cache key remains accepted for compatibility.
 # nested_pfs_index_cache=0
 
@@ -205,8 +191,7 @@
 # kstuff_pause_delay_direct_seconds=15
 
 # Backend-specific sector size overrides:
-# Defaults: lvd_exfat=512, lvd_ufs=4096, lvd_pfs=4096, md_exfat=512
-# md_ufs defaults to 512 in legacy mode and 4096 in optimized mode.
+# Defaults: lvd_exfat=512, lvd_ufs=4096, lvd_pfs=4096, md_exfat=512,md_ufs=4096.
 # Keep lvd_exfat at 512 for the BFS fast path. 65536 is the exFAT cluster and
 # LVD secondary unit in the optimized profile, not the logical sector size.
 # lvd_exfat_sector_size=512

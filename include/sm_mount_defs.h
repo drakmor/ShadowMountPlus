@@ -40,11 +40,16 @@
  * optional OTBL metadata. Optimized ShadowMount profiles are:
  *
  *   .exfat                         type 5  Sv,  direct + BFS sdimg batching
- *                                  fallback: type 0 Dfl
  *   .ffpkg (UFS)                  type 5  Sv,  direct + BFS sdimg batching
  *   standalone .ffpfs             type 5  Sv,  direct
  *   outer .ffpfsc                 type 9  AcO, layered package outer
  *   inner .ffpfs/pfs_image.dat    type 8  AcI, layered package inner
+ *
+ * exFAT, UFS/.ffpkg and standalone PFS/.ffpfs use the optimized profiles above
+ * only when their direct source path is under /data or /user. Other direct
+ * sources use the version 1.6 profiles: type 0 for exFAT, type 7 for UFS and
+ * the sector-size mapping unit for standalone PFS. The outer .ffpfsc container
+ * and its nested .ffpfs/pfs_image.dat images always use optimized profiles.
  *
  * ShadowMount deliberately uses type 5 with single/save attach flags for UFS
  * images so a standalone .ffpkg on BFS can use sdimg batching. Type 7 with
@@ -150,9 +155,8 @@
  *     exists.
  *
  *  2. PFS_GDDR5_CACHE_IOCTL can be issued on a nested image's backing vnode
- *     before LVD attach. The optimized profile requests it automatically; the
- *     legacy profile requires nested_pfs_index_cache=1. It requests the
- *     containing PFS/PPR read path to cache the
+ *     before LVD attach when nested_pfs_index_cache=1.
+ *     The ioctl asks the containing PFS/PPR read path to cache the
  *     compressed-offset table used to reach that vnode's data; it does not
  *     inspect or impose a format on the bytes stored inside the file. Thus the
  *     nested file may contain PFS, UFS, exFAT or arbitrary block data and need
@@ -203,7 +207,7 @@
  * -------------------------
  * LVD is the default for every format. MD is a compatibility backend for
  * UFS/exFAT; it uses AUTOUNIT|ASYNC and configurable logical sectors (modern
- * UFS default 4096, legacy UFS default 512, exFAT default 512). Read-only state
+ * UFS default 4096, exFAT default 512). Read-only state
  * is applied to the backing device and nmount. The shared nmount profiles are:
  *
  *   UFS   ufs + budgetid + async + noatime + automounted
@@ -219,10 +223,8 @@
  * zone-aware modes are separate filesystem features and are not DD flags.
  *
  * force is appended only for explicit recovery. Unsigned PFS keeps signature
- * verification disabled. The optimized profile primes every nested image on
- * PFS before LVD attach; the legacy profile does so only when explicitly
- * enabled.
- */
+ * verification disabled. The source path selects one profile before attach;
+  */
 
 #define LVD_CTRL_PATH "/dev/lvdctl"
 #define MD_CTRL_PATH "/dev/mdctl"
@@ -266,7 +268,6 @@
 #define LVD_SECONDARY_UNIT_IMAGE_IO 0x10000u
 #define MD_SECTOR_SIZE_EXFAT 512u
 #define MD_SECTOR_SIZE_UFS_OPTIMIZED 4096u
-#define MD_SECTOR_SIZE_UFS_LEGACY 512u
 _Static_assert(LVD_SECONDARY_UNIT_IMAGE_IO % LVD_SECTOR_SIZE_EXFAT == 0,
                "exFAT LVD geometry must be aligned");
 _Static_assert(LVD_SECONDARY_UNIT_IMAGE_IO % LVD_SECTOR_SIZE_UFS == 0,
