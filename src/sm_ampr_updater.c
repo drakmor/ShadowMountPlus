@@ -114,7 +114,7 @@ static void snapshot_update_config(ampr_update_config_t *snapshot) {
 static bool
 update_snapshot_is_current_locked(const ampr_update_config_t *snapshot) {
   const runtime_config_t *cfg = runtime_config();
-  return !g_ampr_updater.stop_requested &&
+  return !g_ampr_updater.stop_requested && !runtime_sleep_mode_active() &&
          snapshot->generation == g_ampr_updater.config_generation &&
          cfg->auto_update_ampr_enabled &&
          strcmp(snapshot->url, cfg->ampr_update_url) == 0 &&
@@ -139,6 +139,8 @@ static bool wait_for_update_event_locked(uint32_t seconds,
 
   bool wait_failed = false;
   while (!g_ampr_updater.stop_requested) {
+    if (runtime_sleep_mode_active())
+      break;
     if (wake_early && g_ampr_updater.wake_requested)
       break;
     g_ampr_updater.wake_requested = false;
@@ -860,6 +862,28 @@ static void *ampr_updater_thread_main(void *unused) {
       continue;
     }
 
+    if (runtime_sleep_mode_active()) {
+      while (!g_ampr_updater.stop_requested &&
+             runtime_sleep_mode_active()) {
+        g_ampr_updater.wake_requested = false;
+        int rc =
+            pthread_cond_wait(&g_ampr_updater.cond, &g_ampr_updater.mutex);
+        if (rc != 0) {
+          log_debug("  [AMPR] sleep wait failed: %s", strerror(rc));
+          pthread_mutex_unlock(&g_ampr_updater.mutex);
+          return NULL;
+        }
+      }
+      if (g_ampr_updater.stop_requested)
+        break;
+      g_ampr_updater.wake_requested = false;
+      if (!wait_for_update_event_locked(AMPR_INITIAL_CHECK_DELAY_SECONDS,
+                                        true)) {
+        break;
+      }
+      continue;
+    }
+
     if (ampr_update_busy()) {
       if (!wait_for_update_event_locked(AMPR_BUSY_RETRY_SECONDS, true))
         break;
@@ -937,6 +961,32 @@ void sm_ampr_updater_stop(void) {
   g_ampr_updater.wake_requested = false;
   g_ampr_updater.active_request_id = -1;
   pthread_mutex_unlock(&g_ampr_updater.mutex);
+}
+
+void sm_ampr_updater_on_sleep_change(bool active) {
+  pthread_mutex_lock(&g_ampr_updater.mutex);
+  if (!g_ampr_updater.started) {
+    pthread_mutex_unlock(&g_ampr_updater.mutex);
+    return;
+  }
+
+  bool update_enabled = runtime_config()->auto_update_ampr_enabled;
+  if (!update_enabled && g_ampr_updater.active_request_id < 0) {
+    pthread_mutex_unlock(&g_ampr_updater.mutex);
+    return;
+  }
+
+  int active_request_id = -1;
+  if (active) {
+    g_ampr_updater.config_generation++;
+    active_request_id = g_ampr_updater.active_request_id;
+    g_ampr_updater.active_request_id = -1;
+  }
+  pthread_cond_broadcast(&g_ampr_updater.cond);
+  pthread_mutex_unlock(&g_ampr_updater.mutex);
+
+  if (active_request_id >= 0)
+    (void)sceHttp2AbortRequest(active_request_id);
 }
 
 void sm_ampr_updater_on_config_reload(const runtime_config_t *old_cfg,

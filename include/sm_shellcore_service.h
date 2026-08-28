@@ -10,6 +10,8 @@
 // Start/stop the local Unix-socket owner used by the SceShellCore bridge.
 bool sm_shellcore_service_start(void);
 void sm_shellcore_service_stop(void);
+// Close the bridge socket on sleep entry and recreate it after resume.
+void sm_shellcore_service_on_sleep_change(bool active);
 
 // Release transient title/image mounts after launch failure or explicit API use.
 bool sm_shellcore_release_title_runtime(const char *title_id);

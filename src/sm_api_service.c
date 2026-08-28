@@ -18,6 +18,7 @@
 #include "sm_log.h"
 #include "sm_mount_device.h"
 #include "sm_path_utils.h"
+#include "sm_runtime.h"
 #include "sm_shellcore_service.h"
 #include "sm_socket_io.h"
 
@@ -37,7 +38,7 @@
 typedef struct {
   pthread_t thread;
   pthread_mutex_t mutex;
-  pthread_cond_t retry_cond;
+  pthread_cond_t cond;
   bool started;
   bool stop_requested;
   int listen_fd;
@@ -56,7 +57,7 @@ typedef struct {
 
 static sm_api_service_state_t g_api = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
-    .retry_cond = PTHREAD_COND_INITIALIZER,
+    .cond = PTHREAD_COND_INITIALIZER,
     .listen_fd = -1,
     .client_fd = -1,
 };
@@ -96,6 +97,21 @@ static uint32_t next_retry_delay_ms(uint32_t current) {
   return current * 2u;
 }
 
+static bool wait_until_runtime_awake(void) {
+  pthread_mutex_lock(&g_api.mutex);
+  while (!g_api.stop_requested && runtime_sleep_mode_active()) {
+    int rc = pthread_cond_wait(&g_api.cond, &g_api.mutex);
+    if (rc != 0) {
+      log_debug("  [API] sleep wait failed: %s", strerror(rc));
+      pthread_mutex_unlock(&g_api.mutex);
+      return false;
+    }
+  }
+  bool keep_running = !g_api.stop_requested;
+  pthread_mutex_unlock(&g_api.mutex);
+  return keep_running;
+}
+
 static bool wait_before_listener_retry(uint32_t delay_ms) {
   struct timespec deadline;
   if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
@@ -115,9 +131,9 @@ static bool wait_before_listener_retry(uint32_t delay_ms) {
 
   pthread_mutex_lock(&g_api.mutex);
   int wait_status = 0;
-  while (!g_api.stop_requested) {
+  while (!g_api.stop_requested && !runtime_sleep_mode_active()) {
     wait_status =
-        pthread_cond_timedwait(&g_api.retry_cond, &g_api.mutex, &deadline);
+        pthread_cond_timedwait(&g_api.cond, &g_api.mutex, &deadline);
     if (wait_status != 0)
       break;
   }
@@ -758,6 +774,17 @@ static void *service_thread_main(void *arg) {
   uint32_t retry_delay_ms = SM_API_RETRY_INITIAL_MS;
   bool outage_logged = false;
   while (true) {
+    if (!wait_until_runtime_awake())
+      break;
+
+    if (listen_fd >= 0) {
+      pthread_mutex_lock(&g_api.mutex);
+      bool owns_listener = g_api.listen_fd == listen_fd;
+      pthread_mutex_unlock(&g_api.mutex);
+      if (!owns_listener)
+        listen_fd = -1;
+    }
+
     if (listen_fd < 0) {
       listen_fd = open_http_listener(bind_address, port);
       if (listen_fd < 0) {
@@ -775,10 +802,14 @@ static void *service_thread_main(void *arg) {
       }
 
       pthread_mutex_lock(&g_api.mutex);
-      if (g_api.stop_requested) {
+      if (g_api.stop_requested || runtime_sleep_mode_active()) {
+        bool stopping = g_api.stop_requested;
         pthread_mutex_unlock(&g_api.mutex);
         close(listen_fd);
-        break;
+        listen_fd = -1;
+        if (stopping)
+          break;
+        continue;
       }
       g_api.listen_fd = listen_fd;
       pthread_mutex_unlock(&g_api.mutex);
@@ -797,19 +828,24 @@ static void *service_thread_main(void *arg) {
     int client = accept(listen_fd, NULL, NULL);
     if (client < 0) {
       int accept_error = errno;
-      if (accept_error == EINTR || accept_error == ECONNABORTED ||
-          accept_error == EPROTO) {
+      pthread_mutex_lock(&g_api.mutex);
+      bool stopping = g_api.stop_requested;
+      bool sleeping = runtime_sleep_mode_active();
+      bool owns_listener = g_api.listen_fd == listen_fd;
+      pthread_mutex_unlock(&g_api.mutex);
+      if (stopping)
+        break;
+      if (!owns_listener) {
+        listen_fd = -1;
         continue;
       }
-
-      pthread_mutex_lock(&g_api.mutex);
-      if (g_api.stop_requested) {
-        pthread_mutex_unlock(&g_api.mutex);
-        break;
-      }
+      if (sleeping)
+        continue;
+      if (accept_error == EINTR || accept_error == ECONNABORTED ||
+          accept_error == EPROTO)
+        continue;
 
       if (accept_error_needs_wait(accept_error)) {
-        pthread_mutex_unlock(&g_api.mutex);
         if (!outage_logged) {
           log_debug("  [API] HTTP accept paused: %s; recovery scheduled",
                     strerror(accept_error));
@@ -821,12 +857,11 @@ static void *service_thread_main(void *arg) {
         continue;
       }
 
-      bool owns_listener = g_api.listen_fd == listen_fd;
-      if (owns_listener)
+      pthread_mutex_lock(&g_api.mutex);
+      if (g_api.listen_fd == listen_fd)
         g_api.listen_fd = -1;
       pthread_mutex_unlock(&g_api.mutex);
-      if (owns_listener)
-        close(listen_fd);
+      close(listen_fd);
       listen_fd = -1;
       if (!outage_logged) {
         log_debug("  [API] HTTP listener lost: %s; recovery scheduled",
@@ -857,6 +892,8 @@ static void *service_thread_main(void *arg) {
       close(client);
       break;
     }
+    if (g_api.listen_fd != listen_fd)
+      listen_fd = -1;
     g_api.client_fd = client;
     pthread_mutex_unlock(&g_api.mutex);
 
@@ -909,16 +946,16 @@ void sm_api_service_stop(void) {
   g_api.stop_requested = true;
   int fd = g_api.listen_fd;
   int client_fd = g_api.client_fd;
-  g_api.listen_fd = -1;
-  pthread_cond_broadcast(&g_api.retry_cond);
-  pthread_mutex_unlock(&g_api.mutex);
-
   if (client_fd >= 0)
     (void)shutdown(client_fd, SHUT_RDWR);
   if (fd >= 0) {
     (void)shutdown(fd, SHUT_RDWR);
     close(fd);
   }
+  g_api.listen_fd = -1;
+  pthread_cond_broadcast(&g_api.cond);
+  pthread_mutex_unlock(&g_api.mutex);
+
   pthread_join(g_api.thread, NULL);
 
   pthread_mutex_lock(&g_api.mutex);
@@ -931,4 +968,22 @@ void sm_api_service_stop(void) {
 bool sm_api_service_reconfigure(void) {
   sm_api_service_stop();
   return sm_api_service_start();
+}
+
+void sm_api_service_on_sleep_change(bool active) {
+  pthread_mutex_lock(&g_api.mutex);
+  if (!g_api.started) {
+    pthread_mutex_unlock(&g_api.mutex);
+    return;
+  }
+
+  if (active) {
+    if (g_api.listen_fd >= 0) {
+      (void)shutdown(g_api.listen_fd, SHUT_RDWR);
+      close(g_api.listen_fd);
+    }
+    g_api.listen_fd = -1;
+  }
+  pthread_cond_broadcast(&g_api.cond);
+  pthread_mutex_unlock(&g_api.mutex);
 }

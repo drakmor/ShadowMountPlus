@@ -717,8 +717,11 @@ static void *shellcore_flag_thread_main(void *arg) {
     return NULL;
   }
 
-  for (size_t i = 0; i < sizeof(g_shellcore_flags) / sizeof(g_shellcore_flags[0]);
-       ++i) {
+  shellcore_flag_monitor_t *resume_flag = NULL;
+  for (size_t i = 0;
+       i < sizeof(g_shellcore_flags) / sizeof(g_shellcore_flags[0]); ++i) {
+    if (strcmp(g_shellcore_flags[i].name, "SceSystemStateMgrInfo") == 0)
+      resume_flag = &g_shellcore_flags[i];
     poll_shellcore_flag(&g_shellcore_flags[i]);
   }
 
@@ -729,12 +732,18 @@ static void *shellcore_flag_thread_main(void *arg) {
   while (!atomic_load_explicit(&g_shellcore_flag_stop_requested,
                                memory_order_relaxed) &&
          !should_stop_requested()) {
-    for (size_t i = 0; i < sizeof(g_shellcore_flags) / sizeof(g_shellcore_flags[0]);
-         ++i) {
-      poll_shellcore_flag(&g_shellcore_flags[i]);
+    bool sleeping = runtime_sleep_mode_active();
+    if (sleeping && resume_flag) {
+      poll_shellcore_flag(resume_flag);
+    } else {
+      for (size_t i = 0;
+           i < sizeof(g_shellcore_flags) / sizeof(g_shellcore_flags[0]); ++i) {
+        poll_shellcore_flag(&g_shellcore_flags[i]);
+      }
     }
 
-    sceKernelUsleep(SHELLCORE_FLAG_POLL_INTERVAL_US);
+    sceKernelUsleep(sleeping ? SHELLCORE_FLAG_SLEEP_POLL_INTERVAL_US
+                             : SHELLCORE_FLAG_POLL_INTERVAL_US);
   }
 
   close_shellcore_flags();

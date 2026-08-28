@@ -179,6 +179,9 @@ bool request_runtime_sleep_mode(bool active, const char *reason) {
       (reason && reason[0] != '\0') ? reason : "unknown sleep source";
   log_debug("[SLEEP] %s by %s", active ? "entered" : "left",
             resolved_reason);
+  sm_api_service_on_sleep_change(active);
+  sm_shellcore_service_on_sleep_change(active);
+  sm_ampr_updater_on_sleep_change(active);
   sm_scanner_wake();
   wake_game_lifecycle_watcher();
   return true;

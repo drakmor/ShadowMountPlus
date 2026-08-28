@@ -43,6 +43,7 @@ typedef struct {
 typedef struct {
   pthread_t thread;
   pthread_mutex_t mutex;
+  pthread_cond_t cond;
   bool started;
   bool stop_requested;
   int listen_fd;
@@ -57,6 +58,7 @@ typedef struct {
 
 static shellcore_service_state_t g_service = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .cond = PTHREAD_COND_INITIALIZER,
     .listen_fd = -1,
     .client_fd = -1,
 };
@@ -480,6 +482,8 @@ int sm_shellcore_mount_title_runtime(const char *title_id) {
 int sm_shellcore_unmount_title_runtime(const char *title_id) {
   if (!is_supported_game_title_id(title_id))
     return EINVAL;
+  if (runtime_sleep_mode_active())
+    return EBUSY;
   if (sm_game_lifecycle_has_active_game())
     return EBUSY;
 
@@ -757,6 +761,8 @@ static bool reset_switch_title_mount(const char *title_id) {
 }
 
 static int handle_launch_failed_request(const char *title_id) {
+  if (runtime_sleep_mode_active())
+    return EBUSY;
   if (!title_id || title_id[0] == '\0')
     return 0;
 
@@ -783,10 +789,23 @@ static int handle_launch_failed_request(const char *title_id) {
   return sm_shellcore_release_title_runtime(title_id) ? 0 : EBUSY;
 }
 
+static bool shellcore_client_active(int fd) {
+  pthread_mutex_lock(&g_service.mutex);
+  bool active = !g_service.stop_requested && !runtime_sleep_mode_active() &&
+                g_service.client_fd == fd;
+  pthread_mutex_unlock(&g_service.mutex);
+  return active;
+}
+
 static void handle_client(int fd) {
+  if (!shellcore_client_active(fd))
+    return;
+
   sm_shellcore_request_t request;
   sm_shellcore_response_t response;
   if (!sm_socket_read_full(fd, &request, sizeof(request)))
+    return;
+  if (!shellcore_client_active(fd))
     return;
   if (request.magic != SM_SHELLCORE_PROTOCOL_MAGIC ||
       request.version != SM_SHELLCORE_PROTOCOL_VERSION ||
@@ -802,22 +821,102 @@ static void handle_client(int fd) {
   } else {
     response.status = ENOTSUP;
   }
-  (void)sm_socket_write_full(fd, &response, sizeof(response));
+  if (shellcore_client_active(fd))
+    (void)sm_socket_write_full(fd, &response, sizeof(response));
+}
+
+static int open_shellcore_listener(void) {
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd < 0)
+    return -1;
+
+  struct sockaddr_un address;
+  memset(&address, 0, sizeof(address));
+  address.sun_family = AF_UNIX;
+  (void)strlcpy(address.sun_path, SM_SHELLCORE_SOCKET_PATH,
+                sizeof(address.sun_path));
+  (void)unlink(SM_SHELLCORE_SOCKET_PATH);
+  if (bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0 ||
+      listen(fd, 4) != 0) {
+    int saved_errno = errno;
+    close(fd);
+    (void)unlink(SM_SHELLCORE_SOCKET_PATH);
+    errno = saved_errno;
+    return -1;
+  }
+  return fd;
+}
+
+static bool wait_until_shellcore_runtime_awake(void) {
+  pthread_mutex_lock(&g_service.mutex);
+  while (!g_service.stop_requested && runtime_sleep_mode_active()) {
+    int rc = pthread_cond_wait(&g_service.cond, &g_service.mutex);
+    if (rc != 0) {
+      log_debug("  [SHELLCORE] sleep wait failed: %s", strerror(rc));
+      pthread_mutex_unlock(&g_service.mutex);
+      return false;
+    }
+  }
+  bool keep_running = !g_service.stop_requested;
+  pthread_mutex_unlock(&g_service.mutex);
+  return keep_running;
 }
 
 static void *service_thread_main(void *arg) {
   (void)arg;
   int listen_fd = g_service.listen_fd;
   while (true) {
+    if (!wait_until_shellcore_runtime_awake())
+      break;
+
+    if (listen_fd >= 0) {
+      pthread_mutex_lock(&g_service.mutex);
+      bool owns_listener = g_service.listen_fd == listen_fd;
+      pthread_mutex_unlock(&g_service.mutex);
+      if (!owns_listener)
+        listen_fd = -1;
+    }
+
+    if (listen_fd < 0) {
+      listen_fd = open_shellcore_listener();
+      if (listen_fd < 0) {
+        log_debug("  [SHELLCORE] listener restore failed: %s",
+                  strerror(errno));
+        break;
+      }
+
+      pthread_mutex_lock(&g_service.mutex);
+      if (g_service.stop_requested || runtime_sleep_mode_active()) {
+        bool stopping = g_service.stop_requested;
+        pthread_mutex_unlock(&g_service.mutex);
+        close(listen_fd);
+        (void)unlink(SM_SHELLCORE_SOCKET_PATH);
+        listen_fd = -1;
+        if (stopping)
+          break;
+        continue;
+      }
+      g_service.listen_fd = listen_fd;
+      pthread_mutex_unlock(&g_service.mutex);
+      log_debug("  [SHELLCORE] Unix socket service resumed");
+    }
+
     int client = accept(listen_fd, NULL, NULL);
     if (client < 0) {
-      if (errno == EINTR)
-        continue;
+      int accept_error = errno;
       pthread_mutex_lock(&g_service.mutex);
       bool stopping = g_service.stop_requested;
+      bool owns_listener = g_service.listen_fd == listen_fd;
       pthread_mutex_unlock(&g_service.mutex);
-      if (!stopping)
-        log_debug("  [SHELLCORE] accept failed: %s", strerror(errno));
+      if (stopping)
+        break;
+      if (!owns_listener) {
+        listen_fd = -1;
+        continue;
+      }
+      if (accept_error == EINTR)
+        continue;
+      log_debug("  [SHELLCORE] accept failed: %s", strerror(accept_error));
       break;
     }
 
@@ -828,10 +927,17 @@ static void *service_thread_main(void *arg) {
                      sizeof(timeout));
 
     pthread_mutex_lock(&g_service.mutex);
-    if (g_service.stop_requested) {
+    bool owns_listener = g_service.listen_fd == listen_fd;
+    if (g_service.stop_requested || runtime_sleep_mode_active() ||
+        !owns_listener) {
+      bool stopping = g_service.stop_requested;
       pthread_mutex_unlock(&g_service.mutex);
       close(client);
-      break;
+      if (!owns_listener)
+        listen_fd = -1;
+      if (stopping)
+        break;
+      continue;
     }
     g_service.client_fd = client;
     pthread_mutex_unlock(&g_service.mutex);
@@ -851,23 +957,9 @@ bool sm_shellcore_service_start(void) {
   if (g_service.started)
     return true;
 
-  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  int fd = open_shellcore_listener();
   if (fd < 0)
     return false;
-  struct sockaddr_un address;
-  memset(&address, 0, sizeof(address));
-  address.sun_family = AF_UNIX;
-  (void)strlcpy(address.sun_path, SM_SHELLCORE_SOCKET_PATH,
-                sizeof(address.sun_path));
-  (void)unlink(SM_SHELLCORE_SOCKET_PATH);
-  if (bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0 ||
-      listen(fd, 4) != 0) {
-    int saved_errno = errno;
-    close(fd);
-    (void)unlink(SM_SHELLCORE_SOCKET_PATH);
-    errno = saved_errno;
-    return false;
-  }
 
   g_service.listen_fd = fd;
   g_service.client_fd = -1;
@@ -896,14 +988,15 @@ void sm_shellcore_service_stop(void) {
   g_service.stop_requested = true;
   int fd = g_service.listen_fd;
   int client_fd = g_service.client_fd;
-  g_service.listen_fd = -1;
-  pthread_mutex_unlock(&g_service.mutex);
   if (client_fd >= 0)
     (void)shutdown(client_fd, SHUT_RDWR);
-  if (fd >= 0)
+  if (fd >= 0) {
     (void)shutdown(fd, SHUT_RDWR);
-  if (fd >= 0)
     close(fd);
+  }
+  g_service.listen_fd = -1;
+  pthread_cond_broadcast(&g_service.cond);
+  pthread_mutex_unlock(&g_service.mutex);
   pthread_join(g_service.thread, NULL);
   pthread_mutex_lock(&g_service.mutex);
   g_service.started = false;
@@ -916,4 +1009,26 @@ void sm_shellcore_service_stop(void) {
   g_service.releasing_title_id[0] = '\0';
   pthread_mutex_unlock(&g_service.mutex);
   (void)unlink(SM_SHELLCORE_SOCKET_PATH);
+}
+
+void sm_shellcore_service_on_sleep_change(bool active) {
+  pthread_mutex_lock(&g_service.mutex);
+  if (!g_service.started) {
+    pthread_mutex_unlock(&g_service.mutex);
+    return;
+  }
+
+  if (active) {
+    if (g_service.client_fd >= 0)
+      (void)shutdown(g_service.client_fd, SHUT_RDWR);
+    if (g_service.listen_fd >= 0) {
+      (void)shutdown(g_service.listen_fd, SHUT_RDWR);
+      close(g_service.listen_fd);
+    }
+    g_service.listen_fd = -1;
+    g_service.client_fd = -1;
+    (void)unlink(SM_SHELLCORE_SOCKET_PATH);
+  }
+  pthread_cond_broadcast(&g_service.cond);
+  pthread_mutex_unlock(&g_service.mutex);
 }

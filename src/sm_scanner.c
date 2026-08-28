@@ -1748,8 +1748,19 @@ bool sm_scanner_usb_watches_suspended(void) {
 
 bool sm_scanner_run_startup_sync(void) {
   while (!should_stop_requested()) {
-    while (runtime_sleep_mode_active() && !should_stop_requested())
-      sceKernelUsleep(200000);
+    while (runtime_sleep_mode_active() && !should_stop_requested()) {
+      fd_set readfds;
+      FD_ZERO(&readfds);
+      FD_SET(g_scanner_wake_pipe[0], &readfds);
+      int rc = select(g_scanner_wake_pipe[0] + 1, &readfds, NULL, NULL, NULL);
+      if (rc < 0) {
+        if (errno == EINTR)
+          continue;
+        log_debug("  [SCAN] startup sleep wait failed: %s", strerror(errno));
+        return false;
+      }
+      drain_scanner_wake_pipe();
+    }
 
     if (should_stop_requested())
       return false;
