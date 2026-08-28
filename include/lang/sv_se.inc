@@ -90,7 +90,9 @@ static const char *const g_sv_se[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Måltemperatur %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "Extern enhet %s ansluten.\nLedigt: %llu.%llu av %llu.%llu GB (blockstorlek %llu KB)\nSpel på enheten: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Extern enhet %s ansluten.\nLedigt: %llu.%llu av %llu.%llu GB (blockstorlek %llu KB)\nSpel på enheten: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nAnvänd en klusterstorlek på högst 64 KB för maximal prestanda",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Extern enhet %s frånkopplad",
 };

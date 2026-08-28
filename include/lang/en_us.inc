@@ -79,6 +79,8 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_USB_CONNECTED_SCANNING] =
         "External drive %s connected\n"
         "Free %llu.%llu GB of %llu.%llu (Block size %llu KB)\n"
-        "Games on drive: %d",
+        "Games on drive: %d%s",
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] =
+        "\nFor maximum performance, use a cluster size of no more than 64 KB",
     [SM_L10N_USB_DISCONNECTED] = "External drive %s disconnected",
 };

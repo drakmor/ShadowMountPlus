@@ -90,7 +90,9 @@ static const char *const g_tr_tr[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Hedef sıcaklık %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "Harici sürücü %s bağlandı.\nBoş: %llu.%llu / %llu.%llu GB (blok boyutu %llu KB)\nSürücüdeki oyunlar: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Harici sürücü %s bağlandı.\nBoş: %llu.%llu / %llu.%llu GB (blok boyutu %llu KB)\nSürücüdeki oyunlar: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nMaksimum performans için en fazla 64 KB küme boyutu kullanın",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Harici sürücü %s çıkarıldı",
 };

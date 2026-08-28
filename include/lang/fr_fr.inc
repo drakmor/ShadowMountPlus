@@ -90,7 +90,9 @@ static const char *const g_fr_fr[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Température cible %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "Lecteur externe %s connecté.\nLibre : %llu.%llu sur %llu.%llu Go (bloc %llu Ko)\nJeux sur le lecteur : %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Lecteur externe %s connecté.\nLibre : %llu.%llu sur %llu.%llu Go (bloc %llu Ko)\nJeux sur le lecteur : %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nPour des performances maximales, utilisez une taille de cluster ne dépassant pas 64 Ko",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Lecteur externe %s déconnecté",
 };

@@ -90,7 +90,9 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Nhiệt độ mục tiêu %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "Đã kết nối ổ đĩa ngoài %s.\nTrống: %llu.%llu / %llu.%llu GB (kích thước khối %llu KB)\nTrò chơi trên ổ đĩa: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Đã kết nối ổ đĩa ngoài %s.\nTrống: %llu.%llu / %llu.%llu GB (kích thước khối %llu KB)\nTrò chơi trên ổ đĩa: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nĐể đạt hiệu suất tối đa, hãy sử dụng kích thước cụm không quá 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Đã ngắt kết nối ổ đĩa ngoài %s",
 };

@@ -90,7 +90,9 @@ static const char *const g_ru_ru[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Целевая температура %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "Внешний диск %s подключён.\nСвободно %llu.%llu из %llu.%llu ГБ (блок %llu КБ)\nИгр на диске: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Внешний диск %s подключён.\nСвободно %llu.%llu из %llu.%llu ГБ (блок %llu КБ)\nИгр на диске: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nДля максимальной производительности используйте кластер не более 64 КБ",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Внешний диск %s отключён.",
 };

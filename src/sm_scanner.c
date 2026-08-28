@@ -41,6 +41,7 @@
 #define SCANNER_MANUAL_PROBE_INTERVAL_US 10000000ull
 #define SCANNER_USB_SLOT_COUNT 8
 #define SCANNER_USB_MOUNT_PROBE_DELAY_US 1000000ull
+#define SCANNER_MAX_RECOMMENDED_CLUSTER_SIZE_BYTES (64ull * 1024ull)
 #define SCANNER_GIB_BYTES (1024ull * 1024ull * 1024ull)
 #define SCANNER_FAKELIB_CACHE_CLEANUP_INTERVAL_US                         \
   (24ull * 60ull * 60ull * 1000000ull)
@@ -87,7 +88,7 @@ typedef struct {
 typedef struct {
   uint64_t available_tenths;
   uint64_t capacity_tenths;
-  uint64_t block_size_kb;
+  uint64_t block_size_bytes;
 } scanner_usb_info_t;
 
 static int g_scanner_wake_pipe[2] = {-1, -1};
@@ -229,8 +230,6 @@ static bool notify_scanner_usb_mount_change(const char *path) {
     uint64_t available_bytes = (uint64_t)sfs.f_bavail * block_size;
     uint64_t capacity_tenths = bytes_to_gib_tenths(capacity_bytes);
     uint64_t available_tenths = bytes_to_gib_tenths(available_bytes);
-    uint64_t block_size_kb = (block_size + 1023ull) / 1024ull;
-
     g_scanner_usb_mounted_mask |= slot_mask;
     if (scanner_usb_slot_has_scan_root(slot)) {
       g_scanner_usb_scan_result_pending_mask |= slot_mask;
@@ -238,7 +237,7 @@ static bool notify_scanner_usb_mount_change(const char *path) {
     }
     g_scanner_usb_info[slot].available_tenths = available_tenths;
     g_scanner_usb_info[slot].capacity_tenths = capacity_tenths;
-    g_scanner_usb_info[slot].block_size_kb = block_size_kb;
+    g_scanner_usb_info[slot].block_size_bytes = block_size;
     log_debug("[SCAN] USB storage connected; scan scheduled: %s "
               "capacity=%lluB available=%lluB block_size=%lluB",
               usb_root, (unsigned long long)capacity_bytes,
@@ -976,13 +975,18 @@ static void notify_scanner_usb_scan_complete(int slot) {
   log_debug("[SCAN] USB storage scan complete: %s games=%d", usb_root,
             game_count);
   const scanner_usb_info_t *info = &g_scanner_usb_info[slot];
+  const char *cluster_recommendation =
+      info->block_size_bytes <= SCANNER_MAX_RECOMMENDED_CLUSTER_SIZE_BYTES
+          ? ""
+          : sm_l10n_get(SM_L10N_USB_CLUSTER_RECOMMENDATION);
   notify_system_info_l10n(
       SM_L10N_USB_CONNECTED_SCANNING, usb_root,
       (unsigned long long)(info->available_tenths / 10ull),
       (unsigned long long)(info->available_tenths % 10ull),
       (unsigned long long)(info->capacity_tenths / 10ull),
       (unsigned long long)(info->capacity_tenths % 10ull),
-      (unsigned long long)info->block_size_kb, game_count);
+      (unsigned long long)((info->block_size_bytes + 1023ull) / 1024ull),
+      game_count, cluster_recommendation);
 }
 
 static void schedule_pending_scanner_usb_scans(uint64_t now_us) {

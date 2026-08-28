@@ -90,7 +90,9 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "目標温度 %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "外付けドライブ %s が接続されました。\n空き容量: %llu.%llu / %llu.%llu GB（ブロックサイズ: %llu KB）\nドライブ上のゲーム: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "外付けドライブ %s が接続されました。\n空き容量: %llu.%llu / %llu.%llu GB（ブロックサイズ: %llu KB）\nドライブ上のゲーム: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n最大限のパフォーマンスを得るには、クラスターサイズを 64 KB 以下にしてください",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "外付けドライブ %s が切断されました",
 };

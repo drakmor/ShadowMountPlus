@@ -90,7 +90,9 @@ static const char *const g_hu_hu[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Célhőmérséklet %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "Külső meghajtó csatlakoztatva: %s.\nSzabad: %llu.%llu / %llu.%llu GB (blokkméret %llu KB)\nJátékok a meghajtón: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Külső meghajtó csatlakoztatva: %s.\nSzabad: %llu.%llu / %llu.%llu GB (blokkméret %llu KB)\nJátékok a meghajtón: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nA maximális teljesítményhez használjon legfeljebb 64 KB-os klaszterméretet",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Külső meghajtó leválasztva: %s",
 };

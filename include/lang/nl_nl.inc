@@ -90,7 +90,9 @@ static const char *const g_nl_nl[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Doeltemperatuur %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "Externe schijf %s aangesloten.\nVrij: %llu.%llu van %llu.%llu GB (blokgrootte %llu KB)\nGames op de schijf: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Externe schijf %s aangesloten.\nVrij: %llu.%llu van %llu.%llu GB (blokgrootte %llu KB)\nGames op de schijf: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nGebruik voor maximale prestaties een clustergrootte van maximaal 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Externe schijf %s losgekoppeld",
 };

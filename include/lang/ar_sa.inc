@@ -90,7 +90,9 @@ static const char *const g_ar_sa[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "درجة الحرارة المستهدفة %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "تم توصيل محرك الأقراص الخارجي %s.\nالمتاح %llu.%llu من %llu.%llu غيغابايت (حجم الكتلة %llu كيلوبايت)\nالألعاب على القرص: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "تم توصيل محرك الأقراص الخارجي %s.\nالمتاح %llu.%llu من %llu.%llu غيغابايت (حجم الكتلة %llu كيلوبايت)\nالألعاب على القرص: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nللحصول على أقصى أداء، استخدم حجم عنقود لا يزيد عن 64 كيلوبايت",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "تم فصل محرك الأقراص الخارجي %s",
 };

@@ -90,7 +90,9 @@ static const char *const g_zh_cn[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "目标温度 %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "外部驱动器 %s 已连接。\n可用：%llu.%llu / %llu.%llu GB（块大小 %llu KB）\n驱动器上的游戏：%d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "外部驱动器 %s 已连接。\n可用：%llu.%llu / %llu.%llu GB（块大小 %llu KB）\n驱动器上的游戏：%d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n为获得最佳性能，请使用不超过 64 KB 的簇大小",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "外部驱动器 %s 已断开",
 };

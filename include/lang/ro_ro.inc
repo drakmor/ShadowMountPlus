@@ -90,7 +90,9 @@ static const char *const g_ro_ro[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Temperatura țintă %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "Unitatea externă %s a fost conectată.\nLiber: %llu.%llu din %llu.%llu GB (dimensiunea blocului %llu KB)\nJocuri pe unitate: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "Unitatea externă %s a fost conectată.\nLiber: %llu.%llu din %llu.%llu GB (dimensiunea blocului %llu KB)\nJocuri pe unitate: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nPentru performanță maximă, utilizați o dimensiune a clusterului de cel mult 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Unitatea externă %s a fost deconectată",
 };

@@ -90,7 +90,9 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "목표 온도 %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
-    [SM_L10N_USB_CONNECTED_SCANNING] = "외장 드라이브 %s 연결됨.\n여유 공간: %llu.%llu / %llu.%llu GB (블록 크기: %llu KB)\n드라이브의 게임: %d",
+    [SM_L10N_USB_CONNECTED_SCANNING] = "외장 드라이브 %s 연결됨.\n여유 공간: %llu.%llu / %llu.%llu GB (블록 크기: %llu KB)\n드라이브의 게임: %d%s",
+    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n최대 성능을 위해 64 KB 이하의 클러스터 크기를 사용하세요",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "외장 드라이브 %s 연결 해제됨",
 };
