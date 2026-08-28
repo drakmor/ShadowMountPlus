@@ -78,7 +78,9 @@ static bool consume_active_game_title(pid_t pid,
 }
 
 static bool is_supported_title_id(const char *title_id) {
-  return strncmp(title_id, "PPSA", 4) == 0 || strncmp(title_id, "CUSA", 4) == 0;
+  return strncmp(title_id, "PPSA", 4) == 0 ||
+         strncmp(title_id, "CUSA", 4) == 0 ||
+         strncmp(title_id, "FAKE", 4) == 0;
 }
 
 static uint64_t min_nonzero_u64(uint64_t a, uint64_t b) {
