@@ -4,6 +4,7 @@
     .text
     .p2align 4
     .global sm_shellcore_bridge_blob_start
+    .global sm_shellcore_bridge_code_end
     .global sm_shellcore_bridge_blob_end
     .global sm_shellcore_bridge_launch_hook
     .global sm_shellcore_bridge_install_all_hook
@@ -14,6 +15,7 @@
     .global sm_shellcore_bridge_install_title_id
     .global sm_shellcore_bridge_install_dir
     .global sm_shellcore_bridge_socket
+    .global sm_shellcore_bridge_setsockopt
     .global sm_shellcore_bridge_connect
     .global sm_shellcore_bridge_read
     .global sm_shellcore_bridge_write
@@ -50,7 +52,7 @@ sm_shellcore_bridge_launch_hook:
     popq %rax
     popfq
     subq $8, %rsp
-    call *sm_shellcore_bridge_launch_trampoline(%rip)
+    call .Llaunch_trampoline
     addq $8, %rsp
     movq %rax, %rbx
     testl %eax, %eax
@@ -83,7 +85,7 @@ sm_shellcore_bridge_install_all_hook:
     xorl %ecx, %ecx
     jmp *sm_shellcore_bridge_install_title_dir(%rip)
 1:
-    jmp *sm_shellcore_bridge_install_all_trampoline(%rip)
+    jmp .Linstall_all_trampoline
 
 /* int exchange(uint16_t operation, const char *title_id) */
     .p2align 4
@@ -126,6 +128,29 @@ sm_shellcore_bridge_exchange:
     js 8f
     movl %eax, %ebx
 
+    /*
+     * The mount preparation service is intentionally synchronous, but a
+     * stalled payload must not hold SceLncServiceIpcJobQueue indefinitely.
+    */
+    movq $SM_SHELLCORE_BRIDGE_IO_TIMEOUT_SEC, -96(%rbp)
+    movq $0, -88(%rbp)
+    movl %ebx, %edi
+    movl $SM_SHELLCORE_BRIDGE_SOL_SOCKET, %esi
+    movl $SM_SHELLCORE_BRIDGE_SO_SNDTIMEO, %edx
+    leaq -96(%rbp), %rcx
+    movl $SM_SHELLCORE_BRIDGE_TIMEVAL_SIZE, %r8d
+    call *sm_shellcore_bridge_setsockopt(%rip)
+    testl %eax, %eax
+    jne 7f
+    movl %ebx, %edi
+    movl $SM_SHELLCORE_BRIDGE_SOL_SOCKET, %esi
+    movl $SM_SHELLCORE_BRIDGE_SO_RCVTIMEO, %edx
+    leaq -96(%rbp), %rcx
+    movl $SM_SHELLCORE_BRIDGE_TIMEVAL_SIZE, %r8d
+    call *sm_shellcore_bridge_setsockopt(%rip)
+    testl %eax, %eax
+    jne 7f
+
     /* connect(fd, &sockaddr, sockaddr.sun_len) */
     movl %ebx, %edi
     leaq sm_shellcore_bridge_sockaddr(%rip), %rsi
@@ -167,14 +192,26 @@ sm_shellcore_bridge_exchange:
     popq %rbp
     ret
 
-    .p2align 3
+    /*
+     * C replaces these reserved blocks with the copied prologue followed by
+     * an absolute jump back into SceShellCore. Direct branches keep the
+     * trampoline targets immutable after installation.
+    */
+    .p2align 4
+.Llaunch_trampoline:
 sm_shellcore_bridge_launch_trampoline:
-    .quad 0
+    .fill SM_SHELLCORE_BRIDGE_TRAMPOLINE_SIZE, 1, 0x90
+    .p2align 4
+.Linstall_all_trampoline:
 sm_shellcore_bridge_install_all_trampoline:
-    .quad 0
+    .fill SM_SHELLCORE_BRIDGE_TRAMPOLINE_SIZE, 1, 0x90
+
+    .p2align 3
 sm_shellcore_bridge_install_title_dir:
     .quad 0
 sm_shellcore_bridge_socket:
+    .quad 0
+sm_shellcore_bridge_setsockopt:
     .quad 0
 sm_shellcore_bridge_connect:
     .quad 0
@@ -188,7 +225,14 @@ sm_shellcore_bridge_sockaddr:
     .byte sm_shellcore_bridge_sockaddr_end - sm_shellcore_bridge_sockaddr, 1
     .asciz SM_SHELLCORE_SOCKET_PATH
 sm_shellcore_bridge_sockaddr_end:
-    .p2align 3
+
+    /*
+     * PS5 user pages are 16 KiB. Keep all executable code and immutable
+     * imports in the first page, and the FW 12+ mutable install request in a
+     * separate non-executable page.
+    */
+    .p2align 14, 0
+sm_shellcore_bridge_code_end:
 sm_shellcore_bridge_install_armed:
     .byte 0
 sm_shellcore_bridge_install_title_id:

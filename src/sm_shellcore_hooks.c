@@ -2,6 +2,8 @@
 
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <pthread.h>
 
 #include "sm_limits.h"
@@ -13,8 +15,9 @@
 
 #define SHELLCORE_BASE_HOOK_COUNT 1u
 #define SHELLCORE_MAX_HOOK_COUNT 2u
-#define MAX_HOOK_PROLOGUE_SIZE 32u
-#define ABSOLUTE_JUMP_SIZE 12u
+#define MAX_HOOK_PROLOGUE_SIZE SM_SHELLCORE_BRIDGE_MAX_PROLOGUE_SIZE
+#define ABSOLUTE_JUMP_SIZE SM_SHELLCORE_BRIDGE_ABSOLUTE_JUMP_SIZE
+#define TRAMPOLINE_SIZE SM_SHELLCORE_BRIDGE_TRAMPOLINE_SIZE
 
 static const uint8_t k_expected_function_prologue[] = {0x55, 0x48, 0x89, 0xe5};
 
@@ -22,8 +25,20 @@ _Static_assert(MAX_TITLE_ID == SM_SHELLCORE_REQUEST_TITLE_ID_SIZE,
                "ShellCore bridge title id size mismatch");
 _Static_assert(MAX_PATH == SM_SHELLCORE_BRIDGE_INSTALL_DIR_SIZE,
                "ShellCore bridge install dir size mismatch");
+_Static_assert(TRAMPOLINE_SIZE ==
+                   MAX_HOOK_PROLOGUE_SIZE + ABSOLUTE_JUMP_SIZE,
+               "ShellCore bridge trampoline size mismatch");
+_Static_assert(SOL_SOCKET == SM_SHELLCORE_BRIDGE_SOL_SOCKET,
+               "ShellCore bridge SOL_SOCKET mismatch");
+_Static_assert(SO_SNDTIMEO == SM_SHELLCORE_BRIDGE_SO_SNDTIMEO,
+               "ShellCore bridge SO_SNDTIMEO mismatch");
+_Static_assert(SO_RCVTIMEO == SM_SHELLCORE_BRIDGE_SO_RCVTIMEO,
+               "ShellCore bridge SO_RCVTIMEO mismatch");
+_Static_assert(sizeof(struct timeval) == SM_SHELLCORE_BRIDGE_TIMEVAL_SIZE,
+               "ShellCore bridge timeval size mismatch");
 
 extern const uint8_t sm_shellcore_bridge_blob_start[];
+extern const uint8_t sm_shellcore_bridge_code_end[];
 extern const uint8_t sm_shellcore_bridge_blob_end[];
 extern const uint8_t sm_shellcore_bridge_launch_hook[];
 extern const uint8_t sm_shellcore_bridge_install_all_hook[];
@@ -34,6 +49,7 @@ extern const uint8_t sm_shellcore_bridge_install_armed[];
 extern const uint8_t sm_shellcore_bridge_install_title_id[];
 extern const uint8_t sm_shellcore_bridge_install_dir[];
 extern const uint8_t sm_shellcore_bridge_socket[];
+extern const uint8_t sm_shellcore_bridge_setsockopt[];
 extern const uint8_t sm_shellcore_bridge_connect[];
 extern const uint8_t sm_shellcore_bridge_read[];
 extern const uint8_t sm_shellcore_bridge_write[];
@@ -46,6 +62,7 @@ typedef struct {
 
 static const shellcore_import_t k_bridge_imports[] = {
     {sm_shellcore_bridge_socket, "socket"},
+    {sm_shellcore_bridge_setsockopt, "setsockopt"},
     {sm_shellcore_bridge_connect, "connect"},
     {sm_shellcore_bridge_read, "read"},
     {sm_shellcore_bridge_write, "write"},
@@ -169,29 +186,48 @@ static bool cleanup_remote_bridge(
   return true;
 }
 
-static bool append_trampoline(uint8_t *bridge, size_t bridge_capacity,
-                              size_t *cursor, const uint8_t *original,
-                              size_t original_size, uintptr_t return_address,
-                              uintptr_t remote_base,
-                              uintptr_t *remote_trampoline_out) {
-  size_t aligned = (*cursor + 15u) & ~(size_t)15u;
-  size_t required = aligned + original_size + ABSOLUTE_JUMP_SIZE;
-  if (required > bridge_capacity)
+static bool bridge_symbol_offset(const uint8_t *symbol, size_t size,
+                                 size_t blob_size, size_t *offset_out) {
+  uintptr_t start = (uintptr_t)sm_shellcore_bridge_blob_start;
+  uintptr_t address = (uintptr_t)symbol;
+  if (address < start)
     return false;
-  memcpy(bridge + aligned, original, original_size);
-  build_absolute_jump(bridge + aligned + original_size, return_address);
-  *remote_trampoline_out = remote_base + aligned;
-  *cursor = required;
+  size_t offset = (size_t)(address - start);
+  if (offset > blob_size || size > blob_size - offset)
+    return false;
+  *offset_out = offset;
   return true;
 }
 
-static void set_bridge_pointer(uint8_t *bridge, const uint8_t *local_symbol,
-                               uintptr_t value) {
-  size_t offset = (size_t)(local_symbol - sm_shellcore_bridge_blob_start);
-  memcpy(bridge + offset, &value, sizeof(value));
+static bool write_embedded_trampoline(uint8_t *bridge, size_t blob_size,
+                                      const uint8_t *local_symbol,
+                                      const uint8_t *original,
+                                      size_t original_size,
+                                      uintptr_t return_address) {
+  size_t offset = 0;
+  if (!original || original_size == 0 ||
+      original_size > MAX_HOOK_PROLOGUE_SIZE ||
+      !bridge_symbol_offset(local_symbol, TRAMPOLINE_SIZE, blob_size,
+                            &offset)) {
+    return false;
+  }
+  memset(bridge + offset, 0x90, TRAMPOLINE_SIZE);
+  memcpy(bridge + offset, original, original_size);
+  build_absolute_jump(bridge + offset + original_size, return_address);
+  return true;
 }
 
-static bool resolve_bridge_imports(pid_t pid, uint8_t *bridge) {
+static bool set_bridge_pointer(uint8_t *bridge, size_t blob_size,
+                               const uint8_t *local_symbol, uintptr_t value) {
+  size_t offset = 0;
+  if (!bridge_symbol_offset(local_symbol, sizeof(value), blob_size, &offset))
+    return false;
+  memcpy(bridge + offset, &value, sizeof(value));
+  return true;
+}
+
+static bool resolve_bridge_imports(pid_t pid, uint8_t *bridge,
+                                   size_t blob_size) {
   uint32_t handle = UINT32_MAX;
   if (kernel_dynlib_handle(pid, "libkernel_sys.sprx", &handle) != 0)
     return false;
@@ -205,7 +241,12 @@ static bool resolve_bridge_imports(pid_t pid, uint8_t *bridge) {
                 k_bridge_imports[i].name);
       return false;
     }
-    set_bridge_pointer(bridge, k_bridge_imports[i].slot, address);
+    if (!set_bridge_pointer(bridge, blob_size, k_bridge_imports[i].slot,
+                            address)) {
+      log_debug("  [SHELLCORE] invalid bridge import slot: %s",
+                k_bridge_imports[i].name);
+      return false;
+    }
   }
   return true;
 }
@@ -224,16 +265,22 @@ bool sm_shellcore_install_bridge_enabled(void) {
 }
 
 static bool install_hooks_for_pid(pid_t pid) {
-  const size_t blob_size =
+  const size_t code_size =
+      (size_t)(sm_shellcore_bridge_code_end -
+               sm_shellcore_bridge_blob_start);
+  const size_t full_blob_size =
       (size_t)(sm_shellcore_bridge_blob_end - sm_shellcore_bridge_blob_start);
-  const size_t bridge_capacity =
-      blob_size + SHELLCORE_MAX_HOOK_COUNT *
-                      (MAX_HOOK_PROLOGUE_SIZE + ABSOLUTE_JUMP_SIZE + 16u);
-  if (bridge_capacity > SIZE_MAX - (PAGE_SIZE - 1u))
+  const bool install_hook_enabled = sm_shellcore_install_bridge_enabled();
+  const size_t blob_size = install_hook_enabled ? full_blob_size : code_size;
+  if (code_size != PAGE_SIZE || full_blob_size <= code_size ||
+      blob_size > SIZE_MAX - (PAGE_SIZE - 1u)) {
+    log_debug("  [SHELLCORE] invalid bridge layout: code=0x%zx full=0x%zx",
+              code_size, full_blob_size);
     return false;
+  }
   const size_t bridge_size =
-      (bridge_capacity + PAGE_SIZE - 1u) & ~(size_t)(PAGE_SIZE - 1u);
-  uint8_t *bridge = calloc(1, bridge_capacity);
+      (blob_size + PAGE_SIZE - 1u) & ~(size_t)(PAGE_SIZE - 1u);
+  uint8_t *bridge = calloc(1, bridge_size);
   if (!bridge)
     return false;
   memcpy(bridge, sm_shellcore_bridge_blob_start, blob_size);
@@ -254,7 +301,11 @@ static bool install_hooks_for_pid(pid_t pid) {
     goto done;
   }
 
-  const bool install_hook_enabled = hooks.remote.offsets->firmware >= 0x1200u;
+  if (install_hook_enabled !=
+      (hooks.remote.offsets->firmware >= 0x1200u)) {
+    log_debug("  [SHELLCORE] bridge firmware mode changed during install");
+    goto done;
+  }
   const size_t hook_count = install_hook_enabled
                                 ? SHELLCORE_MAX_HOOK_COUNT
                                 : SHELLCORE_BASE_HOOK_COUNT;
@@ -300,46 +351,49 @@ static bool install_hooks_for_pid(pid_t pid) {
     goto done;
   }
 
-  size_t cursor = blob_size;
-  uintptr_t launch_trampoline = 0;
-  uintptr_t install_all_trampoline = 0;
   shellcore_hook_record_t *launch_hook_record = &hooks.hooks[0];
   uintptr_t launch_target = hooks.remote.targets[launch_hook_record->target];
   shellcore_hook_record_t *install_hook_record = &hooks.hooks[1];
   uintptr_t install_target = hooks.remote.targets[install_hook_record->target];
-  if (!append_trampoline(bridge, bridge_capacity, &cursor,
-                         launch_hook_record->original,
-                         launch_hook_record->original_size,
-                         launch_target + launch_hook_record->original_size,
-                         bridge_address,
-                         &launch_trampoline)) {
+  if (!write_embedded_trampoline(
+          bridge, blob_size, sm_shellcore_bridge_launch_trampoline,
+          launch_hook_record->original, launch_hook_record->original_size,
+          launch_target + launch_hook_record->original_size)) {
     goto done;
   }
-  set_bridge_pointer(bridge, sm_shellcore_bridge_launch_trampoline,
-                     launch_trampoline);
   if (install_hook_enabled) {
-    if (!append_trampoline(bridge, bridge_capacity, &cursor,
-                           install_hook_record->original,
-                           install_hook_record->original_size,
-                           install_target + install_hook_record->original_size,
-                           bridge_address,
-                           &install_all_trampoline)) {
+    if (!write_embedded_trampoline(
+            bridge, blob_size, sm_shellcore_bridge_install_all_trampoline,
+            install_hook_record->original, install_hook_record->original_size,
+            install_target + install_hook_record->original_size)) {
       goto done;
     }
-    set_bridge_pointer(bridge, sm_shellcore_bridge_install_all_trampoline,
-                       install_all_trampoline);
-    set_bridge_pointer(
-        bridge, sm_shellcore_bridge_install_title_dir,
-        hooks.remote.targets[SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR]);
+    if (!set_bridge_pointer(
+            bridge, blob_size, sm_shellcore_bridge_install_title_dir,
+            hooks.remote.targets[SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR])) {
+      goto done;
+    }
   }
-  if (!resolve_bridge_imports(pid, bridge))
+  if (!resolve_bridge_imports(pid, bridge, blob_size))
     goto done;
 
-  if (!sm_remote_process_write(pid, bridge_address, bridge, cursor) ||
-      !verify_remote_bytes(pid, bridge_address, bridge, cursor) ||
-      kernel_mprotect(pid, (intptr_t)bridge_address, bridge_size,
-                      PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-    log_debug("  [SHELLCORE] bridge write verification failed");
+  bool bridge_written =
+      sm_remote_process_write(pid, bridge_address, bridge, bridge_size) &&
+      verify_remote_bytes(pid, bridge_address, bridge, bridge_size);
+  bool protection_ok = false;
+  if (bridge_written) {
+    protection_ok =
+        kernel_mprotect(pid, (intptr_t)bridge_address, code_size,
+                        PROT_READ | PROT_EXEC) == 0;
+    if (install_hook_enabled && protection_ok) {
+      protection_ok =
+          kernel_mprotect(pid, (intptr_t)(bridge_address + code_size),
+                          bridge_size - code_size,
+                          PROT_READ | PROT_WRITE) == 0;
+    }
+  }
+  if (!bridge_written || !protection_ok) {
+    log_debug("  [SHELLCORE] bridge install verification failed");
     goto done;
   }
 
@@ -392,11 +446,17 @@ done:
   free(bridge);
   if (ok) {
     g_hooks = hooks;
+    uintptr_t launch_trampoline =
+        bridge_address +
+        (uintptr_t)(sm_shellcore_bridge_launch_trampoline -
+                    sm_shellcore_bridge_blob_start);
     log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld bridge=0x%lx+0x%zx "
-              "launch=1 install=%d",
+              "launch=1 trampoline=0x%lx install=%d prot=%s",
               hooks.remote.offsets->name, (long)pid,
               (unsigned long)bridge_address, bridge_size,
-              install_hook_enabled ? 1 : 0);
+              (unsigned long)launch_trampoline,
+              install_hook_enabled ? 1 : 0,
+              install_hook_enabled ? "rx/rw" : "rx");
   } else if (cleanup_pending) {
     hooks.bridge_address = bridge_address;
     hooks.bridge_size = bridge_size;
@@ -500,12 +560,6 @@ void sm_shellcore_hooks_stop(void) {
       restored = false;
     }
   }
-  if (restored &&
-      !sm_remote_process_unmap(pid, g_hooks.bridge_address,
-                               g_hooks.bridge_size)) {
-    log_debug("  [SHELLCORE] bridge unmap failed: address=0x%lx size=0x%zx",
-              (unsigned long)g_hooks.bridge_address, g_hooks.bridge_size);
-  }
   if (!sm_remote_process_detach(pid)) {
     log_debug("  [SHELLCORE] failed to detach after hook cleanup: pid=%ld",
               (long)pid);
@@ -518,6 +572,12 @@ void sm_shellcore_hooks_stop(void) {
   }
   if (!found_installed_hook) {
     log_debug("  [SHELLCORE] hooks already absent; stale bridge state dropped");
+  } else if (g_hooks.bridge_address) {
+    // A thread that entered the bridge before its prologue was restored may
+    // still return through it after detach. Keep the small bridge mapping in
+    // ShellCore rather than introducing a shutdown-only use-after-unmap race.
+    log_debug("  [SHELLCORE] inactive bridge retained: address=0x%lx size=0x%zx",
+              (unsigned long)g_hooks.bridge_address, g_hooks.bridge_size);
   }
   memset(&g_hooks, 0, sizeof(g_hooks));
   pthread_mutex_unlock(&g_install_mutex);
