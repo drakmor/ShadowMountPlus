@@ -1,5 +1,7 @@
 #include "sm_platform.h"
 
+#include <pthread.h>
+
 #include "sm_manual.h"
 
 #include "sm_appdb.h"
@@ -26,6 +28,7 @@ typedef struct {
 } manual_status_entry_t;
 
 static manual_status_entry_t g_manual_status_entries[MANUAL_STATUS_CAPACITY];
+static pthread_mutex_t g_manual_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void trim_manual_line(char *line) {
   if (!line)
@@ -63,6 +66,150 @@ static void copy_manual_file_line_remainder(FILE *in, FILE *out,
     if (ch == '\n')
       break;
   }
+}
+
+bool sm_manual_normalize_path(const char *path, char out[MAX_PATH]) {
+  if (!path || !out || strlcpy(out, path, MAX_PATH) >= MAX_PATH)
+    return false;
+  if (strchr(out, '\r') || strchr(out, '\n'))
+    return false;
+  trim_manual_line(out);
+  return out[0] == '/' && out[1] != '\0';
+}
+
+static bool update_manual_list(const char *path, bool add,
+                               bool *changed_out) {
+  if (changed_out)
+    *changed_out = false;
+
+  char normalized_path[MAX_PATH];
+  if (!sm_manual_normalize_path(path, normalized_path)) {
+    errno = EINVAL;
+    return false;
+  }
+
+  pthread_mutex_lock(&g_manual_list_mutex);
+  mkdir(LOG_DIR, 0777);
+
+  FILE *in = fopen(MANUAL_LIST_FILE, "r");
+  if (!in && errno != ENOENT) {
+    int saved_errno = errno;
+    pthread_mutex_unlock(&g_manual_list_mutex);
+    errno = saved_errno;
+    return false;
+  }
+
+  bool needs_separator = false;
+  if (in && fseek(in, 0, SEEK_END) == 0) {
+    long size = ftell(in);
+    if (size > 0 && fseek(in, -1, SEEK_END) == 0)
+      needs_separator = fgetc(in) != '\n';
+    rewind(in);
+  }
+
+  char tmp_path[MAX_PATH];
+  int tmp_len = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp",
+                         MANUAL_LIST_FILE);
+  if (tmp_len <= 0 || (size_t)tmp_len >= sizeof(tmp_path)) {
+    if (in)
+      fclose(in);
+    pthread_mutex_unlock(&g_manual_list_mutex);
+    errno = ENAMETOOLONG;
+    return false;
+  }
+
+  FILE *out = fopen(tmp_path, "w");
+  if (!out) {
+    int saved_errno = errno;
+    if (in)
+      fclose(in);
+    pthread_mutex_unlock(&g_manual_list_mutex);
+    errno = saved_errno;
+    return false;
+  }
+
+  bool found = false;
+  bool changed = false;
+  int saved_errno = 0;
+  char line[MAX_PATH + 64];
+  while (in && fgets(line, sizeof(line), in) != NULL) {
+    bool truncated =
+        strchr(line, '\n') == NULL && strlen(line) == sizeof(line) - 1u;
+    char normalized[MAX_PATH + 64];
+    (void)strlcpy(normalized, line, sizeof(normalized));
+    trim_manual_line(normalized);
+    bool matches = !truncated && normalized[0] != '\0' &&
+                   normalized[0] != '#' &&
+                   strcmp(normalized, normalized_path) == 0;
+    if (matches) {
+      found = true;
+      if (!add) {
+        changed = true;
+        continue;
+      }
+    }
+
+    if (fputs(line, out) == EOF) {
+      saved_errno = errno;
+      break;
+    }
+    if (truncated)
+      copy_manual_file_line_remainder(in, out, &saved_errno);
+  }
+  if (in && ferror(in) && saved_errno == 0)
+    saved_errno = errno;
+
+  if (saved_errno == 0 && add && !found) {
+    if (needs_separator && fputc('\n', out) == EOF)
+      saved_errno = errno;
+    if (saved_errno == 0 &&
+        fprintf(out, "%s\n", normalized_path) < 0) {
+      saved_errno = errno;
+    }
+    if (saved_errno == 0)
+      changed = true;
+  }
+
+  if (fflush(out) != 0 && saved_errno == 0)
+    saved_errno = errno;
+  if (fclose(out) != 0 && saved_errno == 0)
+    saved_errno = errno;
+  if (in)
+    fclose(in);
+
+  if (saved_errno != 0) {
+    (void)unlink(tmp_path);
+    pthread_mutex_unlock(&g_manual_list_mutex);
+    errno = saved_errno;
+    return false;
+  }
+  if (!changed) {
+    (void)unlink(tmp_path);
+    pthread_mutex_unlock(&g_manual_list_mutex);
+    return true;
+  }
+  if (rename(tmp_path, MANUAL_LIST_FILE) != 0) {
+    int rename_errno = errno;
+    (void)unlink(tmp_path);
+    pthread_mutex_unlock(&g_manual_list_mutex);
+    errno = rename_errno;
+    return false;
+  }
+
+  pthread_mutex_unlock(&g_manual_list_mutex);
+  if (changed_out)
+    *changed_out = true;
+  log_debug("  [MANUAL] API %s source: %s", add ? "added" : "removed",
+            normalized_path);
+  return true;
+}
+
+bool sm_manual_add_path(const char *path, bool *changed_out) {
+  return update_manual_list(path, true, changed_out);
+}
+
+bool sm_manual_remove_path(const char *path, bool *changed_out) {
+  return update_manual_list(path, false, changed_out);
 }
 
 bool sm_manual_for_each_path(bool (*visit)(const char *path, void *ctx),
@@ -366,7 +513,11 @@ bool sm_manual_reconcile_deleted_titles(
   if (!changed)
     return true;
 
-  if (!rewrite_manual_list_without_deleted_entries(entry_count))
+  pthread_mutex_lock(&g_manual_list_mutex);
+  bool list_rewritten =
+      rewrite_manual_list_without_deleted_entries(entry_count);
+  pthread_mutex_unlock(&g_manual_list_mutex);
+  if (!list_rewritten)
     return false;
   return write_manual_status(entry_count);
 }

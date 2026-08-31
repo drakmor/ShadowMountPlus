@@ -262,6 +262,19 @@ void clear_image_mount_attempts(const char *path) {
   entry->image_mount_limit_logged = false;
 }
 
+size_t reset_all_image_mount_attempts(void) {
+  size_t reset_count = 0;
+  for (int k = 0; k < PATH_STATE_CAPACITY; k++) {
+    struct PathStateEntry *entry = &g_path_state[k];
+    if (!entry->valid || entry->image_mount_attempts == 0)
+      continue;
+    entry->image_mount_attempts = 0;
+    entry->image_mount_limit_logged = false;
+    reset_count++;
+  }
+  return reset_count;
+}
+
 bool is_backport_mount_blocked(const char *path) {
   if (!path || path[0] == '\0')
     return false;

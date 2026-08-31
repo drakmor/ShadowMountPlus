@@ -2,6 +2,7 @@
 #define SM_PATH_STATE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/stat.h>
 
@@ -28,6 +29,8 @@ bool is_image_mount_limited(const char *path);
 uint8_t bump_image_mount_attempts(const char *path);
 // Clear image mount retry state for a path.
 void clear_image_mount_attempts(const char *path);
+// Clear image-mount retry counters for every tracked source path.
+size_t reset_all_image_mount_attempts(void);
 // Return whether backport overlay remounts are suppressed for a path.
 bool is_backport_mount_blocked(const char *path);
 // Record the first failed backport overlay mount for a path.

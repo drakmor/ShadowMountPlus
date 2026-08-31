@@ -20,10 +20,41 @@ servers:
 security: []
 tags:
   - name: Service
+  - name: Storage
+  - name: Scanner
+  - name: Manual sources
   - name: Images
   - name: Games
 
 paths:
+  /:
+    options:
+      operationId: preflightIndex
+      summary: CORS preflight
+      tags: [Service]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    get:
+      operationId: getWebInterface
+      summary: Get the optional web interface
+      description: Serves /data/shadowmount/index.html when it is a regular file.
+      tags: [Service]
+      responses:
+        "200":
+          description: ShadowMount web interface
+          headers:
+            Access-Control-Allow-Origin:
+              $ref: "#/components/headers/AllowOrigin"
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/version:
     options:
       operationId: preflightVersion
@@ -88,6 +119,170 @@ paths:
         "501":
           $ref: "#/components/responses/NotImplemented"
 
+  /api/v1/storage:
+    options:
+      operationId: preflightStorage
+      summary: CORS preflight
+      tags: [Storage]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: getStorageSpace
+      summary: Get free space for mounted storage filesystems
+      tags: [Storage]
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StorageSpaceSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/scan:
+    options:
+      operationId: preflightScan
+      summary: CORS preflight
+      tags: [Scanner]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: rescan
+      summary: Queue an immediate full rescan
+      description: Retry counters are preserved by default. With reset_attempts=true, all title registration/install-remount and path-owned image-mount retry counters are reset immediately before the requested scan starts. If game runtime mounts are busy, the request remains queued until scanning is safe.
+      tags: [Scanner]
+      requestBody:
+        $ref: "#/components/requestBodies/ScanRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/ScanSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/manual/list:
+    options:
+      operationId: preflightListManualSources
+      summary: CORS preflight
+      tags: [Manual sources]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: listManualSources
+      summary: List normalized source paths from manual.lst
+      description: Comments and empty lines are omitted. A missing file is returned as an empty list.
+      tags: [Manual sources]
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManualListSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/manual/add:
+    options:
+      operationId: preflightAddManualSource
+      summary: CORS preflight
+      tags: [Manual sources]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: addManualSource
+      summary: Add a source path to manual.lst
+      tags: [Manual sources]
+      requestBody:
+        $ref: "#/components/requestBodies/ManualPathRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManualUpdateSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
+  /api/v1/manual/remove:
+    options:
+      operationId: preflightRemoveManualSource
+      summary: CORS preflight
+      tags: [Manual sources]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: removeManualSource
+      summary: Remove all matching source lines from manual.lst
+      tags: [Manual sources]
+      requestBody:
+        $ref: "#/components/requestBodies/ManualPathRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManualUpdateSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
   /api/v1/games:
     options:
       operationId: preflightGames
@@ -101,7 +296,7 @@ paths:
       summary: Get the complete game snapshot
       tags: [Games]
       requestBody:
-        $ref: "#/components/requestBodies/EmptyRequest"
+        $ref: "#/components/requestBodies/GamesListRequest"
       responses:
         "200":
           $ref: "#/components/responses/GamesSuccess"
@@ -120,6 +315,149 @@ paths:
         "501":
           $ref: "#/components/responses/NotImplemented"
 
+  /api/v1/games/info:
+    options:
+      operationId: preflightGameInfo
+      summary: CORS preflight
+      tags: [Games]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: getGameInfo
+      summary: Get detailed metadata and source size for one managed game
+      tags: [Games]
+      requestBody:
+        $ref: "#/components/requestBodies/TitleRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/GameInfoSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/games/icon:
+    get:
+      operationId: getGameIcon
+      summary: Stream the icon referenced by app.db icon0Info
+      tags: [Games]
+      parameters:
+        - name: title_id
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/TitleId"
+      responses:
+        "200":
+          description: PNG icon
+          headers:
+            Access-Control-Allow-Origin:
+              $ref: "#/components/headers/AllowOrigin"
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/games/move:
+    options:
+      operationId: preflightMoveGameSource
+      summary: CORS preflight
+      tags: [Storage]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: moveGameSource
+      summary: Move a game folder or backing image, including across filesystems
+      tags: [Storage]
+      requestBody:
+        $ref: "#/components/requestBodies/StorageDestinationRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StorageOperationSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "507":
+          $ref: "#/components/responses/InsufficientStorage"
+
+  /api/v1/games/copy:
+    options:
+      operationId: preflightCopyGameSource
+      summary: CORS preflight
+      tags: [Storage]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: copyGameSource
+      summary: Copy a game folder or backing image
+      tags: [Storage]
+      requestBody:
+        $ref: "#/components/requestBodies/StorageDestinationRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StorageOperationSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "507":
+          $ref: "#/components/responses/InsufficientStorage"
+
+  /api/v1/games/delete:
+    options:
+      operationId: preflightDeleteGameSource
+      summary: CORS preflight
+      tags: [Storage]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: deleteGameSource
+      summary: Permanently delete a game folder or backing image
+      tags: [Storage]
+      requestBody:
+        $ref: "#/components/requestBodies/StorageDeleteRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StorageOperationSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/games/mount:
     options:
       operationId: preflightMountGame
@@ -133,7 +471,7 @@ paths:
       summary: Mount a managed game
       tags: [Games]
       requestBody:
-        $ref: "#/components/requestBodies/TitleRequest"
+        $ref: "#/components/requestBodies/MountRequest"
       responses:
         "200":
           $ref: "#/components/responses/MountSuccess"
@@ -192,6 +530,42 @@ paths:
         "501":
           $ref: "#/components/responses/NotImplemented"
 
+  /api/v1/games/uninstall:
+    options:
+      operationId: preflightUninstallGame
+      summary: CORS preflight
+      tags: [Games]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: uninstallGame
+      summary: Request game uninstallation
+      tags: [Games]
+      requestBody:
+        $ref: "#/components/requestBodies/TitleRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/UninstallSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
 components:
   requestBodies:
     EmptyRequest:
@@ -201,12 +575,48 @@ components:
           schema:
             type: object
           example: {}
+    GamesListRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GamesListRequest"
+    ScanRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ScanRequest"
     TitleRequest:
       required: true
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/TitleRequest"
+    MountRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MountRequest"
+    ManualPathRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManualPathRequest"
+    StorageDestinationRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StorageDestinationRequest"
+    StorageDeleteRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StorageDeleteRequest"
 
   headers:
     AllowOrigin:
@@ -218,7 +628,7 @@ components:
       description: Methods allowed by CORS preflight
       schema:
         type: string
-        const: POST, OPTIONS
+        const: GET, POST, OPTIONS
     AllowHeaders:
       description: Request headers allowed by CORS preflight
       schema:
@@ -270,6 +680,16 @@ components:
           schema:
             $ref: "#/components/schemas/ImagesResponse"
 
+    StorageSpaceSuccess:
+      description: Capacity and free space for mounted storage filesystems
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StorageSpaceResponse"
+
     GamesSuccess:
       description: Complete game snapshot
       headers:
@@ -279,6 +699,56 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/GamesResponse"
+
+    GameInfoSuccess:
+      description: Detailed managed game metadata and physical source size
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GameInfoResponse"
+
+    StorageOperationSuccess:
+      description: Storage operation completed and a rescan was queued
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StorageOperationResponse"
+
+    ScanSuccess:
+      description: Full rescan queued
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ScanResponse"
+
+    ManualUpdateSuccess:
+      description: manual.lst update completed
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManualUpdateResponse"
+
+    ManualListSuccess:
+      description: Parsed manual.lst source paths
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManualListResponse"
 
     MountSuccess:
       description: Game mounted
@@ -300,8 +770,27 @@ components:
           schema:
             $ref: "#/components/schemas/UnmountResponse"
 
+    UninstallSuccess:
+      description: Game uninstallation was accepted by AppInstUtil
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UninstallResponse"
+
     BadRequest:
       description: Invalid HTTP request, JSON body or title ID
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: The source or destination is not allowed
       headers:
         Access-Control-Allow-Origin:
           $ref: "#/components/headers/AllowOrigin"
@@ -385,10 +874,20 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
 
+    InsufficientStorage:
+      description: The destination filesystem has insufficient free space
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
   schemas:
     TitleId:
       type: string
-      pattern: "^(CUSA|PPSA)[0-9]{5}$"
+      pattern: "^(CUSA|PPSA|FAKE)[0-9]{5}$"
       examples: [PPSA12345]
 
     TitleRequest:
@@ -397,6 +896,64 @@ components:
       properties:
         title_id:
           $ref: "#/components/schemas/TitleId"
+
+    GamesListRequest:
+      type: object
+      properties:
+        include_size:
+          type: boolean
+          default: false
+          description: Calculate every physical source size. Directory traversal can be slow.
+
+    ScanRequest:
+      type: object
+      properties:
+        reset_attempts:
+          type: boolean
+          default: false
+          description: Reset title install/mount and image-mount retry counters immediately before this requested full scan starts.
+
+    MountRequest:
+      type: object
+      required: [title_id]
+      properties:
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+        mode:
+          type: string
+          enum: [ro, rw, r/o, r/w]
+          description: Optional request-scoped mode for every image layer needed by this mount.
+
+    ManualPathRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          pattern: "^/.+"
+          maxLength: 1023
+
+    StorageDestinationRequest:
+      type: object
+      required: [title_id, destination_dir]
+      properties:
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+        destination_dir:
+          type: string
+          pattern: "^/.+"
+          maxLength: 1023
+          description: Existing directory under a configured non-runtime scan root. The original source basename is preserved.
+
+    StorageDeleteRequest:
+      type: object
+      required: [title_id, confirm]
+      properties:
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+        confirm:
+          type: boolean
+          const: true
 
     VersionResponse:
       type: object
@@ -415,8 +972,55 @@ components:
           type: array
           items:
             type: string
-            enum: [list_images, list_games, mount_game, unmount_game]
-          example: [list_images, list_games, mount_game, unmount_game]
+            enum: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, list_manual_sources, add_manual_source, remove_manual_source, rescan]
+          example: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, list_manual_sources, add_manual_source, remove_manual_source, rescan]
+
+    StorageMount:
+      type: object
+      additionalProperties: false
+      required: [source, mount_point, filesystem, total_bytes, free_bytes, available_bytes, used_bytes, read_only]
+      properties:
+        source:
+          type: string
+        mount_point:
+          type: string
+          pattern: "^/"
+        filesystem:
+          type: string
+        total_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        free_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        available_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        used_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        read_only:
+          type: boolean
+
+    StorageSpaceResponse:
+      type: object
+      additionalProperties: false
+      required: [status, count, mounts]
+      properties:
+        status:
+          type: integer
+          const: 0
+        count:
+          type: integer
+          minimum: 0
+        mounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageMount"
 
     Image:
       type: object
@@ -485,9 +1089,17 @@ components:
       additionalProperties: false
       required:
         - path
-        - image_path
+        - runtime_path
+        - source_type
+        - image_type
+        - platform
         - title_id
+        - content_id
         - title_name
+        - last_access_time
+        - install_time
+        - icon_url
+        - app_db_size_bytes
         - installed
         - managed
         - mounted
@@ -496,12 +1108,38 @@ components:
       properties:
         path:
           type: string
-        image_path:
+          description: Physical game folder or outer backing-image path.
+        runtime_path:
           type: string
+          description: Runtime game directory used by ShadowMount.
+        source_type:
+          type: string
+          enum: [folder, image]
+        image_type:
+          type: string
+          enum: ["", ufs, exfatfs, pfs, pfsc, unknown]
+        platform:
+          type: string
+          enum: [ps4, ps5, unknown]
         title_id:
           $ref: "#/components/schemas/TitleId"
+        content_id:
+          type: string
         title_name:
           type: string
+        last_access_time:
+          type: string
+          description: AppInfoJson #_last_access_time value, falling back to app.db lastAccessTime, or an empty string.
+        install_time:
+          type: string
+          description: AppInfoJson #_install_time value, falling back to app.db installTime, or an empty string.
+        icon_url:
+          type: string
+          description: Relative URL of the icon endpoint, or an empty string.
+        app_db_size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
         installed:
           type: boolean
         managed:
@@ -512,11 +1150,23 @@ components:
           type: boolean
         source_available:
           type: boolean
+        size_status:
+          type: integer
+          minimum: 0
+          description: errno-style result of optional physical size calculation.
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Image file size or sum of files in the game folder.
+        status:
+          type: integer
+          const: 0
 
     GamesResponse:
       type: object
       additionalProperties: false
-      required: [status, count, games]
+      required: [status, count, size_included, games]
       properties:
         status:
           type: integer
@@ -524,15 +1174,97 @@ components:
         count:
           type: integer
           minimum: 0
+        size_included:
+          type: boolean
         games:
           type: array
           items:
             $ref: "#/components/schemas/Game"
 
+    GameInfoResponse:
+      allOf:
+        - $ref: "#/components/schemas/Game"
+        - type: object
+          required: [status, size_status]
+
+    StorageOperationResponse:
+      type: object
+      additionalProperties: false
+      required: [status, operation, title_id, source_type, source, destination, affected_titles, scan_queued]
+      properties:
+        status:
+          type: integer
+          const: 0
+        operation:
+          type: string
+          enum: [move, copy, delete]
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+        source_type:
+          type: string
+          enum: [folder, image]
+        source:
+          type: string
+        destination:
+          type: string
+          description: Empty for delete.
+        affected_titles:
+          type: integer
+          minimum: 1
+        scan_queued:
+          type: boolean
+          const: true
+
+    ScanResponse:
+      type: object
+      additionalProperties: false
+      required: [status, queued, reset_attempts]
+      properties:
+        status:
+          type: integer
+          const: 0
+        queued:
+          type: boolean
+          const: true
+        reset_attempts:
+          type: boolean
+
+    ManualUpdateResponse:
+      type: object
+      additionalProperties: false
+      required: [status, path, present, changed]
+      properties:
+        status:
+          type: integer
+          const: 0
+        path:
+          type: string
+        present:
+          type: boolean
+        changed:
+          type: boolean
+
+    ManualListResponse:
+      type: object
+      additionalProperties: false
+      required: [status, count, paths]
+      properties:
+        status:
+          type: integer
+          const: 0
+        count:
+          type: integer
+          minimum: 0
+        paths:
+          type: array
+          items:
+            type: string
+            pattern: "^/.+"
+
     MountResponse:
       type: object
       additionalProperties: false
-      required: [status, title_id, mounted]
+      required: [status, title_id, mounted, mode]
       properties:
         status:
           type: integer
@@ -542,6 +1274,9 @@ components:
         mounted:
           type: boolean
           const: true
+        mode:
+          type: string
+          enum: [default, ro, rw]
 
     UnmountResponse:
       type: object
@@ -556,6 +1291,20 @@ components:
         mounted:
           type: boolean
           const: false
+
+    UninstallResponse:
+      type: object
+      additionalProperties: false
+      required: [status, title_id, uninstall_requested]
+      properties:
+        status:
+          type: integer
+          const: 0
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+        uninstall_requested:
+          type: boolean
+          const: true
 
     ErrorResponse:
       type: object

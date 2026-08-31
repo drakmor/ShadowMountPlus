@@ -25,8 +25,12 @@ void runtime_mount_state_lock(void);
 void runtime_mount_state_unlock(void);
 // Request an immediate scan cycle with a descriptive source string.
 void request_scan_now(const char *reason);
-// Consume a pending immediate scan request and copy its reason into caller storage.
-bool consume_scan_now_request(char *reason_out, size_t reason_out_size);
+// Request an immediate scan and optionally reset mount/install retry counters
+// immediately before that scan starts.
+void request_scan_now_with_options(const char *reason, bool reset_attempts);
+// Consume a pending immediate scan request and its merged options.
+bool consume_scan_now_request(char *reason_out, size_t reason_out_size,
+                              bool *reset_attempts_out);
 // Sleep in chunks and stop early if shutdown was requested.
 bool sleep_with_stop_check(unsigned int total_us);
 

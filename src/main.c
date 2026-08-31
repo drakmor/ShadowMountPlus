@@ -60,6 +60,7 @@ static pthread_mutex_t g_runtime_mount_state_mutex = PTHREAD_MUTEX_INITIALIZER;
 typedef struct {
   pthread_mutex_t reason_mutex;
   char reason[128];
+  bool reset_attempts;
 } immediate_scan_request_t;
 
 static immediate_scan_request_t g_scan_now = {
@@ -147,6 +148,7 @@ bool runtime_resume_grace_active(void) {
 static void clear_scan_now_request(void) {
   pthread_mutex_lock(&g_scan_now.reason_mutex);
   g_scan_now.reason[0] = '\0';
+  g_scan_now.reset_attempts = false;
   pthread_mutex_unlock(&g_scan_now.reason_mutex);
 }
 
@@ -196,6 +198,10 @@ void runtime_mount_state_unlock(void) {
 }
 
 void request_scan_now(const char *reason) {
+  request_scan_now_with_options(reason, false);
+}
+
+void request_scan_now_with_options(const char *reason, bool reset_attempts) {
   const char *resolved_reason =
       (reason && reason[0] != '\0') ? reason : "unknown scan source";
   if (runtime_sleep_mode_active())
@@ -210,6 +216,8 @@ void request_scan_now(const char *reason) {
     (void)strlcpy(log_reason, g_scan_now.reason, sizeof(log_reason));
     should_log = true;
   }
+  if (reset_attempts)
+    g_scan_now.reset_attempts = true;
   pthread_mutex_unlock(&g_scan_now.reason_mutex);
 
   if (should_log)
@@ -217,9 +225,12 @@ void request_scan_now(const char *reason) {
   sm_scanner_wake();
 }
 
-bool consume_scan_now_request(char *reason_out, size_t reason_out_size) {
+bool consume_scan_now_request(char *reason_out, size_t reason_out_size,
+                              bool *reset_attempts_out) {
   if (reason_out && reason_out_size > 0)
     reason_out[0] = '\0';
+  if (reset_attempts_out)
+    *reset_attempts_out = false;
   pthread_mutex_lock(&g_scan_now.reason_mutex);
   if (g_scan_now.reason[0] == '\0') {
     pthread_mutex_unlock(&g_scan_now.reason_mutex);
@@ -227,7 +238,10 @@ bool consume_scan_now_request(char *reason_out, size_t reason_out_size) {
   }
   if (reason_out && reason_out_size > 0)
     (void)strlcpy(reason_out, g_scan_now.reason, reason_out_size);
+  if (reset_attempts_out)
+    *reset_attempts_out = g_scan_now.reset_attempts;
   g_scan_now.reason[0] = '\0';
+  g_scan_now.reset_attempts = false;
   pthread_mutex_unlock(&g_scan_now.reason_mutex);
   return true;
 }

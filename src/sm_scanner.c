@@ -1,5 +1,6 @@
 #include "sm_platform.h"
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <sys/event.h>
@@ -22,6 +23,7 @@
 #include "sm_limits.h"
 #include "sm_l10n.h"
 #include "sm_log.h"
+#include "sm_path_state.h"
 #include "sm_path_utils.h"
 #include "sm_paths.h"
 #include "sm_runtime.h"
@@ -30,6 +32,7 @@
 #include "sm_scanner.h"
 #include "sm_shellcore_service.h"
 #include "sm_time.h"
+#include "sm_title_state.h"
 #include "sm_types.h"
 
 #define SCANNER_EVENT_BATCH 32
@@ -113,6 +116,7 @@ static uint8_t g_scanner_usb_mounted_mask = 0;
 static uint8_t g_scanner_usb_scan_result_pending_mask = 0;
 static scanner_usb_info_t g_scanner_usb_info[SCANNER_USB_SLOT_COUNT];
 static uint64_t g_scanner_usb_mount_probe_due_us = 0;
+static pthread_mutex_t g_scanner_cycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static uint64_t scanner_stability_wait_us(void) {
   return (uint64_t)runtime_config()->stability_wait_seconds * 1000000ull;
@@ -1272,8 +1276,8 @@ static bool should_abort_scan_cycle(void) {
   return should_stop_requested() || runtime_sleep_mode_active();
 }
 
-static bool run_full_scan_cycle(bool startup_sync, const char *reason,
-                                bool *unstable_found_out) {
+static bool run_full_scan_cycle_impl(bool startup_sync, const char *reason,
+                                     bool *unstable_found_out) {
   scan_candidate_t *candidates = g_scanner_scan_candidates;
 
   log_immediate_scan_reason(reason);
@@ -1331,8 +1335,17 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
   return !should_abort_scan_cycle();
 }
 
-static bool run_targeted_scan_cycle(int scan_root_index,
-                                    bool *unstable_found_out) {
+static bool run_full_scan_cycle(bool startup_sync, const char *reason,
+                                bool *unstable_found_out) {
+  pthread_mutex_lock(&g_scanner_cycle_mutex);
+  bool completed =
+      run_full_scan_cycle_impl(startup_sync, reason, unstable_found_out);
+  pthread_mutex_unlock(&g_scanner_cycle_mutex);
+  return completed;
+}
+
+static bool run_targeted_scan_cycle_impl(int scan_root_index,
+                                         bool *unstable_found_out) {
   const char *scan_root = get_scan_path(scan_root_index);
   scan_candidate_t *candidates = g_scanner_scan_candidates;
 
@@ -1376,6 +1389,15 @@ static bool run_targeted_scan_cycle(int scan_root_index,
     *unstable_found_out = unstable_found;
 
   return !should_abort_scan_cycle();
+}
+
+static bool run_targeted_scan_cycle(int scan_root_index,
+                                    bool *unstable_found_out) {
+  pthread_mutex_lock(&g_scanner_cycle_mutex);
+  bool completed =
+      run_targeted_scan_cycle_impl(scan_root_index, unstable_found_out);
+  pthread_mutex_unlock(&g_scanner_cycle_mutex);
+  return completed;
 }
 
 static int find_pending_cleanup_scan_root(void) {
@@ -1750,6 +1772,14 @@ bool sm_scanner_usb_watches_suspended(void) {
   return atomic_load_explicit(&g_usb_watches_suspended, memory_order_acquire);
 }
 
+bool sm_scanner_try_begin_external_mutation(void) {
+  return pthread_mutex_trylock(&g_scanner_cycle_mutex) == 0;
+}
+
+void sm_scanner_end_external_mutation(void) {
+  pthread_mutex_unlock(&g_scanner_cycle_mutex);
+}
+
 bool sm_scanner_run_startup_sync(void) {
   while (!should_stop_requested()) {
     while (runtime_sleep_mode_active() && !should_stop_requested()) {
@@ -1888,8 +1918,17 @@ void sm_scanner_run_loop(void) {
     bool game_mount_busy = sm_game_lifecycle_has_active_game() ||
                            sm_shellcore_service_has_prepared_mount();
     char scan_reason[128];
+    bool reset_attempts = false;
     if (!game_mount_busy &&
-        consume_scan_now_request(scan_reason, sizeof(scan_reason))) {
+        consume_scan_now_request(scan_reason, sizeof(scan_reason),
+                                 &reset_attempts)) {
+      if (reset_attempts) {
+        size_t reset_title_count = reset_all_title_attempts();
+        size_t reset_image_count = reset_all_image_mount_attempts();
+        log_debug("  [SCAN] reset retry counters before requested full scan: "
+                  "titles=%zu images=%zu",
+                  reset_title_count, reset_image_count);
+      }
       bool unstable_found = false;
       if (!run_full_scan_cycle(false, scan_reason, &unstable_found)) {
         if (runtime_sleep_mode_active())
@@ -2015,7 +2054,9 @@ void sm_scanner_run_loop(void) {
 
     uint64_t install_wake_us = sm_install_next_wake_us(now_us);
     if (install_wake_us != 0 && now_us >= install_wake_us) {
+      pthread_mutex_lock(&g_scanner_cycle_mutex);
       sm_install_service_pending();
+      pthread_mutex_unlock(&g_scanner_cycle_mutex);
       continue;
     }
 

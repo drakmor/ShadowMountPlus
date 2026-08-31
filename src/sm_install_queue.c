@@ -1,5 +1,7 @@
 #include "sm_platform.h"
 
+#include <stdatomic.h>
+
 #include "sm_install_queue.h"
 #include "sm_types.h"
 #include "sm_appdb.h"
@@ -37,7 +39,7 @@ typedef struct {
 static pending_install_entry_t g_pending_installs[MAX_PENDING];
 static uint64_t g_pending_install_poll_due_us = 0;
 static uint64_t g_queued_install_submit_due_us = 0;
-static int g_tracked_install_count = 0;
+static atomic_int g_tracked_install_count = 0;
 static int g_submitted_install_count = 0;
 static bool g_queued_install_batch_announced = false;
 static bool g_queued_install_submit_failure_notified = false;
@@ -47,11 +49,14 @@ static uint8_t note_pending_install_failure(const pending_install_entry_t *entry
 static void drop_queued_install_entry(pending_install_entry_t *entry);
 
 static bool install_queue_active(void) {
-  return runtime_config()->app_install_all_enabled || g_tracked_install_count > 0;
+  return runtime_config()->app_install_all_enabled ||
+         atomic_load_explicit(&g_tracked_install_count,
+                              memory_order_acquire) > 0;
 }
 
 bool sm_install_has_pending_work(void) {
-  return g_tracked_install_count > 0;
+  return atomic_load_explicit(&g_tracked_install_count,
+                              memory_order_acquire) > 0;
 }
 
 static pending_install_entry_t *find_pending_install_entry(
@@ -135,12 +140,17 @@ static void clear_pending_install_entry(pending_install_entry_t *entry) {
     return;
   if (entry->state == INSTALL_TRACK_SUBMITTED && g_submitted_install_count > 0)
     g_submitted_install_count--;
-  if (entry->state != INSTALL_TRACK_NONE && g_tracked_install_count > 0)
-    g_tracked_install_count--;
+  if (entry->state != INSTALL_TRACK_NONE &&
+      atomic_load_explicit(&g_tracked_install_count,
+                           memory_order_relaxed) > 0) {
+    atomic_fetch_sub_explicit(&g_tracked_install_count, 1,
+                              memory_order_release);
+  }
   memset(entry, 0, sizeof(*entry));
   if (g_submitted_install_count <= 0)
     g_pending_install_poll_due_us = 0;
-  if (g_tracked_install_count <= 0) {
+  if (atomic_load_explicit(&g_tracked_install_count,
+                           memory_order_acquire) <= 0) {
     g_queued_install_submit_due_us = 0;
     g_queued_install_batch_announced = false;
     g_queued_install_submit_failure_notified = false;
@@ -209,7 +219,8 @@ bool sm_install_queue_candidate(const scan_candidate_t *candidate,
   entry->has_src_snd0 = has_src_snd0;
   entry->state = INSTALL_TRACK_QUEUED;
   if (previous_state == INSTALL_TRACK_NONE)
-    g_tracked_install_count++;
+    atomic_fetch_add_explicit(&g_tracked_install_count, 1,
+                              memory_order_release);
   if (was_queue_empty) {
     g_queued_install_batch_announced = false;
     g_queued_install_submit_failure_notified = false;
@@ -347,7 +358,9 @@ static void log_batch_submit_retry_limit(const pending_install_entry_t *entry) {
 }
 
 static int count_queued_installs(void) {
-  int queued_count = g_tracked_install_count - g_submitted_install_count;
+  int queued_count =
+      atomic_load_explicit(&g_tracked_install_count, memory_order_acquire) -
+      g_submitted_install_count;
   return queued_count > 0 ? queued_count : 0;
 }
 

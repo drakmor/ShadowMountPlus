@@ -2,6 +2,7 @@
 #define SM_TITLE_STATE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 // Return whether registration was already attempted for a title.
@@ -23,5 +24,13 @@ uint8_t get_failed_mount_attempts(const char *title_id);
 void clear_failed_mount_attempts(const char *title_id);
 // Increment and return failed install/remount attempts for a title.
 uint8_t bump_failed_mount_attempts(const char *title_id);
+// Atomically return and clear both title-level registration and
+// install/remount attempt counters.
+void reset_title_attempts(const char *title_id,
+                          uint8_t *register_attempts_out,
+                          uint8_t *mount_install_attempts_out);
+// Clear registration and install/remount attempt counters for every title and
+// return the number of title entries that changed.
+size_t reset_all_title_attempts(void);
 
 #endif

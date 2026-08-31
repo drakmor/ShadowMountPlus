@@ -4,6 +4,7 @@
 #include "sm_game_cache.h"
 #include "sm_appdb.h"
 #include "sm_config_mount.h"
+#include "sm_filesystem.h"
 #include "sm_image_cache.h"
 #include "sm_image_index.h"
 #include "sm_install_queue.h"
@@ -26,7 +27,14 @@ static struct GameCache g_game_cache[MAX_PENDING];
 static pthread_mutex_t g_game_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static bool game_cache_source_exists(const struct GameCache *entry) {
-  return entry->path[0] != '\0' && path_exists(entry->path);
+  if (entry->path[0] != '\0' && path_exists(entry->path))
+    return true;
+
+  char image_path[MAX_PATH];
+  return entry->title_id[0] != '\0' &&
+         read_mount_image_link(entry->title_id, image_path,
+                               sizeof(image_path)) &&
+         path_exists(image_path);
 }
 
 static bool title_is_protected_by_dlc(const char *title_id,
@@ -48,15 +56,21 @@ static bool title_is_protected_by_dlc(const char *title_id,
 }
 
 static bool resolve_game_cache_owning_scan_root(const char *path,
+                                                const char *title_id,
                                                 char owning_scan_root[MAX_PATH]) {
   char resolved_source_path[MAX_PATH];
   const char *match_path = path;
   owning_scan_root[0] = '\0';
 
-  if (is_under_image_mount_base(path) &&
-      resolve_image_source_from_mount_cache(path, resolved_source_path,
-                                            sizeof(resolved_source_path))) {
-    match_path = resolved_source_path;
+  if (is_under_image_mount_base(path)) {
+    bool resolved = resolve_image_source_from_mount_cache(
+        path, resolved_source_path, sizeof(resolved_source_path));
+    if (!resolved && title_id && title_id[0] != '\0') {
+      resolved = read_mount_image_link(title_id, resolved_source_path,
+                                       sizeof(resolved_source_path));
+    }
+    if (resolved)
+      match_path = resolved_source_path;
   }
 
   size_t best_match_len = 0;
@@ -93,7 +107,8 @@ static bool ensure_game_cache_owning_scan_root(struct GameCache *entry) {
   if (entry->owning_scan_root[0] != '\0')
     return true;
 
-  return resolve_game_cache_owning_scan_root(entry->path, entry->owning_scan_root);
+  return resolve_game_cache_owning_scan_root(
+      entry->path, entry->title_id, entry->owning_scan_root);
 }
 
 static void start_missing_timer(struct GameCache *entry, uint64_t now_us) {
@@ -138,7 +153,8 @@ static void clear_game_cache_slot(int index, const char *reason) {
 void cache_game_entry(const char *path, const char *title_id,
                       const char *title_name) {
   char owning_scan_root[MAX_PATH];
-  (void)resolve_game_cache_owning_scan_root(path, owning_scan_root);
+  (void)resolve_game_cache_owning_scan_root(path, title_id,
+                                            owning_scan_root);
 
   pthread_mutex_lock(&g_game_cache_mutex);
   for (int k = 0; k < MAX_PENDING; k++) {
@@ -213,6 +229,9 @@ void note_game_cache_source_seen(const char *path, const char *title_id,
   if (!path || !title_id || title_id[0] == '\0')
     return;
 
+  char owning_scan_root[MAX_PATH];
+  (void)resolve_game_cache_owning_scan_root(path, title_id,
+                                            owning_scan_root);
   pthread_mutex_lock(&g_game_cache_mutex);
   for (int k = 0; k < MAX_PENDING; k++) {
     if (!g_game_cache[k].valid || g_game_cache[k].missing_since_us == 0)
@@ -220,8 +239,6 @@ void note_game_cache_source_seen(const char *path, const char *title_id,
     if (strcmp(g_game_cache[k].title_id, title_id) != 0)
       continue;
 
-    char owning_scan_root[MAX_PATH];
-    (void)resolve_game_cache_owning_scan_root(path, owning_scan_root);
     write_game_cache_slot(&g_game_cache[k], path, title_id,
                           title_name ? title_name : "", owning_scan_root);
     log_debug("  [CACHE] source restored, auto-remove cancelled: %s (%s)",

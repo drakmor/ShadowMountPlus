@@ -6,7 +6,7 @@
 bool sm_api_service_start(void);
 void sm_api_service_stop(void);
 bool sm_api_service_reconfigure(void);
-// Close active sockets on sleep entry and wake the listener on resume.
+// Stop the HTTP daemon on sleep entry and recreate it after resume.
 void sm_api_service_on_sleep_change(bool active);
 
 #endif

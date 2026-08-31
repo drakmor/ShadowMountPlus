@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>ShadowMount Library</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b12;
+      --surface: #111722;
+      --surface-2: #171f2d;
+      --line: #263145;
+      --text: #f4f7fb;
+      --muted: #95a2b8;
+      --blue: #55a7ff;
+      --blue-strong: #147ee8;
+      --green: #52d39a;
+      --amber: #f2bd5d;
+      --red: #ff6c79;
+      --radius: 14px;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .34);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 15% -10%, rgba(20, 126, 232, .17), transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    button, input, select { font: inherit; }
+    button, select { cursor: pointer; }
+
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+    }
+
+    .shell { width: min(1500px, 100%); margin: 0 auto; padding: 22px; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 13px; }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid rgba(85, 167, 255, .45);
+      border-radius: 12px;
+      background: linear-gradient(145deg, #147ee8, #74baff);
+      box-shadow: 0 8px 24px rgba(20, 126, 232, .25);
+      font-size: 20px;
+      font-weight: 800;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 20px; letter-spacing: -.02em; }
+    h2 { font-size: 17px; }
+    .subtle { color: var(--muted); font-size: 13px; }
+
+    .connection {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .connection-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--amber);
+      box-shadow: 0 0 0 4px rgba(242, 189, 93, .12);
+    }
+
+    .connection.online .connection-dot {
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(82, 211, 154, .12);
+    }
+
+    .connection.offline .connection-dot {
+      background: var(--red);
+      box-shadow: 0 0 0 4px rgba(255, 108, 121, .12);
+    }
+
+    .toolbar, .panel, .stat, .game-card, .modal-card {
+      border: 1px solid var(--line);
+      background: rgba(17, 23, 34, .96);
+      box-shadow: var(--shadow);
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) 170px auto auto auto;
+      gap: 10px;
+      padding: 13px;
+      border-radius: var(--radius);
+    }
+
+    input, select {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0c111a;
+      color: var(--text);
+      padding: 0 12px;
+    }
+
+    input::placeholder { color: #6f7c92; }
+
+    .check {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 40px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .check input { min-height: 0; width: 17px; height: 17px; accent-color: var(--blue); }
+
+    .btn {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-2);
+      color: var(--text);
+      padding: 0 14px;
+      transition: border-color .15s ease, background .15s ease, transform .15s ease;
+    }
+
+    .btn:hover { border-color: #3b4a63; background: #1c2637; }
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { cursor: wait; opacity: .55; }
+    .btn.primary { border-color: var(--blue-strong); background: var(--blue-strong); }
+    .btn.primary:hover { background: #238cf3; }
+    .btn.danger { border-color: rgba(255, 108, 121, .45); color: #ff9aa3; }
+    .btn.small { min-height: 34px; padding: 0 11px; font-size: 13px; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 14px 0;
+    }
+
+    .stat { padding: 15px 17px; border-radius: var(--radius); box-shadow: none; }
+    .stat-value { display: block; margin-top: 3px; font-size: 25px; font-weight: 750; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 310px;
+      align-items: start;
+      gap: 14px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 4px 0 11px;
+    }
+
+    .games {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 12px;
+    }
+
+    .game-card {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      align-items: start;
+      gap: 14px;
+      min-height: 116px;
+      padding: 13px;
+      border-radius: var(--radius);
+      box-shadow: none;
+    }
+
+    .cover {
+      position: relative;
+      width: 88px;
+      aspect-ratio: 1;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(145deg, #1d2c43, #0c111a);
+    }
+
+    .cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .cover-fallback { display: grid; place-items: center; width: 100%; height: 100%; color: var(--blue); font-weight: 800; }
+    .game-main { min-width: 0; }
+    .game-title { overflow: hidden; font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .game-id { color: var(--muted); font: 12px/1.5 ui-monospace, "SFMono-Regular", Consolas, monospace; }
+
+    .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .badge { border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 2px 7px; font-size: 11px; text-transform: uppercase; }
+    .badge.live { border-color: rgba(82, 211, 154, .35); color: var(--green); }
+    .badge.image { border-color: rgba(85, 167, 255, .38); color: #8cc4ff; }
+
+    .game-path { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .game-actions { display: flex; gap: 7px; margin-top: 10px; }
+
+    .panel { padding: 16px; border-radius: var(--radius); box-shadow: none; }
+    .sidebar { display: grid; gap: 14px; position: sticky; top: 14px; }
+    .storage-list { display: grid; gap: 9px; margin-top: 12px; }
+
+    .storage-row {
+      min-width: 0;
+      padding: 10px;
+      border-radius: 10px;
+      background: #0c111a;
+    }
+
+    .storage-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .storage-path { overflow: hidden; font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .storage-meta { overflow: hidden; margin-top: 3px; color: var(--muted); font: 11px/1.4 ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .storage-space { display: flex; justify-content: space-between; gap: 8px; margin-top: 7px; color: var(--muted); font-size: 11px; }
+
+    .storage-meter {
+      height: 6px;
+      margin-top: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #202a3a;
+    }
+
+    .storage-fill { height: 100%; border-radius: inherit; background: var(--blue); }
+    .storage-fill.warning { background: var(--amber); }
+    .storage-fill.danger { background: var(--red); }
+    .manual-form { display: flex; gap: 7px; margin-top: 12px; }
+    .manual-form input { min-width: 0; width: 100%; }
+    .manual-list, .activity-list { display: grid; gap: 7px; margin-top: 12px; }
+
+    .manual-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 9px;
+      border-radius: 9px;
+      background: #0c111a;
+    }
+
+    .manual-path { overflow: hidden; color: var(--muted); font: 11px/1.4 ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .activity-item { border-left: 2px solid var(--line); padding-left: 9px; color: var(--muted); font-size: 12px; }
+    .activity-item.ok { border-color: var(--green); }
+    .activity-item.error { border-color: var(--red); color: #ff9aa3; }
+
+    .empty {
+      grid-column: 1 / -1;
+      padding: 46px 20px;
+      border: 1px dashed var(--line);
+      border-radius: var(--radius);
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .modal {
+      position: fixed;
+      z-index: 20;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(2, 5, 10, .78);
+    }
+
+    .modal[hidden] { display: none; }
+    .modal-card { width: min(720px, 100%); max-height: 90vh; overflow: auto; border-radius: 18px; }
+    .modal-head { display: flex; align-items: start; justify-content: space-between; gap: 20px; padding: 18px; border-bottom: 1px solid var(--line); }
+    .close { width: 36px; min-height: 36px; padding: 0; font-size: 22px; }
+    .details { display: grid; grid-template-columns: 168px minmax(0, 1fr); align-items: start; gap: 18px; padding: 18px; }
+    .details .cover { width: 168px; }
+    .detail-grid { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 7px 12px; margin-top: 13px; font-size: 13px; }
+    .detail-key { color: var(--muted); }
+    .detail-value { min-width: 0; overflow-wrap: anywhere; }
+    .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 18px 18px; }
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 30;
+      max-width: min(420px, calc(100vw - 40px));
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: #172131;
+      box-shadow: var(--shadow);
+      padding: 12px 15px;
+    }
+
+    .toast[hidden] { display: none; }
+    .toast.error { border-color: rgba(255, 108, 121, .5); color: #ffabb2; }
+
+    @media (max-width: 980px) {
+      .toolbar { grid-template-columns: minmax(180px, 1fr) 150px auto; }
+      .toolbar .check { order: 2; }
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 660px) {
+      .shell { padding: 14px; }
+      .topbar { align-items: flex-start; }
+      .toolbar { grid-template-columns: 1fr 1fr; }
+      .toolbar #search { grid-column: 1 / -1; }
+      .stats { grid-template-columns: 1fr 1fr; }
+      .games { grid-template-columns: 1fr; }
+      .sidebar { grid-template-columns: 1fr; }
+      .details { grid-template-columns: 1fr; }
+      .details .cover { width: 120px; }
+      .detail-grid { grid-template-columns: 105px minmax(0, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">S</div>
+        <div>
+          <h1>ShadowMount Library</h1>
+          <p class="subtle" id="version">Подключение к API…</p>
+        </div>
+      </div>
+      <div class="connection" id="connection" role="status">
+        <span class="connection-dot"></span>
+        <span id="connectionText">Проверка</span>
+      </div>
+    </header>
+
+    <section class="toolbar" aria-label="Управление библиотекой">
+      <input id="search" type="search" autocomplete="off" placeholder="Название, Title ID, Content ID или путь">
+      <select id="filter" aria-label="Фильтр библиотеки">
+        <option value="all">Все игры</option>
+        <option value="folder">Папки</option>
+        <option value="image">Образы</option>
+        <option value="ps4">PS4</option>
+        <option value="ps5">PS5</option>
+      </select>
+      <label class="check"><input id="includeSize" type="checkbox"> Считать размер</label>
+      <button class="btn" id="refreshBtn" type="button">Обновить</button>
+      <button class="btn primary" id="scanBtn" type="button">Сканировать</button>
+    </section>
+
+    <section class="stats" aria-label="Сводка библиотеки">
+      <div class="stat"><span class="subtle">Всего игр</span><strong class="stat-value" id="totalGames">—</strong></div>
+      <div class="stat"><span class="subtle">Образы</span><strong class="stat-value" id="imageGames">—</strong></div>
+      <div class="stat"><span class="subtle">Папки</span><strong class="stat-value" id="folderGames">—</strong></div>
+      <div class="stat"><span class="subtle">Смонтировано</span><strong class="stat-value" id="mountedGames">—</strong></div>
+    </section>
+
+    <div class="layout">
+      <section aria-labelledby="gamesHeading">
+        <div class="section-head">
+          <h2 id="gamesHeading">Библиотека</h2>
+          <span class="subtle" id="visibleCount"></span>
+        </div>
+        <div class="games" id="games" aria-live="polite">
+          <div class="empty">Загрузка библиотеки…</div>
+        </div>
+      </section>
+
+      <aside class="sidebar">
+        <section class="panel" aria-labelledby="storageHeading">
+          <h2 id="storageHeading">Хранилища</h2>
+          <p class="subtle">Свободное место в доступных точках монтирования</p>
+          <div class="storage-list" id="storageList" aria-live="polite"><span class="subtle">Загрузка…</span></div>
+        </section>
+
+        <section class="panel" aria-labelledby="manualHeading">
+          <h2 id="manualHeading">manual.lst</h2>
+          <p class="subtle">Дополнительные источники для сканирования</p>
+          <form class="manual-form" id="manualForm">
+            <input id="manualPath" required placeholder="/mnt/usb0/games">
+            <button class="btn small" type="submit">Добавить</button>
+          </form>
+          <div class="manual-list" id="manualList"><span class="subtle">Загрузка…</span></div>
+        </section>
+
+        <section class="panel" aria-labelledby="scanHeading">
+          <h2 id="scanHeading">Параметры сканирования</h2>
+          <label class="check"><input id="resetAttempts" type="checkbox"> Сбросить счётчики попыток</label>
+          <p class="subtle">Опция применяется только к следующему принудительному сканированию.</p>
+        </section>
+
+        <section class="panel" aria-labelledby="activityHeading">
+          <h2 id="activityHeading">Последние операции</h2>
+          <div class="activity-list" id="activity"><span class="subtle">Операций пока нет</span></div>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h2 id="modalTitle">Информация об игре</h2>
+          <p class="subtle" id="modalSubtitle"></p>
+        </div>
+        <button class="btn close" id="closeModal" type="button" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="details" id="details"></div>
+      <div class="modal-actions" id="modalActions"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden role="status"></div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const API = "/api/v1";
+      const state = { games: [], selected: null, activity: [], busy: false };
+      const $ = (id) => document.getElementById(id);
+
+      function node(tag, className, text) {
+        const item = document.createElement(tag);
+        if (className) item.className = className;
+        if (text !== undefined) item.textContent = text;
+        return item;
+      }
+
+      function formatBytes(value) {
+        if (!Number.isFinite(value) || value < 0) return "—";
+        if (value === 0) return "0 Б";
+        const units = ["Б", "КиБ", "МиБ", "ГиБ", "ТиБ"];
+        const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+        const precision = index < 2 ? 0 : 1;
+        return `${(value / (1024 ** index)).toFixed(precision)} ${units[index]}`;
+      }
+
+      function errorMessage(error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+
+      async function api(path, payload = {}) {
+        const response = await fetch(`${API}${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          cache: "no-store"
+        });
+        const type = response.headers.get("content-type") || "";
+        const data = type.includes("application/json") ? await response.json() : null;
+        if (!response.ok || !data || data.status !== 0) {
+          const reason = data && data.error ? data.error : `HTTP ${response.status}`;
+          throw new Error(reason);
+        }
+        return data;
+      }
+
+      function setConnection(status, text) {
+        const item = $("connection");
+        item.className = `connection ${status}`;
+        $("connectionText").textContent = text;
+      }
+
+      let toastTimer = 0;
+      function toast(message, isError = false) {
+        const item = $("toast");
+        item.textContent = message;
+        item.className = isError ? "toast error" : "toast";
+        item.hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { item.hidden = true; }, 4500);
+      }
+
+      function logActivity(message, kind = "ok") {
+        state.activity.unshift({ message, kind, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
+        state.activity = state.activity.slice(0, 8);
+        const list = $("activity");
+        list.replaceChildren();
+        state.activity.forEach((entry) => {
+          list.append(node("div", `activity-item ${entry.kind}`, `${entry.time} · ${entry.message}`));
+        });
+      }
+
+      function coverFor(game, large = false) {
+        const cover = node("div", "cover");
+        const fallback = node("div", "cover-fallback", (game.title_id || "SM").slice(0, 4));
+        cover.append(fallback);
+        if (game.icon_url) {
+          const image = new Image();
+          image.alt = large ? `Обложка ${game.title_name || game.title_id}` : "";
+          image.addEventListener("load", () => fallback.remove(), { once: true });
+          image.addEventListener("error", () => image.remove(), { once: true });
+          cover.append(image);
+          image.src = game.icon_url;
+        }
+        return cover;
+      }
+
+      function badge(text, extra = "") {
+        return node("span", `badge ${extra}`.trim(), text);
+      }
+
+      function gameCard(game) {
+        const card = node("article", "game-card");
+        card.append(coverFor(game));
+        const body = node("div", "game-main");
+        body.append(node("h3", "game-title", game.title_name || game.title_id));
+        body.append(node("div", "game-id", game.title_id));
+        const badges = node("div", "badges");
+        badges.append(badge(game.platform || "unknown"));
+        badges.append(badge(game.image_backed ? (game.image_type || "image") : "folder", game.image_backed ? "image" : ""));
+        if (game.mounted) badges.append(badge("mounted", "live"));
+        body.append(badges);
+        const size = game.size_bytes !== undefined ? ` · ${formatBytes(game.size_bytes)}` : "";
+        body.append(node("div", "game-path", `${game.path || "Источник недоступен"}${size}`));
+
+        const actions = node("div", "game-actions");
+        const details = node("button", "btn small", "Подробнее");
+        details.type = "button";
+        details.addEventListener("click", () => showDetails(game.title_id));
+        actions.append(details);
+        const runtime = node("button", "btn small", game.mounted ? "Отключить" : "Подключить");
+        runtime.type = "button";
+        runtime.addEventListener("click", () => titleRuntime(game, game.mounted ? "unmount" : "mount"));
+        actions.append(runtime);
+        body.append(actions);
+        card.append(body);
+        return card;
+      }
+
+      function filteredGames() {
+        const query = $("search").value.trim().toLocaleLowerCase();
+        const filter = $("filter").value;
+        return state.games.filter((game) => {
+          const matchesFilter = filter === "all" ||
+            (filter === "folder" && !game.image_backed) ||
+            (filter === "image" && game.image_backed) ||
+            game.platform === filter;
+          if (!matchesFilter) return false;
+          if (!query) return true;
+          return [game.title_name, game.title_id, game.content_id, game.path]
+            .some((value) => String(value || "").toLocaleLowerCase().includes(query));
+        });
+      }
+
+      function renderGames() {
+        const games = filteredGames();
+        const list = $("games");
+        list.replaceChildren();
+        if (!games.length) {
+          list.append(node("div", "empty", state.games.length ? "Ничего не найдено" : "Библиотека пуста"));
+        } else {
+          games.forEach((game) => list.append(gameCard(game)));
+        }
+        $("visibleCount").textContent = `Показано: ${games.length}`;
+      }
+
+      function renderStats() {
+        const imageCount = state.games.filter((game) => game.image_backed).length;
+        $("totalGames").textContent = state.games.length;
+        $("imageGames").textContent = imageCount;
+        $("folderGames").textContent = state.games.length - imageCount;
+        $("mountedGames").textContent = state.games.filter((game) => game.mounted).length;
+      }
+
+      async function refreshStorage() {
+        const list = $("storageList");
+        try {
+          const data = await api("/storage");
+          const allMounts = (data.mounts || []).slice().sort((left, right) =>
+            String(left.mount_point).localeCompare(String(right.mount_point))
+          );
+          const libraryMounts = allMounts.filter((mount) =>
+            mount.mount_point === "/user" || /^\/mnt\/(?:usb|ext)\d+(?:\/|$)/.test(mount.mount_point)
+          );
+          const mounts = libraryMounts.length ? libraryMounts : allMounts.filter((mount) => !mount.read_only);
+          list.replaceChildren();
+          if (!mounts.length) {
+            list.append(node("span", "subtle", "Хранилища не найдены"));
+            return;
+          }
+
+          mounts.forEach((mount) => {
+            const total = Number(mount.total_bytes) || 0;
+            const available = Number(mount.available_bytes) || 0;
+            const usedPercent = total > 0 ? Math.max(0, Math.min(100, ((total - available) / total) * 100)) : 0;
+            const freePercent = 100 - usedPercent;
+            const row = node("div", "storage-row");
+            const head = node("div", "storage-head");
+            const path = node("span", "storage-path", mount.mount_point);
+            path.title = mount.mount_point;
+            head.append(path, badge(mount.read_only ? "R/O" : mount.filesystem || "FS", mount.read_only ? "" : "live"));
+            row.append(head);
+            const meta = node("div", "storage-meta", `${mount.filesystem || "unknown"} · ${mount.source || "—"}`);
+            meta.title = mount.source || "";
+            row.append(meta);
+            const space = node("div", "storage-space");
+            space.append(node("span", "", `Свободно ${formatBytes(available)}`));
+            space.append(node("span", "", `из ${formatBytes(total)}`));
+            row.append(space);
+            const meter = node("div", "storage-meter");
+            meter.setAttribute("role", "progressbar");
+            meter.setAttribute("aria-label", `Заполнено ${mount.mount_point}`);
+            meter.setAttribute("aria-valuemin", "0");
+            meter.setAttribute("aria-valuemax", "100");
+            meter.setAttribute("aria-valuenow", String(Math.round(usedPercent)));
+            const level = freePercent < 10 ? "danger" : freePercent < 20 ? "warning" : "";
+            const fill = node("div", `storage-fill ${level}`.trim());
+            fill.style.width = `${usedPercent}%`;
+            meter.append(fill);
+            row.append(meter);
+            list.append(row);
+          });
+        } catch (error) {
+          list.replaceChildren(node("span", "subtle", errorMessage(error)));
+        }
+      }
+
+      async function refreshLibrary() {
+        if (state.busy) return;
+        state.busy = true;
+        $("refreshBtn").disabled = true;
+        try {
+          const [version, games] = await Promise.all([
+            api("/version"),
+            api("/games", { include_size: $("includeSize").checked })
+          ]);
+          state.games = games.games || [];
+          $("version").textContent = `ShadowMount ${version.shadowmount_version} · API v${version.api_version}`;
+          setConnection("online", "PS5 подключена");
+          renderStats();
+          renderGames();
+        } catch (error) {
+          setConnection("offline", "Нет связи");
+          $("games").replaceChildren(node("div", "empty", `Ошибка API: ${errorMessage(error)}`));
+          toast(errorMessage(error), true);
+        } finally {
+          state.busy = false;
+          $("refreshBtn").disabled = false;
+        }
+      }
+
+      function refreshAll() {
+        return Promise.all([refreshLibrary(), refreshStorage()]);
+      }
+
+      async function refreshManual() {
+        const list = $("manualList");
+        try {
+          const data = await api("/manual/list");
+          list.replaceChildren();
+          if (!data.paths.length) {
+            list.append(node("span", "subtle", "Список пуст"));
+            return;
+          }
+          data.paths.forEach((path) => {
+            const row = node("div", "manual-row");
+            const value = node("span", "manual-path", path);
+            value.title = path;
+            const remove = node("button", "btn small danger", "Удалить");
+            remove.type = "button";
+            remove.addEventListener("click", () => removeManual(path));
+            row.append(value, remove);
+            list.append(row);
+          });
+        } catch (error) {
+          list.replaceChildren(node("span", "subtle", errorMessage(error)));
+        }
+      }
+
+      async function addManual(event) {
+        event.preventDefault();
+        const input = $("manualPath");
+        const path = input.value.trim();
+        if (!path) return;
+        try {
+          const result = await api("/manual/add", { path });
+          input.value = "";
+          logActivity(result.changed ? "Источник добавлен в manual.lst" : "Источник уже есть в manual.lst");
+          await refreshManual();
+        } catch (error) {
+          logActivity(errorMessage(error), "error");
+          toast(errorMessage(error), true);
+        }
+      }
+
+      async function removeManual(path) {
+        if (!confirm(`Удалить источник из manual.lst?\n\n${path}`)) return;
+        try {
+          await api("/manual/remove", { path });
+          logActivity("Источник удалён из manual.lst");
+          await refreshManual();
+        } catch (error) {
+          logActivity(errorMessage(error), "error");
+          toast(errorMessage(error), true);
+        }
+      }
+
+      async function requestScan() {
+        const resetAttempts = $("resetAttempts").checked;
+        $("scanBtn").disabled = true;
+        try {
+          await api("/scan", { reset_attempts: resetAttempts });
+          logActivity(resetAttempts ? "Сканирование поставлено в очередь со сбросом попыток" : "Сканирование поставлено в очередь");
+          toast("Сканирование запущено");
+          setTimeout(refreshAll, 1600);
+        } catch (error) {
+          logActivity(errorMessage(error), "error");
+          toast(errorMessage(error), true);
+        } finally {
+          $("scanBtn").disabled = false;
+        }
+      }
+
+      async function runMutation(label, task, closeAfter = false) {
+        try {
+          await task();
+          logActivity(label);
+          toast(label);
+          if (closeAfter) closeModal();
+          await refreshAll();
+        } catch (error) {
+          logActivity(`${label}: ${errorMessage(error)}`, "error");
+          toast(errorMessage(error), true);
+        }
+      }
+
+      function titleRuntime(game, operation, mode) {
+        const payload = { title_id: game.title_id };
+        if (mode) payload.mode = mode;
+        const label = operation === "mount" ? `Смонтировано ${game.title_id}${mode ? ` (${mode})` : ""}` : `Размонтировано ${game.title_id}`;
+        return runMutation(label, () => api(`/games/${operation}`, payload));
+      }
+
+      function actionButton(text, action, extra = "") {
+        const button = node("button", `btn small ${extra}`.trim(), text);
+        button.type = "button";
+        button.addEventListener("click", action);
+        return button;
+      }
+
+      function detailRow(grid, key, value) {
+        grid.append(node("div", "detail-key", key));
+        grid.append(node("div", "detail-value", value || "—"));
+      }
+
+      function renderDetails(game) {
+        state.selected = game;
+        $("modalTitle").textContent = game.title_name || game.title_id;
+        $("modalSubtitle").textContent = `${game.title_id} · ${(game.platform || "unknown").toUpperCase()}`;
+        const details = $("details");
+        details.replaceChildren();
+        details.append(coverFor(game, true));
+        const content = node("div");
+        const badges = node("div", "badges");
+        badges.append(badge(game.source_type));
+        if (game.image_type) badges.append(badge(game.image_type, "image"));
+        if (game.mounted) badges.append(badge("mounted", "live"));
+        content.append(badges);
+        const grid = node("div", "detail-grid");
+        detailRow(grid, "Content ID", game.content_id);
+        detailRow(grid, "Источник", game.path);
+        detailRow(grid, "Runtime path", game.runtime_path);
+        detailRow(grid, "Размер", game.size_status === 0 ? formatBytes(game.size_bytes) : `Ошибка ${game.size_status}`);
+        detailRow(grid, "app.db", formatBytes(game.app_db_size_bytes));
+        detailRow(grid, "Установлена", game.install_time);
+        detailRow(grid, "Последний запуск", game.last_access_time);
+        content.append(grid);
+        details.append(content);
+
+        const actions = $("modalActions");
+        actions.replaceChildren();
+        if (game.image_backed) {
+          actions.append(actionButton("Mount R/O", () => titleRuntime(game, "mount", "ro")));
+          actions.append(actionButton("Mount R/W", () => titleRuntime(game, "mount", "rw")));
+        } else {
+          actions.append(actionButton("Подключить", () => titleRuntime(game, "mount")));
+        }
+        actions.append(actionButton("Отключить", () => titleRuntime(game, "unmount")));
+        actions.append(actionButton("Копировать", () => storageOperation(game, "copy")));
+        actions.append(actionButton("Переместить", () => storageOperation(game, "move")));
+        actions.append(actionButton("Деинсталлировать", () => uninstallGame(game), "danger"));
+        actions.append(actionButton("Удалить источник", () => deleteSource(game), "danger"));
+      }
+
+      async function showDetails(titleId) {
+        $("modal").hidden = false;
+        $("modalTitle").textContent = "Загрузка…";
+        $("modalSubtitle").textContent = titleId;
+        $("details").replaceChildren(node("div", "empty", "Подсчёт размера источника…"));
+        $("modalActions").replaceChildren();
+        try {
+          renderDetails(await api("/games/info", { title_id: titleId }));
+        } catch (error) {
+          $("details").replaceChildren(node("div", "empty", errorMessage(error)));
+        }
+      }
+
+      function closeModal() {
+        $("modal").hidden = true;
+        state.selected = null;
+      }
+
+      function storageOperation(game, operation) {
+        const destination = prompt(`Папка назначения для ${operation === "copy" ? "копирования" : "перемещения"}:`, "/mnt/usb0");
+        if (!destination) return;
+        const label = `${operation === "copy" ? "Скопирован" : "Перемещён"} источник ${game.title_id}`;
+        runMutation(label, () => api(`/games/${operation}`, { title_id: game.title_id, destination_dir: destination }), true);
+      }
+
+      function uninstallGame(game) {
+        if (!confirm(`Запросить деинсталляцию ${game.title_name || game.title_id}?\n\nИсходный образ или папка не удаляются.`)) return;
+        runMutation(`Деинсталляция ${game.title_id} принята`, () => api("/games/uninstall", { title_id: game.title_id }), true);
+      }
+
+      function deleteSource(game) {
+        const entered = prompt(`Операция необратима. Для удаления физического источника введите Title ID:\n\n${game.title_id}`);
+        if (entered !== game.title_id) {
+          if (entered !== null) toast("Title ID не совпадает", true);
+          return;
+        }
+        runMutation(`Удалён источник ${game.title_id}`, () => api("/games/delete", { title_id: game.title_id, confirm: true }), true);
+      }
+
+      $("search").addEventListener("input", renderGames);
+      $("filter").addEventListener("change", renderGames);
+      $("includeSize").addEventListener("change", refreshLibrary);
+      $("refreshBtn").addEventListener("click", refreshAll);
+      $("scanBtn").addEventListener("click", requestScan);
+      $("manualForm").addEventListener("submit", addManual);
+      $("closeModal").addEventListener("click", closeModal);
+      $("modal").addEventListener("click", (event) => { if (event.target === $("modal")) closeModal(); });
+      document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !$("modal").hidden) closeModal(); });
+
+      Promise.all([refreshAll(), refreshManual()]);
+    })();
+  </script>
+</body>
+</html>

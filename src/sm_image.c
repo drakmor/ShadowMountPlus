@@ -397,6 +397,10 @@ static const char *image_fs_name(image_fs_type_t fs_type) {
   }
 }
 
+const char *image_fs_type_name_for_path(const char *path) {
+  return image_fs_name(detect_image_fs_type_for_path(path, NULL));
+}
+
 void log_fs_stats(const char *tag, const char *path,
                   const char *type_hint) {
   struct statfs sfs;
@@ -1113,18 +1117,30 @@ static bool validate_mounted_image(const char *file_path, uint64_t generation,
 }
 
 // --- Image Attach + nmount Pipeline ---
-bool mount_image(const char *file_path, image_fs_type_t fs_type) {
+bool mount_image_with_mode(const char *file_path, image_fs_type_t fs_type,
+                           const bool *mount_read_only_override) {
   sm_error_clear();
   const runtime_config_t *cfg = runtime_config();
   bool mount_read_only = cfg->mount_read_only;
   bool mount_mode_overridden = false;
+  bool request_mode_overridden = mount_read_only_override != NULL;
   bool force_mount = cfg->force_mount;
   attach_backend_t attach_backend = select_image_backend(cfg, fs_type);
   const char *filename = get_filename_component(file_path);
   if (filename[0] != '\0')
     mount_mode_overridden =
         get_image_mode_override(filename, &mount_read_only);
-  if (pfs_path_uses_nested_profile(file_path, fs_type))
+  bool mount_mode_forced = pfs_path_uses_nested_profile(file_path, fs_type);
+  if (mount_read_only_override && mount_mode_forced &&
+      !*mount_read_only_override) {
+    errno = ENOTSUP;
+    return false;
+  }
+  if (mount_read_only_override) {
+    mount_read_only = *mount_read_only_override;
+    mount_mode_overridden = true;
+  }
+  if (mount_mode_forced)
     mount_read_only = true;
 
   if (runtime_sleep_mode_active())
@@ -1136,6 +1152,16 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   bool success = false;
   bool handled =
       handle_cached_or_existing_image_mount(file_path, mount_point, &success);
+  if (handled && success && mount_read_only_override) {
+    struct statfs mounted_fs;
+    if (statfs(mount_point, &mounted_fs) != 0 ||
+        ((mounted_fs.f_flags & MNT_RDONLY) != 0) != mount_read_only) {
+      errno = EBUSY;
+      return false;
+    }
+  }
+  if (handled && !success && mount_read_only_override && errno != ENOSPC)
+    errno = EBUSY;
   if (handled)
     return success;
 
@@ -1159,6 +1185,14 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
   if (find_image_cache_entry(file_path, &current_entry, NULL) &&
       current_entry.state == ATTACHED_DEVICE_MOUNTED) {
     runtime_mount_state_unlock();
+    if (mount_read_only_override) {
+      struct statfs mounted_fs;
+      if (statfs(mount_point, &mounted_fs) != 0 ||
+          ((mounted_fs.f_flags & MNT_RDONLY) != 0) != mount_read_only) {
+        errno = EBUSY;
+        return false;
+      }
+    }
     return true;
   }
   if (!begin_image_attachment(file_path, mount_point,
@@ -1177,7 +1211,8 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
             profile.legacy ? "legacy-1.6" : "optimized-1.7", file_path,
             mount_point);
   if (mount_mode_overridden) {
-    log_debug("  [CFG] Image mode override: %s -> %s", file_path,
+    log_debug("  [%s] Image mode override: %s -> %s",
+              request_mode_overridden ? "API" : "CFG", file_path,
               mount_read_only ? "ro" : "rw");
   }
 
@@ -1234,6 +1269,10 @@ bool mount_image(const char *file_path, image_fs_type_t fs_type) {
             devname, mount_point);
   log_fs_stats("IMG", mount_point, image_fs_name(fs_type));
   return true;
+}
+
+bool mount_image(const char *file_path, image_fs_type_t fs_type) {
+  return mount_image_with_mode(file_path, fs_type, NULL);
 }
 
 static bool unmount_child_image_mounts_for_container(
@@ -1767,8 +1806,9 @@ void cleanup_mount_dirs(void) {
   cleanup_mount_dirs_under(IMAGE_MOUNT_BASE, "pfsc");
 }
 
-bool maybe_mount_image_file(const char *full_path, const char *display_name,
-                            bool *unstable_out) {
+bool maybe_mount_image_file_with_mode(
+    const char *full_path, const char *display_name, bool *unstable_out,
+    const bool *mount_read_only_override) {
   image_fs_type_t fs_type =
       detect_image_fs_type_for_path(full_path, display_name);
   if (fs_type == IMAGE_FS_UNKNOWN)
@@ -1781,16 +1821,28 @@ bool maybe_mount_image_file(const char *full_path, const char *display_name,
   if (is_image_mount_limited(full_path))
     return false;
 
-  if (mount_image(full_path, fs_type)) {
+  if (mount_image_with_mode(full_path, fs_type, mount_read_only_override)) {
     clear_image_mount_attempts(full_path);
     return true;
   }
 
   int mount_err = errno;
+  if (mount_read_only_override &&
+      (mount_err == EBUSY || mount_err == ENOTSUP)) {
+    errno = mount_err;
+    return false;
+  }
   if (bump_image_mount_attempts(full_path) == 1 && !sm_error_notified()) {
     notify_image_mount_failed(full_path, mount_err);
   }
+  errno = mount_err;
   return false;
+}
+
+bool maybe_mount_image_file(const char *full_path, const char *display_name,
+                            bool *unstable_out) {
+  return maybe_mount_image_file_with_mode(full_path, display_name,
+                                          unstable_out, NULL);
 }
 
 bool shutdown_image_mounts(void) {

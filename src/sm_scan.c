@@ -60,6 +60,21 @@ static void note_found_title(const char *title_id) {
                 sizeof(g_scan_workspace.found_titles[slot]));
 }
 
+static void note_found_indexed_title(const char *title_id, const void *ctx) {
+  const char *image_path = ctx;
+  note_found_title(title_id);
+
+  char runtime_path[MAX_PATH];
+  char linked_image[MAX_PATH];
+  if (!image_path ||
+      !read_mount_link(title_id, runtime_path, sizeof(runtime_path)) ||
+      !read_mount_image_link(title_id, linked_image, sizeof(linked_image)) ||
+      strcmp(linked_image, image_path) != 0) {
+    return;
+  }
+  cache_game_entry(runtime_path, title_id, "");
+}
+
 static bool mount_persistent_indexed_image(const char *image_path,
                                            const char *image_name,
                                            bool *unstable_found_out) {
@@ -537,7 +552,8 @@ static bool collect_candidate_image_visit(const char *image_path,
   bool index_ready =
       indexed_image && sm_image_index_visit_ready_titles(
                            image_path, &image_st, ctx->app_db->titles,
-                           ctx->app_db->titles_ready, note_found_title);
+                           ctx->app_db->titles_ready,
+                           note_found_indexed_title, image_path);
   if (index_ready && !runtime_config()->persistent_image_mounts)
     return true;
 
@@ -641,7 +657,7 @@ static void collect_scan_candidates_from_manual_path(
       is_supported_image_file_path(manual_path, name)) {
     bool index_ready = sm_image_index_visit_ready_titles(
         manual_path, &st, app_db->titles, app_db->titles_ready,
-        note_found_title);
+        note_found_indexed_title, manual_path);
     if (index_ready && !runtime_config()->persistent_image_mounts)
       return;
 

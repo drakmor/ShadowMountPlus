@@ -1,5 +1,6 @@
 #include "sm_platform.h"
 
+#include <json-c/json.h>
 #include <pthread.h>
 #include <sqlite3.h>
 
@@ -11,6 +12,8 @@
 #include "sm_paths.h"
 
 static sqlite3 *g_app_db;
+
+#define APP_DB_API_BUSY_TIMEOUT_MS 250
 
 struct AppDbTitleCache {
   struct AppDbTitleList list;
@@ -551,4 +554,166 @@ bool get_app_db_blocked_uninstall_ppsa_list(struct AppDbTitleList *list_out) {
   return get_cached_app_db_title_list(
       list_out, &g_app_db_blocked_uninstall_ppsa_cache,
       load_app_db_blocked_uninstall_ppsa_list);
+}
+
+static void copy_sqlite_text(sqlite3_stmt *stmt, int column, char *out,
+                             size_t out_size) {
+  const unsigned char *value = sqlite3_column_text(stmt, column);
+  (void)strlcpy(out, value ? (const char *)value : "", out_size);
+}
+
+static void copy_json_string(struct json_object *object, const char *key,
+                             char *out, size_t out_size) {
+  struct json_object *value = NULL;
+  if (!json_object_object_get_ex(object, key, &value) ||
+      !json_object_is_type(value, json_type_string)) {
+    return;
+  }
+  const char *text = json_object_get_string(value);
+  if (text && text[0] != '\0')
+    (void)strlcpy(out, text, out_size);
+}
+
+static void apply_app_info_timestamps(sqlite3_stmt *stmt, int column,
+                                      sm_app_db_game_info_t *entry) {
+  // ShellCore updates these JSON values while the top-level timestamp columns
+  // can remain at their initial install values.
+  const unsigned char *text = sqlite3_column_text(stmt, column);
+  if (!text || text[0] == '\0')
+    return;
+
+  struct json_object *app_info =
+      json_tokener_parse((const char *)text);
+  if (!app_info)
+    return;
+  copy_json_string(app_info, "#_last_access_time", entry->last_access_time,
+                   sizeof(entry->last_access_time));
+  copy_json_string(app_info, "#_install_time", entry->install_time,
+                   sizeof(entry->install_time));
+  json_object_put(app_info);
+}
+
+bool app_db_game_info_snapshot(sm_app_db_game_info_t **entries_out,
+                               size_t *count_out) {
+  if (!entries_out || !count_out)
+    return false;
+  *entries_out = NULL;
+  *count_out = 0;
+
+  sqlite3 *db = NULL;
+  int rc = sqlite3_open_v2(APP_DB_PATH, &db, SQLITE_OPEN_READONLY, NULL);
+  if (rc != SQLITE_OK) {
+    if (db)
+      (void)close_sqlite_handle(&db, "game metadata snapshot");
+    errno = EIO;
+    return false;
+  }
+  (void)sqlite3_busy_timeout(db, APP_DB_API_BUSY_TIMEOUT_MS);
+
+  static const char sql[] =
+      "SELECT titleId, contentId, titleName, lastAccessTime, installTime, "
+      "icon0Info, platform, size, AppInfoJson FROM tbl_contentinfo "
+      "WHERE titleId != '' ORDER BY titleId COLLATE BINARY;";
+  sqlite3_stmt *stmt = NULL;
+  rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) {
+    log_debug("  [DB] prepare failed for game metadata snapshot: rc=%d err=%s",
+              rc, sqlite3_errmsg(db));
+    (void)close_sqlite_handle(&db, "game metadata snapshot");
+    errno = EIO;
+    return false;
+  }
+
+  sm_app_db_game_info_t *entries = NULL;
+  size_t count = 0;
+  size_t capacity = 0;
+  int busy_attempts = 0;
+  bool loaded = false;
+  while (!should_stop_requested() && !runtime_sleep_mode_active()) {
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+      busy_attempts = 0;
+      if (count == capacity) {
+        size_t new_capacity = capacity > 0 ? capacity * 2u : 128u;
+        if (new_capacity < capacity ||
+            new_capacity > SIZE_MAX / sizeof(*entries)) {
+          errno = ENOMEM;
+          break;
+        }
+        sm_app_db_game_info_t *new_entries =
+            realloc(entries, new_capacity * sizeof(*new_entries));
+        if (!new_entries) {
+          errno = ENOMEM;
+          break;
+        }
+        entries = new_entries;
+        capacity = new_capacity;
+      }
+
+      sm_app_db_game_info_t *entry = &entries[count++];
+      memset(entry, 0, sizeof(*entry));
+      copy_sqlite_text(stmt, 0, entry->title_id, sizeof(entry->title_id));
+      copy_sqlite_text(stmt, 1, entry->content_id, sizeof(entry->content_id));
+      copy_sqlite_text(stmt, 2, entry->title_name, sizeof(entry->title_name));
+      copy_sqlite_text(stmt, 3, entry->last_access_time,
+                       sizeof(entry->last_access_time));
+      copy_sqlite_text(stmt, 4, entry->install_time,
+                       sizeof(entry->install_time));
+      copy_sqlite_text(stmt, 5, entry->icon_path, sizeof(entry->icon_path));
+      entry->platform = sqlite3_column_type(stmt, 6) == SQLITE_NULL
+                            ? -1
+                            : sqlite3_column_int(stmt, 6);
+      sqlite3_int64 installed_size = sqlite3_column_int64(stmt, 7);
+      entry->installed_size =
+          installed_size > 0 ? (uint64_t)installed_size : 0;
+      apply_app_info_timestamps(stmt, 8, entry);
+      continue;
+    }
+    if (rc == SQLITE_DONE) {
+      loaded = true;
+      break;
+    }
+    if ((rc == SQLITE_BUSY || rc == SQLITE_LOCKED) &&
+        ++busy_attempts < APP_DB_QUERY_BUSY_RETRIES) {
+      sceKernelUsleep(APP_DB_BUSY_RETRY_SLEEP_US);
+      continue;
+    }
+    log_debug("  [DB] game metadata snapshot failed: rc=%d err=%s", rc,
+              sqlite3_errmsg(db));
+    errno = EIO;
+    break;
+  }
+
+  (void)sqlite3_finalize(stmt);
+  if (!close_sqlite_handle(&db, "game metadata snapshot"))
+    loaded = false;
+  if (!loaded) {
+    if (should_stop_requested() || runtime_sleep_mode_active())
+      errno = ECANCELED;
+    else if (errno == 0)
+      errno = EIO;
+    free(entries);
+    return false;
+  }
+
+  *entries_out = entries;
+  *count_out = count;
+  return true;
+}
+
+const sm_app_db_game_info_t *app_db_find_game_info(
+    const sm_app_db_game_info_t *entries, size_t count, const char *title_id) {
+  size_t low = 0;
+  size_t high = count;
+  while (low < high) {
+    size_t mid = low + (high - low) / 2u;
+    int comparison = strcmp(entries[mid].title_id, title_id);
+    if (comparison < 0)
+      low = mid + 1u;
+    else
+      high = mid;
+  }
+  return low < count && strcmp(entries[low].title_id, title_id) == 0
+             ? &entries[low]
+             : NULL;
 }

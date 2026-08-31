@@ -14,6 +14,7 @@
 #define LOG_DIR "/data/shadowmount"
 #define LOG_FILE "/data/shadowmount/debug.log"
 #define LOG_FILE_PREV "/data/shadowmount/debug.log.1"
+#define WEB_INDEX_FILE "/data/shadowmount/index.html"
 #define CONFIG_FILE "/data/shadowmount/config.ini"
 #define AUTOTUNE_FILE "/data/shadowmount/autotune.ini"
 #define MANUAL_LIST_FILE "/data/shadowmount/manual.lst"

@@ -53,6 +53,7 @@ typedef struct {
   shellcore_mount_owner_t outgoing;
   bool prepare_in_progress;
   bool launch_pending;
+  bool external_mutation_in_progress;
   char releasing_title_id[MAX_TITLE_ID];
 } shellcore_service_state_t;
 
@@ -98,6 +99,7 @@ static int claim_prepared_title(const char *title_id, bool launch_request,
     *claimed_out = false;
   pthread_mutex_lock(&g_service.mutex);
   if (g_service.prepare_in_progress ||
+      g_service.external_mutation_in_progress ||
       strcmp(g_service.releasing_title_id, title_id) == 0) {
     pthread_mutex_unlock(&g_service.mutex);
     return EBUSY;
@@ -266,7 +268,8 @@ static bool find_required_image_layer(const char *root,
 
 static bool repair_image_chain_for_runtime_source(
     const char *title_id, const char *runtime_source, const char *eboot_path,
-    char image_chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH], size_t *image_count) {
+    char image_chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH], size_t *image_count,
+    const bool *mount_read_only_override) {
   while (*image_count < MAX_IMAGE_CHAIN_DEPTH) {
     char mounted_root[MAX_PATH];
     get_image_mount_point_for_source(image_chain[*image_count - 1u],
@@ -280,7 +283,8 @@ static bool repair_image_chain_for_runtime_source(
     const char *name = strrchr(image_path, '/');
     name = name ? name + 1 : image_path;
     bool unstable = false;
-    if (!maybe_mount_image_file(image_path, name, &unstable))
+    if (!maybe_mount_image_file_with_mode(image_path, name, &unstable,
+                                          mount_read_only_override))
       return false;
 
     (void)strlcpy(image_chain[*image_count], image_path, MAX_PATH);
@@ -301,13 +305,14 @@ static bool repair_image_chain_for_runtime_source(
 }
 
 static bool prepare_image_source(const char *title_id,
-                                 const char *runtime_source) {
+                                 const char *runtime_source,
+                                 const bool *mount_read_only_override) {
   char eboot_path[MAX_PATH];
   int written = snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin",
                          runtime_source);
   if (written < 0 || (size_t)written >= sizeof(eboot_path))
     return false;
-  if (path_exists(eboot_path))
+  if (path_exists(eboot_path) && !mount_read_only_override)
     return true;
   if (!is_under_image_mount_base(runtime_source))
     return false;
@@ -324,7 +329,8 @@ static bool prepare_image_source(const char *title_id,
     const char *name = strrchr(image_chain[i], '/');
     name = name ? name + 1 : image_chain[i];
     bool unstable = false;
-    if (!maybe_mount_image_file(image_chain[i], name, &unstable)) {
+    if (!maybe_mount_image_file_with_mode(image_chain[i], name, &unstable,
+                                          mount_read_only_override)) {
       log_debug("  [SHELLCORE] image chain mount failed: title=%s layer=%zu "
                 "path=%s",
                 title_id, i, image_chain[i]);
@@ -335,7 +341,8 @@ static bool prepare_image_source(const char *title_id,
     return true;
   if (repair_image_chain_for_runtime_source(title_id, runtime_source,
                                             eboot_path, image_chain,
-                                            &image_count))
+                                            &image_count,
+                                            mount_read_only_override))
     return true;
   log_debug("  [SHELLCORE] image chain ready but eboot missing: %s",
             eboot_path);
@@ -396,8 +403,10 @@ static bool wait_for_resumed_runtime_source(const char *title_id,
 }
 
 static bool prepare_title_runtime(const char *title_id,
-                                  const char *source_path) {
-  if (!prepare_image_source(title_id, source_path))
+                                  const char *source_path,
+                                  const bool *mount_read_only_override) {
+  if (!prepare_image_source(title_id, source_path,
+                            mount_read_only_override))
     return false;
   sm_fakelib_prepare_title_cache(title_id, source_path);
   runtime_mount_state_lock();
@@ -417,7 +426,8 @@ static bool release_title_runtime(const char *title_id,
 
 static int mount_managed_title_runtime(const char *title_id,
                                        bool allow_unmanaged,
-                                       bool launch_request) {
+                                       bool launch_request,
+                                       const bool *mount_read_only_override) {
   if (!is_supported_game_title_id(title_id))
     return EINVAL;
   if (runtime_sleep_mode_active())
@@ -426,6 +436,8 @@ static int mount_managed_title_runtime(const char *title_id,
   char source_path[MAX_PATH];
   if (!read_mount_link(title_id, source_path, sizeof(source_path)))
     return allow_unmanaged ? 0 : ENOENT;
+  if (mount_read_only_override && !is_under_image_mount_base(source_path))
+    return ENOTSUP;
   if (!wait_for_resumed_runtime_source(title_id, source_path))
     return EIO;
 
@@ -434,7 +446,8 @@ static int mount_managed_title_runtime(const char *title_id,
       claim_prepared_title(title_id, launch_request, &claimed);
   if (claim_status != 0)
     return claim_status;
-  if (!claimed && is_data_mounted(title_id)) {
+  if (!claimed && is_data_mounted(title_id) &&
+      !mount_read_only_override) {
     if (launch_request)
       sm_fakelib_prepare_title_cache(title_id, source_path);
     finish_prepared_title(title_id, false);
@@ -442,7 +455,8 @@ static int mount_managed_title_runtime(const char *title_id,
   }
 
   errno = 0;
-  if (prepare_title_runtime(title_id, source_path)) {
+  if (prepare_title_runtime(title_id, source_path,
+                            mount_read_only_override)) {
     finish_prepared_title(title_id, false);
     return 0;
   }
@@ -451,15 +465,19 @@ static int mount_managed_title_runtime(const char *title_id,
     rollback_prepared_title(title_id);
   else
     finish_prepared_title(title_id, true);
-  return prepare_errno == EBUSY ? EBUSY : EIO;
+  if (prepare_errno == EBUSY ||
+      (mount_read_only_override && prepare_errno == ENOTSUP)) {
+    return prepare_errno;
+  }
+  return EIO;
 }
 
 bool sm_shellcore_ensure_title_runtime(const char *title_id) {
-  return mount_managed_title_runtime(title_id, true, true) == 0;
+  return mount_managed_title_runtime(title_id, true, true, NULL) == 0;
 }
 
 static int handle_launch_request(const char *title_id) {
-  int status = mount_managed_title_runtime(title_id, false, true);
+  int status = mount_managed_title_runtime(title_id, false, true, NULL);
   if (status != 0) {
     // The launch hook also observes stock games and ShellCore system apps.
     // ENOENT/EINVAL mean "not managed here", not a runtime mount failure.
@@ -473,10 +491,12 @@ static int handle_launch_request(const char *title_id) {
   return 0;
 }
 
-int sm_shellcore_mount_title_runtime(const char *title_id) {
+int sm_shellcore_mount_title_runtime(
+    const char *title_id, const bool *mount_read_only_override) {
   if (sm_game_lifecycle_has_active_game())
     return EBUSY;
-  return mount_managed_title_runtime(title_id, false, false);
+  return mount_managed_title_runtime(title_id, false, false,
+                                     mount_read_only_override);
 }
 
 int sm_shellcore_unmount_title_runtime(const char *title_id) {
@@ -740,6 +760,23 @@ bool sm_shellcore_service_has_prepared_mount(void) {
   return prepared;
 }
 
+bool sm_shellcore_try_begin_external_mutation(void) {
+  pthread_mutex_lock(&g_service.mutex);
+  bool available = !g_service.external_mutation_in_progress &&
+                   !g_service.prepare_in_progress &&
+                   g_service.releasing_title_id[0] == '\0';
+  if (available)
+    g_service.external_mutation_in_progress = true;
+  pthread_mutex_unlock(&g_service.mutex);
+  return available;
+}
+
+void sm_shellcore_end_external_mutation(void) {
+  pthread_mutex_lock(&g_service.mutex);
+  g_service.external_mutation_in_progress = false;
+  pthread_mutex_unlock(&g_service.mutex);
+}
+
 bool sm_shellcore_service_title_is_prepared(const char *title_id) {
   if (!title_id || title_id[0] == '\0')
     return false;
@@ -968,6 +1005,7 @@ bool sm_shellcore_service_start(void) {
   clear_mount_owner(&g_service.outgoing);
   g_service.prepare_in_progress = false;
   g_service.launch_pending = false;
+  g_service.external_mutation_in_progress = false;
   g_service.releasing_title_id[0] = '\0';
   int rc = pthread_create(&g_service.thread, NULL, service_thread_main, NULL);
   if (rc != 0) {
@@ -1006,6 +1044,7 @@ void sm_shellcore_service_stop(void) {
   clear_mount_owner(&g_service.outgoing);
   g_service.prepare_in_progress = false;
   g_service.launch_pending = false;
+  g_service.external_mutation_in_progress = false;
   g_service.releasing_title_id[0] = '\0';
   pthread_mutex_unlock(&g_service.mutex);
   (void)unlink(SM_SHELLCORE_SOCKET_PATH);
