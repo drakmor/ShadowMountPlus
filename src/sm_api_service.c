@@ -15,6 +15,7 @@
 #include "sm_game_cache.h"
 #include "sm_game_lifecycle.h"
 #include "sm_gameinfo.h"
+#include "sm_icon_thumb.h"
 #include "sm_image.h"
 #include "sm_image_cache.h"
 #include "sm_image_index.h"
@@ -38,9 +39,9 @@
 #define SM_API_RETRY_INITIAL_MS 250u
 #define SM_API_RETRY_MAX_MS 5000u
 #define SM_API_ROUTE_SIZE 128u
-#define SM_API_WORKER_COUNT 4u
-#define SM_API_CONNECTION_LIMIT 16u
-#define SM_API_CONNECTION_TIMEOUT_SECONDS 5u
+#define SM_API_WORKER_COUNT 8u
+#define SM_API_CONNECTION_LIMIT 32u
+#define SM_API_CONNECTION_TIMEOUT_SECONDS 15u
 #define SM_API_LISTEN_BACKLOG 32u
 #define SM_API_CONNECTION_MEMORY_LIMIT 16384u
 #define SM_API_STORAGE_STOP_LOG_SECONDS 5
@@ -810,9 +811,67 @@ static bool api_listener_stop_requested(void *ctx) {
   return stopping;
 }
 
+static bool copy_regular_file_path(const char *path, char out[MAX_PATH]) {
+  struct stat st;
+  if (!path || path[0] == '\0' || stat(path, &st) != 0 ||
+      !S_ISREG(st.st_mode) || st.st_size <= 0) {
+    return false;
+  }
+  (void)strlcpy(out, path, MAX_PATH);
+  return true;
+}
+
+static bool resolve_game_icon_path(const char *title_id,
+                                   const char *recorded_path,
+                                   char out[MAX_PATH]) {
+  char appmeta_root[MAX_PATH];
+  char app_sce_sys_root[MAX_PATH];
+  char candidate[MAX_PATH];
+  int appmeta_written = snprintf(appmeta_root, sizeof(appmeta_root), "%s/%s",
+                                 APPMETA_BASE, title_id);
+  int app_written = snprintf(app_sce_sys_root, sizeof(app_sce_sys_root),
+                             "%s/%s/sce_sys", APP_BASE, title_id);
+  if (appmeta_written < 0 ||
+      (size_t)appmeta_written >= sizeof(appmeta_root) || app_written < 0 ||
+      (size_t)app_written >= sizeof(app_sce_sys_root)) {
+    return false;
+  }
+
+  int written = snprintf(candidate, sizeof(candidate), "%s/%s/icon0.png",
+                         APP_BASE, title_id);
+  if (written > 0 && (size_t)written < sizeof(candidate) &&
+      copy_regular_file_path(candidate, out)) {
+    return true;
+  }
+  written = snprintf(candidate, sizeof(candidate), "%s/icon0.png",
+                     appmeta_root);
+  if (written > 0 && (size_t)written < sizeof(candidate) &&
+      copy_regular_file_path(candidate, out)) {
+    return true;
+  }
+
+  if (recorded_path && recorded_path[0] != '\0') {
+    (void)strlcpy(candidate, recorded_path, sizeof(candidate));
+    char *query = strchr(candidate, '?');
+    if (query)
+      *query = '\0';
+    if ((path_matches_root_or_child(candidate, appmeta_root) ||
+         path_matches_root_or_child(candidate, app_sce_sys_root)) &&
+        copy_regular_file_path(candidate, out)) {
+      return true;
+    }
+  }
+
+  written = snprintf(candidate, sizeof(candidate), "%s/icon0.png",
+                     app_sce_sys_root);
+  return written > 0 && (size_t)written < sizeof(candidate) &&
+         copy_regular_file_path(candidate, out);
+}
+
 static struct json_object *game_to_json(
     const sm_game_cache_snapshot_entry_t *source,
-    const sm_app_db_game_info_t *metadata, bool include_size) {
+    const sm_app_db_game_info_t *metadata, bool include_size,
+    bool thumbnail_icon) {
   struct json_object *item = json_object_new_object();
   if (!item)
     return NULL;
@@ -836,10 +895,19 @@ static struct json_object *game_to_json(
   const char *last_access_time = metadata ? metadata->last_access_time : "";
   const char *install_time = metadata ? metadata->install_time : "";
   char icon_url[SM_API_ROUTE_SIZE + MAX_TITLE_ID + 32u];
+  char icon_path[MAX_PATH];
   icon_url[0] = '\0';
-  if (metadata && metadata->icon_path[0] != '\0') {
-    (void)snprintf(icon_url, sizeof(icon_url), "%s?title_id=%s",
-                   SM_API_ROUTE_GAME_ICON, source->title_id);
+  if (resolve_game_icon_path(source->title_id,
+                             metadata ? metadata->icon_path : NULL,
+                             icon_path)) {
+    struct stat icon_st;
+    if (stat(icon_path, &icon_st) == 0) {
+      const char *size_arg = thumbnail_icon ? "&size=thumb" : "";
+      (void)snprintf(
+          icon_url, sizeof(icon_url), "%s?title_id=%s%s&v=%lld-%lld",
+          SM_API_ROUTE_GAME_ICON, source->title_id, size_arg,
+          (long long)icon_st.st_mtime, (long long)icon_st.st_size);
+    }
   }
 
   if (!add_json_string(item, "path", source_info.physical_path) ||
@@ -992,7 +1060,7 @@ static void handle_games(struct MHD_Connection *fd,
     const sm_app_db_game_info_t *game_metadata = app_db_find_game_info(
         metadata, metadata_count, snapshot[i].title_id);
     struct json_object *game =
-        game_to_json(&snapshot[i], game_metadata, include_size);
+        game_to_json(&snapshot[i], game_metadata, include_size, true);
     if (!game || json_object_array_add(games, game) != 0) {
       if (game)
         json_object_put(game);
@@ -1082,7 +1150,7 @@ static void handle_game_info(struct MHD_Connection *connection,
   const sm_app_db_game_info_t *game_metadata =
       app_db_find_game_info(metadata, metadata_count, title_id);
   struct json_object *response =
-      game_to_json(&game_entry, game_metadata, true);
+      game_to_json(&game_entry, game_metadata, true, false);
   free(metadata);
   if (!response) {
     send_out_of_memory_response(connection);
@@ -1105,48 +1173,34 @@ static bool handle_game_icon(struct MHD_Connection *connection) {
         connection, 400, EINVAL,
         "title_id query parameter must be a valid PS4 or PS5 title ID");
   }
-
-  sm_app_db_game_info_t *metadata = NULL;
-  size_t metadata_count = 0;
-  if (!app_db_game_info_snapshot(&metadata, &metadata_count)) {
-    int status = errno != 0 ? errno : EIO;
-    return send_error_response(connection, operation_http_status(status),
-                               status, strerror(status));
-  }
-  const sm_app_db_game_info_t *game_metadata =
-      app_db_find_game_info(metadata, metadata_count, title_id);
-  if (!game_metadata || game_metadata->icon_path[0] == '\0') {
-    free(metadata);
-    return send_error_response(connection, 404, ENOENT,
-                               "game icon is not available");
+  const char *size = MHD_lookup_connection_value(
+      connection, MHD_GET_ARGUMENT_KIND, "size");
+  bool want_thumbnail = size && size[0] != '\0';
+  if (want_thumbnail && strcmp(size, "thumb") != 0) {
+    return send_error_response(connection, 400, EINVAL,
+                               "size query parameter must be thumb");
   }
 
   char icon_path[MAX_PATH];
-  (void)strlcpy(icon_path, game_metadata->icon_path, sizeof(icon_path));
-  free(metadata);
-  char *query = strchr(icon_path, '?');
-  if (query)
-    *query = '\0';
-
-  char appmeta_root[MAX_PATH];
-  char app_sce_sys_root[MAX_PATH];
-  int appmeta_written = snprintf(appmeta_root, sizeof(appmeta_root), "%s/%s",
-                                 APPMETA_BASE, title_id);
-  int app_written = snprintf(app_sce_sys_root, sizeof(app_sce_sys_root),
-                             "%s/%s/sce_sys", APP_BASE, title_id);
-  if (appmeta_written < 0 ||
-      (size_t)appmeta_written >= sizeof(appmeta_root) || app_written < 0 ||
-      (size_t)app_written >= sizeof(app_sce_sys_root) ||
-      (!path_matches_root_or_child(icon_path, appmeta_root) &&
-       !path_matches_root_or_child(icon_path, app_sce_sys_root))) {
-    return send_error_response(connection, 404, ENOENT,
-                               "game icon path is not valid");
-  }
-
-  struct stat st;
-  if (stat(icon_path, &st) != 0 || !S_ISREG(st.st_mode)) {
-    return send_error_response(connection, 404, ENOENT,
-                               "game icon is not available");
+  if (!resolve_game_icon_path(title_id, NULL, icon_path)) {
+    sm_app_db_game_info_t *metadata = NULL;
+    size_t metadata_count = 0;
+    if (!app_db_game_info_snapshot(&metadata, &metadata_count)) {
+      int status = errno != 0 ? errno : EIO;
+      return send_error_response(connection, operation_http_status(status),
+                                 status, strerror(status));
+    }
+    const sm_app_db_game_info_t *game_metadata =
+        app_db_find_game_info(metadata, metadata_count, title_id);
+    char recorded_path[MAX_PATH];
+    (void)strlcpy(recorded_path,
+                  game_metadata ? game_metadata->icon_path : "",
+                  sizeof(recorded_path));
+    free(metadata);
+    if (!resolve_game_icon_path(title_id, recorded_path, icon_path)) {
+      return send_error_response(connection, 404, ENOENT,
+                                 "game icon is not available");
+    }
   }
   int fd = open(icon_path, O_RDONLY);
   if (fd < 0) {
@@ -1154,8 +1208,29 @@ static bool handle_game_icon(struct MHD_Connection *connection) {
     return send_error_response(connection, operation_http_status(status),
                                status, strerror(status));
   }
+  struct stat st;
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
+    (void)close(fd);
+    return send_error_response(connection, 404, ENOENT,
+                               "game icon is not available");
+  }
+  if (want_thumbnail) {
+    char thumbnail_path[MAX_PATH];
+    if (sm_icon_thumbnail_path(title_id, icon_path, &st, thumbnail_path)) {
+      int thumbnail_fd = open(thumbnail_path, O_RDONLY);
+      struct stat thumbnail_st;
+      if (thumbnail_fd >= 0 && fstat(thumbnail_fd, &thumbnail_st) == 0 &&
+          S_ISREG(thumbnail_st.st_mode) && thumbnail_st.st_size > 0) {
+        (void)close(fd);
+        fd = thumbnail_fd;
+        st = thumbnail_st;
+      } else if (thumbnail_fd >= 0) {
+        (void)close(thumbnail_fd);
+      }
+    }
+  }
   return send_file_response(connection, fd, (uint64_t)st.st_size, "image/png",
-                            "private, max-age=300");
+                            "public, max-age=86400, immutable");
 }
 
 static bool handle_index_page(struct MHD_Connection *connection) {

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -108,7 +108,7 @@
 
     .toolbar {
       display: grid;
-      grid-template-columns: minmax(220px, 1fr) 170px auto auto auto;
+      grid-template-columns: minmax(220px, 1fr) 150px 110px auto auto auto;
       gap: 10px;
       padding: 13px;
       border-radius: var(--radius);
@@ -209,8 +209,11 @@
     .cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .cover-fallback { display: grid; place-items: center; width: 100%; height: 100%; color: var(--blue); font-weight: 800; }
     .game-main { min-width: 0; }
+    .game-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; }
+    .game-identity { min-width: 0; }
     .game-title { overflow: hidden; font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
     .game-id { color: var(--muted); font: 12px/1.5 ui-monospace, "SFMono-Regular", Consolas, monospace; }
+    .game-card-size { color: var(--blue); font-size: 14px; font-weight: 750; white-space: nowrap; }
 
     .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
     .badge { border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 2px 7px; font-size: 11px; text-transform: uppercase; }
@@ -218,7 +221,7 @@
     .badge.image { border-color: rgba(85, 167, 255, .38); color: #8cc4ff; }
 
     .game-path { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-    .game-actions { display: flex; gap: 7px; margin-top: 10px; }
+    .game-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 
     .panel { padding: 16px; border-radius: var(--radius); box-shadow: none; }
     .sidebar { display: grid; gap: 14px; position: sticky; top: 14px; }
@@ -347,99 +350,103 @@
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">S</div>
         <div>
-          <h1>ShadowMount Library</h1>
-          <p class="subtle" id="version">Подключение к API…</p>
+          <h1 data-i18n="pageTitle">ShadowMount Library</h1>
+          <p class="subtle" id="version" data-i18n="connecting">Connecting to API…</p>
         </div>
       </div>
       <div class="connection" id="connection" role="status">
         <span class="connection-dot"></span>
-        <span id="connectionText">Проверка</span>
+        <span id="connectionText" data-i18n="checking">Checking</span>
       </div>
     </header>
 
-    <section class="toolbar" aria-label="Управление библиотекой">
-      <input id="search" type="search" autocomplete="off" placeholder="Название, Title ID, Content ID или путь">
-      <select id="filter" aria-label="Фильтр библиотеки">
-        <option value="all">Все игры</option>
-        <option value="folder">Папки</option>
-        <option value="image">Образы</option>
+    <section class="toolbar" aria-label="Library controls" data-i18n-aria-label="libraryControls">
+      <input id="search" type="search" autocomplete="off" placeholder="Name, Title ID, Content ID, or path" data-i18n-placeholder="searchPlaceholder">
+      <select id="filter" aria-label="Library filter" data-i18n-aria-label="libraryFilter">
+        <option value="all" data-i18n="allGames">All games</option>
+        <option value="folder" data-i18n="folders">Folders</option>
+        <option value="image" data-i18n="images">Images</option>
         <option value="ps4">PS4</option>
         <option value="ps5">PS5</option>
       </select>
-      <label class="check"><input id="includeSize" type="checkbox"> Считать размер</label>
-      <button class="btn" id="refreshBtn" type="button">Обновить</button>
-      <button class="btn primary" id="scanBtn" type="button">Сканировать</button>
+      <select id="language" aria-label="Language" data-i18n-aria-label="language">
+        <option value="en">English</option>
+        <option value="ru">Русский</option>
+      </select>
+      <label class="check"><input id="includeSize" type="checkbox"> <span data-i18n="calculateSize">Calculate size</span></label>
+      <button class="btn" id="refreshBtn" type="button" data-i18n="refresh">Refresh</button>
+      <button class="btn primary" id="scanBtn" type="button" data-i18n="scan">Scan</button>
     </section>
 
-    <section class="stats" aria-label="Сводка библиотеки">
-      <div class="stat"><span class="subtle">Всего игр</span><strong class="stat-value" id="totalGames">—</strong></div>
-      <div class="stat"><span class="subtle">Образы</span><strong class="stat-value" id="imageGames">—</strong></div>
-      <div class="stat"><span class="subtle">Папки</span><strong class="stat-value" id="folderGames">—</strong></div>
-      <div class="stat"><span class="subtle">Смонтировано</span><strong class="stat-value" id="mountedGames">—</strong></div>
+    <section class="stats" aria-label="Library summary" data-i18n-aria-label="librarySummary">
+      <div class="stat"><span class="subtle" data-i18n="totalGames">Total games</span><strong class="stat-value" id="totalGames">—</strong></div>
+      <div class="stat"><span class="subtle" data-i18n="images">Images</span><strong class="stat-value" id="imageGames">—</strong></div>
+      <div class="stat"><span class="subtle" data-i18n="folders">Folders</span><strong class="stat-value" id="folderGames">—</strong></div>
+      <div class="stat"><span class="subtle" data-i18n="mounted">Mounted</span><strong class="stat-value" id="mountedGames">—</strong></div>
     </section>
 
     <div class="layout">
       <section aria-labelledby="gamesHeading">
         <div class="section-head">
-          <h2 id="gamesHeading">Библиотека</h2>
+          <h2 id="gamesHeading" data-i18n="library">Library</h2>
           <span class="subtle" id="visibleCount"></span>
         </div>
         <div class="games" id="games" aria-live="polite">
-          <div class="empty">Загрузка библиотеки…</div>
+          <div class="empty" data-i18n="loadingLibrary">Loading library…</div>
         </div>
       </section>
 
       <aside class="sidebar">
         <section class="panel" aria-labelledby="storageHeading">
-          <h2 id="storageHeading">Хранилища</h2>
-          <p class="subtle">Свободное место в доступных точках монтирования</p>
-          <div class="storage-list" id="storageList" aria-live="polite"><span class="subtle">Загрузка…</span></div>
+          <h2 id="storageHeading" data-i18n="storage">Storage</h2>
+          <p class="subtle" data-i18n="storageDescription">Free space at available mount points</p>
+          <div class="storage-list" id="storageList" aria-live="polite"><span class="subtle" data-i18n="loading">Loading…</span></div>
         </section>
 
         <section class="panel" aria-labelledby="transferHeading">
           <div class="storage-head">
-            <h2 id="transferHeading">Операции с данными</h2>
-            <span class="badge" id="transferState">Проверка</span>
+            <h2 id="transferHeading" data-i18n="dataOperations">Data operations</h2>
+            <span class="badge" id="transferState" data-i18n="checking">Checking</span>
           </div>
-          <p class="subtle" id="transferIdle">Получение статуса операции…</p>
+          <p class="subtle" id="transferIdle" data-i18n="gettingOperationStatus">Getting operation status…</p>
           <div class="transfer-details" id="transferDetails" hidden>
             <strong id="transferSummary"></strong>
             <div class="transfer-route" id="transferRoute"></div>
-            <div class="storage-meter transfer-meter" id="transferMeter" role="progressbar" aria-label="Готовность операции" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="storage-meter transfer-meter" id="transferMeter" role="progressbar" aria-label="Operation progress" data-i18n-aria-label="operationProgress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
               <div class="storage-fill" id="transferFill"></div>
             </div>
             <div class="transfer-stats">
-              <div class="transfer-stat"><span class="subtle">Объём</span><strong id="transferBytes">—</strong></div>
-              <div class="transfer-stat"><span class="subtle">Файлы</span><strong id="transferFiles">—</strong></div>
-              <div class="transfer-stat"><span class="subtle">Скорость</span><strong id="transferSpeed">—</strong></div>
-              <div class="transfer-stat"><span class="subtle">Время</span><strong id="transferElapsed">—</strong></div>
+              <div class="transfer-stat"><span class="subtle" data-i18n="size">Size</span><strong id="transferBytes">—</strong></div>
+              <div class="transfer-stat"><span class="subtle" data-i18n="files">Files</span><strong id="transferFiles">—</strong></div>
+              <div class="transfer-stat"><span class="subtle" data-i18n="speed">Speed</span><strong id="transferSpeed">—</strong></div>
+              <div class="transfer-stat"><span class="subtle" data-i18n="time">Time</span><strong id="transferElapsed">—</strong></div>
             </div>
             <div class="transfer-actions">
               <strong id="transferPercent">0%</strong>
-              <button class="btn small danger" id="cancelTransfer" type="button">Отменить</button>
+              <button class="btn small danger" id="cancelTransfer" type="button" data-i18n="cancel">Cancel</button>
             </div>
           </div>
         </section>
 
         <section class="panel" aria-labelledby="manualHeading">
           <h2 id="manualHeading">manual.lst</h2>
-          <p class="subtle">Дополнительные источники для сканирования</p>
+          <p class="subtle" data-i18n="manualDescription">Additional scan sources</p>
           <form class="manual-form" id="manualForm">
             <input id="manualPath" required placeholder="/mnt/usb0/games">
-            <button class="btn small" type="submit">Добавить</button>
+            <button class="btn small" type="submit" data-i18n="add">Add</button>
           </form>
-          <div class="manual-list" id="manualList"><span class="subtle">Загрузка…</span></div>
+          <div class="manual-list" id="manualList"><span class="subtle" data-i18n="loading">Loading…</span></div>
         </section>
 
         <section class="panel" aria-labelledby="scanHeading">
-          <h2 id="scanHeading">Параметры сканирования</h2>
-          <label class="check"><input id="resetAttempts" type="checkbox"> Сбросить счётчики попыток</label>
-          <p class="subtle">Опция применяется только к следующему принудительному сканированию.</p>
+          <h2 id="scanHeading" data-i18n="scanOptions">Scan options</h2>
+          <label class="check"><input id="resetAttempts" type="checkbox"> <span data-i18n="resetAttempts">Reset attempt counters</span></label>
+          <p class="subtle" data-i18n="resetAttemptsDescription">This option applies only to the next forced scan.</p>
         </section>
 
         <section class="panel" aria-labelledby="activityHeading">
-          <h2 id="activityHeading">Последние операции</h2>
-          <div class="activity-list" id="activity"><span class="subtle">Операций пока нет</span></div>
+          <h2 id="activityHeading" data-i18n="recentOperations">Recent operations</h2>
+          <div class="activity-list" id="activity"><span class="subtle" data-i18n="noOperations">No operations yet</span></div>
         </section>
       </aside>
     </div>
@@ -449,10 +456,10 @@
     <div class="modal-card">
       <div class="modal-head">
         <div>
-          <h2 id="modalTitle">Информация об игре</h2>
+          <h2 id="modalTitle" data-i18n="gameInformation">Game information</h2>
           <p class="subtle" id="modalSubtitle"></p>
         </div>
-        <button class="btn close" id="closeModal" type="button" aria-label="Закрыть">&times;</button>
+        <button class="btn close" id="closeModal" type="button" aria-label="Close" data-i18n-aria-label="close">&times;</button>
       </div>
       <div class="details" id="details"></div>
       <div class="modal-actions" id="modalActions"></div>
@@ -473,9 +480,281 @@
         busy: false,
         storageJob: null,
         storagePollTimer: 0,
-        reportedStorageJob: ""
+        reportedStorageJob: "",
+        apiVersion: null,
+        connectionStatus: "",
+        connectionKey: "checking"
       };
       const $ = (id) => document.getElementById(id);
+
+      const translations = {
+        en: {
+          pageTitle: "ShadowMount Library",
+          connecting: "Connecting to API…",
+          checking: "Checking",
+          libraryControls: "Library controls",
+          searchPlaceholder: "Name, Title ID, Content ID, or path",
+          libraryFilter: "Library filter",
+          allGames: "All games",
+          folders: "Folders",
+          images: "Images",
+          language: "Language",
+          calculateSize: "Calculate size",
+          refresh: "Refresh",
+          scan: "Scan",
+          librarySummary: "Library summary",
+          totalGames: "Total games",
+          mounted: "Mounted",
+          library: "Library",
+          loadingLibrary: "Loading library…",
+          storage: "Storage",
+          storageDescription: "Free space at available mount points",
+          loading: "Loading…",
+          dataOperations: "Data operations",
+          gettingOperationStatus: "Getting operation status…",
+          operationProgress: "Operation progress",
+          size: "Size",
+          files: "Files",
+          speed: "Speed",
+          perSecond: "/s",
+          time: "Time",
+          cancel: "Cancel",
+          manualDescription: "Additional scan sources",
+          add: "Add",
+          scanOptions: "Scan options",
+          resetAttempts: "Reset attempt counters",
+          resetAttemptsDescription: "This option applies only to the next forced scan.",
+          recentOperations: "Recent operations",
+          noOperations: "No operations yet",
+          gameInformation: "Game information",
+          close: "Close",
+          coverAlt: "Cover for {title}",
+          unknown: "unknown",
+          folder: "folder",
+          image: "image",
+          sourceUnavailable: "Source unavailable",
+          details: "Details",
+          connect: "Mount",
+          disconnect: "Unmount",
+          nothingFound: "Nothing found",
+          libraryEmpty: "The library is empty",
+          shown: "Shown: {count}",
+          jobIdle: "No job",
+          jobPreparing: "Preparing",
+          jobMeasuring: "Measuring",
+          jobDeleting: "Deleting",
+          jobFinalizing: "Finalizing",
+          jobCompleted: "Completed",
+          jobFailed: "Failed",
+          jobCancelled: "Cancelled",
+          operationCopy: "Copying",
+          operationMove: "Moving",
+          operationDelete: "Deleting",
+          noActiveOperations: "No active operations",
+          calculating: "Calculating…",
+          cancelling: "Cancelling…",
+          operationCompleted: "{operation} {title} completed",
+          operationCompletedShort: "{operation} completed",
+          operationCancelled: "{operation} {title} cancelled",
+          operationCancelledShort: "{operation} cancelled",
+          statusError: "error {status}",
+          operationError: "{operation} {title}: {error}",
+          unavailable: "Unavailable",
+          cancelRequested: "Cancellation requested for job {id}",
+          storageNotFound: "No storage found",
+          freeSpace: "Free {size}",
+          totalSpace: "of {size}",
+          storageUsed: "Used space at {path}",
+          connected: "PS5 connected",
+          disconnected: "No connection",
+          apiError: "API error: {error}",
+          listEmpty: "The list is empty",
+          remove: "Remove",
+          manualAdded: "Source added to manual.lst",
+          manualExists: "Source is already in manual.lst",
+          removeManualConfirm: "Remove this source from manual.lst?\n\n{path}",
+          manualRemoved: "Source removed from manual.lst",
+          scanQueuedReset: "Scan queued with attempt counters reset",
+          scanQueued: "Scan queued",
+          scanStarted: "Scan started",
+          mountedTitle: "Mounted {title}{mode}",
+          unmountedTitle: "Unmounted {title}",
+          source: "Source",
+          runtimePath: "Runtime path",
+          sizeError: "Error {status}",
+          installed: "Installed",
+          lastLaunch: "Last launch",
+          mountReadOnly: "Mount R/O",
+          mountReadWrite: "Mount R/W",
+          copy: "Copy",
+          move: "Move",
+          deleteSource: "Delete source",
+          storageBusyHint: "Wait for the current storage operation to finish",
+          uninstall: "Uninstall",
+          loadingSource: "Calculating source size…",
+          storageBusy: "A storage operation is already running",
+          copyDestination: "Destination folder for copying:",
+          moveDestination: "Destination folder for moving:",
+          jobStarted: "{operation} {title} started as job {id}",
+          operationStarted: "Operation started",
+          uninstallConfirm: "Request uninstall of {game}?\n\nThe source image or folder will not be deleted.",
+          uninstallAccepted: "Uninstall request for {title} accepted",
+          deleteConfirm: "Permanently delete the physical source for {game}?\n\nThis cannot be undone."
+        },
+        ru: {
+          pageTitle: "Библиотека ShadowMount",
+          connecting: "Подключение к API…",
+          checking: "Проверка",
+          libraryControls: "Управление библиотекой",
+          searchPlaceholder: "Название, Title ID, Content ID или путь",
+          libraryFilter: "Фильтр библиотеки",
+          allGames: "Все игры",
+          folders: "Папки",
+          images: "Образы",
+          language: "Язык",
+          calculateSize: "Подсчитать размер",
+          refresh: "Обновить",
+          scan: "Сканировать",
+          librarySummary: "Сводка библиотеки",
+          totalGames: "Всего игр",
+          mounted: "Смонтировано",
+          library: "Библиотека",
+          loadingLibrary: "Загрузка библиотеки…",
+          storage: "Хранилища",
+          storageDescription: "Свободное место в доступных точках монтирования",
+          loading: "Загрузка…",
+          dataOperations: "Операции с данными",
+          gettingOperationStatus: "Получение статуса операции…",
+          operationProgress: "Прогресс операции",
+          size: "Размер",
+          files: "Файлы",
+          speed: "Скорость",
+          perSecond: "/с",
+          time: "Время",
+          cancel: "Отменить",
+          manualDescription: "Дополнительные источники сканирования",
+          add: "Добавить",
+          scanOptions: "Параметры сканирования",
+          resetAttempts: "Сбросить счётчики попыток",
+          resetAttemptsDescription: "Параметр применяется только к следующему принудительному сканированию.",
+          recentOperations: "Последние операции",
+          noOperations: "Операций пока нет",
+          gameInformation: "Информация об игре",
+          close: "Закрыть",
+          coverAlt: "Обложка {title}",
+          unknown: "неизвестно",
+          folder: "папка",
+          image: "образ",
+          sourceUnavailable: "Источник недоступен",
+          details: "Подробнее",
+          connect: "Подключить",
+          disconnect: "Отключить",
+          nothingFound: "Ничего не найдено",
+          libraryEmpty: "Библиотека пуста",
+          shown: "Показано: {count}",
+          jobIdle: "Нет задачи",
+          jobPreparing: "Подготовка",
+          jobMeasuring: "Подсчёт",
+          jobDeleting: "Удаление",
+          jobFinalizing: "Завершение",
+          jobCompleted: "Готово",
+          jobFailed: "Ошибка",
+          jobCancelled: "Отменено",
+          operationCopy: "Копирование",
+          operationMove: "Перемещение",
+          operationDelete: "Удаление",
+          noActiveOperations: "Активных операций нет",
+          calculating: "Подсчёт…",
+          cancelling: "Отмена…",
+          operationCompleted: "{operation} {title} завершено",
+          operationCompletedShort: "{operation} завершено",
+          operationCancelled: "{operation} {title} отменено",
+          operationCancelledShort: "{operation} отменено",
+          statusError: "ошибка {status}",
+          operationError: "{operation} {title}: {error}",
+          unavailable: "Недоступно",
+          cancelRequested: "Запрошена отмена задачи {id}",
+          storageNotFound: "Хранилища не найдены",
+          freeSpace: "Свободно {size}",
+          totalSpace: "из {size}",
+          storageUsed: "Заполнено {path}",
+          connected: "PS5 подключена",
+          disconnected: "Нет связи",
+          apiError: "Ошибка API: {error}",
+          listEmpty: "Список пуст",
+          remove: "Удалить",
+          manualAdded: "Источник добавлен в manual.lst",
+          manualExists: "Источник уже есть в manual.lst",
+          removeManualConfirm: "Удалить источник из manual.lst?\n\n{path}",
+          manualRemoved: "Источник удалён из manual.lst",
+          scanQueuedReset: "Сканирование поставлено в очередь со сбросом попыток",
+          scanQueued: "Сканирование поставлено в очередь",
+          scanStarted: "Сканирование запущено",
+          mountedTitle: "Смонтировано {title}{mode}",
+          unmountedTitle: "Размонтировано {title}",
+          source: "Источник",
+          runtimePath: "Runtime path",
+          sizeError: "Ошибка {status}",
+          installed: "Установлена",
+          lastLaunch: "Последний запуск",
+          mountReadOnly: "Подключить R/O",
+          mountReadWrite: "Подключить R/W",
+          copy: "Копировать",
+          move: "Переместить",
+          deleteSource: "Удалить источник",
+          storageBusyHint: "Дождитесь завершения текущей операции с хранилищем",
+          uninstall: "Деинсталлировать",
+          loadingSource: "Подсчёт размера источника…",
+          storageBusy: "Уже выполняется операция с хранилищем",
+          copyDestination: "Папка назначения для копирования:",
+          moveDestination: "Папка назначения для перемещения:",
+          jobStarted: "{operation} {title} запущено, задача {id}",
+          operationStarted: "Операция запущена",
+          uninstallConfirm: "Запросить деинсталляцию {game}?\n\nИсходный образ или папка не удаляются.",
+          uninstallAccepted: "Деинсталляция {title} принята",
+          deleteConfirm: "Удалить физический источник игры {game}?\n\nОперацию нельзя отменить."
+        }
+      };
+      const byteUnits = {
+        en: ["B", "KiB", "MiB", "GiB", "TiB"],
+        ru: ["Б", "КиБ", "МиБ", "ГиБ", "ТиБ"]
+      };
+      const supportedLanguages = Object.keys(translations);
+      let savedLanguage = null;
+      try { savedLanguage = localStorage.getItem("shadowmount.language"); } catch (_) { /* Storage may be disabled. */ }
+      let currentLanguage = supportedLanguages.includes(savedLanguage)
+        ? savedLanguage
+        : String(navigator.language || "en").toLowerCase().startsWith("ru") ? "ru" : "en";
+
+      function t(key, values = {}) {
+        const template = translations[currentLanguage][key] || translations.en[key] || key;
+        return template.replace(/\{(\w+)\}/g, (match, name) =>
+          Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match
+        );
+      }
+
+      function applyLanguage(language, persist = false) {
+        currentLanguage = supportedLanguages.includes(language) ? language : "en";
+        document.documentElement.lang = currentLanguage;
+        document.title = t("pageTitle");
+        $("language").value = currentLanguage;
+        document.querySelectorAll("[data-i18n]").forEach((item) => {
+          item.textContent = t(item.dataset.i18n);
+        });
+        document.querySelectorAll("[data-i18n-placeholder]").forEach((item) => {
+          item.placeholder = t(item.dataset.i18nPlaceholder);
+        });
+        document.querySelectorAll("[data-i18n-aria-label]").forEach((item) => {
+          item.setAttribute("aria-label", t(item.dataset.i18nAriaLabel));
+        });
+        if (state.apiVersion) {
+          $("version").textContent = `ShadowMount ${state.apiVersion.shadowmount_version} · API v${state.apiVersion.api_version}`;
+        }
+        if (state.connectionStatus) setConnection(state.connectionStatus, state.connectionKey);
+        if (persist) {
+          try { localStorage.setItem("shadowmount.language", currentLanguage); } catch (_) { /* Keep the in-memory selection. */ }
+        }
+      }
 
       function node(tag, className, text) {
         const item = document.createElement(tag);
@@ -486,8 +765,8 @@
 
       function formatBytes(value) {
         if (!Number.isFinite(value) || value < 0) return "—";
-        if (value === 0) return "0 Б";
-        const units = ["Б", "КиБ", "МиБ", "ГиБ", "ТиБ"];
+        const units = byteUnits[currentLanguage];
+        if (value === 0) return `0 ${units[0]}`;
         const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
         const precision = index < 2 ? 0 : 1;
         return `${(value / (1024 ** index)).toFixed(precision)} ${units[index]}`;
@@ -523,10 +802,12 @@
         return data;
       }
 
-      function setConnection(status, text) {
+      function setConnection(status, textKey) {
+        state.connectionStatus = status;
+        state.connectionKey = textKey;
         const item = $("connection");
         item.className = `connection ${status}`;
-        $("connectionText").textContent = text;
+        $("connectionText").textContent = t(textKey);
       }
 
       let toastTimer = 0;
@@ -540,7 +821,7 @@
       }
 
       function logActivity(message, kind = "ok") {
-        state.activity.unshift({ message, kind, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
+        state.activity.unshift({ message, kind, time: new Date().toLocaleTimeString(currentLanguage, { hour: "2-digit", minute: "2-digit" }) });
         state.activity = state.activity.slice(0, 8);
         const list = $("activity");
         list.replaceChildren();
@@ -555,7 +836,7 @@
         cover.append(fallback);
         if (game.icon_url) {
           const image = new Image();
-          image.alt = large ? `Обложка ${game.title_name || game.title_id}` : "";
+          image.alt = large ? t("coverAlt", { title: game.title_name || game.title_id }) : "";
           image.addEventListener("load", () => fallback.remove(), { once: true });
           image.addEventListener("error", () => image.remove(), { once: true });
           cover.append(image);
@@ -568,36 +849,53 @@
         return node("span", `badge ${extra}`.trim(), text);
       }
 
+      function gameLabel(game) {
+        const name = game.title_name || game.title_id;
+        return name === game.title_id ? game.title_id : `${name} (${game.title_id})`;
+      }
+
       function gameCard(game) {
         const card = node("article", "game-card");
         card.append(coverFor(game));
         const body = node("div", "game-main");
-        body.append(node("h3", "game-title", game.title_name || game.title_id));
-        body.append(node("div", "game-id", game.title_id));
+        const heading = node("div", "game-heading");
+        const identity = node("div", "game-identity");
+        identity.append(node("h3", "game-title", game.title_name || game.title_id));
+        identity.append(node("div", "game-id", game.title_id));
+        heading.append(identity);
+        if (game.size_bytes !== undefined) {
+          heading.append(node("strong", "game-card-size", formatBytes(game.size_bytes)));
+        }
+        body.append(heading);
         const badges = node("div", "badges");
-        badges.append(badge(game.platform || "unknown"));
-        badges.append(badge(game.image_backed ? (game.image_type || "image") : "folder", game.image_backed ? "image" : ""));
-        if (game.mounted) badges.append(badge("mounted", "live"));
+        badges.append(badge(game.platform || t("unknown")));
+        badges.append(badge(game.image_backed ? (game.image_type || t("image")) : t("folder"), game.image_backed ? "image" : ""));
+        if (game.mounted) badges.append(badge(t("mounted"), "live"));
         body.append(badges);
-        const size = game.size_bytes !== undefined ? ` · ${formatBytes(game.size_bytes)}` : "";
-        body.append(node("div", "game-path", `${game.path || "Источник недоступен"}${size}`));
+        const path = node("div", "game-path", game.path || t("sourceUnavailable"));
+        path.title = game.path || "";
+        body.append(path);
 
         const actions = node("div", "game-actions");
-        const details = node("button", "btn small", "Подробнее");
+        const details = node("button", "btn small", t("details"));
         details.type = "button";
         details.addEventListener("click", () => showDetails(game.title_id));
         actions.append(details);
-        const runtime = node("button", "btn small", game.mounted ? "Отключить" : "Подключить");
-        runtime.type = "button";
-        runtime.addEventListener("click", () => titleRuntime(game, game.mounted ? "unmount" : "mount"));
-        actions.append(runtime);
+        if (game.mounted) {
+          actions.append(actionButton(t("disconnect"), () => titleRuntime(game, "unmount")));
+        } else if (game.image_backed) {
+          actions.append(actionButton(t("mountReadOnly"), () => titleRuntime(game, "mount", "ro")));
+          actions.append(actionButton(t("mountReadWrite"), () => titleRuntime(game, "mount", "rw")));
+        } else {
+          actions.append(actionButton(t("connect"), () => titleRuntime(game, "mount")));
+        }
         body.append(actions);
         card.append(body);
         return card;
       }
 
       function filteredGames() {
-        const query = $("search").value.trim().toLocaleLowerCase();
+        const query = $("search").value.trim().toLocaleLowerCase(currentLanguage);
         const filter = $("filter").value;
         return state.games.filter((game) => {
           const matchesFilter = filter === "all" ||
@@ -607,7 +905,7 @@
           if (!matchesFilter) return false;
           if (!query) return true;
           return [game.title_name, game.title_id, game.content_id, game.path]
-            .some((value) => String(value || "").toLocaleLowerCase().includes(query));
+            .some((value) => String(value || "").toLocaleLowerCase(currentLanguage).includes(query));
         });
       }
 
@@ -616,11 +914,11 @@
         const list = $("games");
         list.replaceChildren();
         if (!games.length) {
-          list.append(node("div", "empty", state.games.length ? "Ничего не найдено" : "Библиотека пуста"));
+          list.append(node("div", "empty", t(state.games.length ? "nothingFound" : "libraryEmpty")));
         } else {
           games.forEach((game) => list.append(gameCard(game)));
         }
-        $("visibleCount").textContent = `Показано: ${games.length}`;
+        $("visibleCount").textContent = t("shown", { count: games.length });
       }
 
       function renderStats() {
@@ -633,32 +931,32 @@
 
       function storageJobStateLabel(job) {
         const labels = {
-          idle: "Нет задачи",
-          preparing: "Подготовка",
-          measuring: "Подсчёт",
+          idle: t("jobIdle"),
+          preparing: t("jobPreparing"),
+          measuring: t("jobMeasuring"),
           transferring: storageOperationLabel(job.operation),
-          deleting: "Удаление",
-          finalizing: "Завершение",
-          completed: "Готово",
-          failed: "Ошибка",
-          cancelled: "Отменено"
+          deleting: t("jobDeleting"),
+          finalizing: t("jobFinalizing"),
+          completed: t("jobCompleted"),
+          failed: t("jobFailed"),
+          cancelled: t("jobCancelled")
         };
         return labels[job.state] || job.state;
       }
 
       function storageOperationLabel(operation) {
-        if (operation === "move") return "Перемещение";
-        if (operation === "delete") return "Удаление";
-        return "Копирование";
+        if (operation === "move") return t("operationMove");
+        if (operation === "delete") return t("operationDelete");
+        return t("operationCopy");
       }
 
       function renderStorageJob(job) {
         state.storageJob = job;
         const hasJob = job && Number(job.job_id) > 0;
-        $("transferState").textContent = hasJob ? storageJobStateLabel(job) : "Нет задачи";
+        $("transferState").textContent = hasJob ? storageJobStateLabel(job) : t("jobIdle");
         $("transferState").className = `badge ${job && job.active ? "live" : ""}`.trim();
         $("transferIdle").hidden = hasJob;
-        $("transferIdle").textContent = "Активных операций нет";
+        $("transferIdle").textContent = t("noActiveOperations");
         $("transferDetails").hidden = !hasJob;
         if (!hasJob) return;
 
@@ -672,17 +970,17 @@
         $("transferMeter").setAttribute("aria-valuenow", String(Math.round(percent)));
         $("transferBytes").textContent = job.total_bytes > 0
           ? `${formatBytes(Number(job.processed_bytes))} / ${formatBytes(Number(job.total_bytes))}`
-          : job.state === "measuring" ? "Подсчёт…" : formatBytes(Number(job.processed_bytes));
+          : job.state === "measuring" ? t("calculating") : formatBytes(Number(job.processed_bytes));
         $("transferFiles").textContent = job.total_files > 0
           ? `${job.processed_files} / ${job.total_files}`
-          : job.state === "measuring" ? "Подсчёт…" : String(job.processed_files || 0);
+          : job.state === "measuring" ? t("calculating") : String(job.processed_files || 0);
         $("transferSpeed").textContent = job.speed_bytes_per_second > 0
-          ? `${formatBytes(Number(job.speed_bytes_per_second))}/с`
+          ? `${formatBytes(Number(job.speed_bytes_per_second))}${t("perSecond")}`
           : "—";
         $("transferElapsed").textContent = formatDuration(job.elapsed_ms);
         $("transferPercent").textContent = `${percent.toFixed(percent < 10 && percent > 0 ? 1 : 0)}%`;
         $("cancelTransfer").disabled = !job.cancellable || job.cancel_requested;
-        $("cancelTransfer").textContent = job.cancel_requested ? "Отмена…" : "Отменить";
+        $("cancelTransfer").textContent = job.cancel_requested ? t("cancelling") : t("cancel");
       }
 
       function reportStorageJob(job) {
@@ -691,14 +989,14 @@
         state.reportedStorageJob = key;
         const operation = storageOperationLabel(job.operation);
         if (job.state === "completed") {
-          logActivity(`${operation} ${job.title_id} завершено`);
-          toast(`${operation} завершено`);
+          logActivity(t("operationCompleted", { operation, title: job.title_id }));
+          toast(t("operationCompletedShort", { operation }));
         } else if (job.state === "cancelled") {
-          logActivity(`${operation} ${job.title_id} отменено`);
-          toast(`${operation} отменено`);
+          logActivity(t("operationCancelled", { operation, title: job.title_id }));
+          toast(t("operationCancelledShort", { operation }));
         } else if (job.state === "failed") {
-          const reason = job.result_error || `ошибка ${job.result_status}`;
-          logActivity(`${operation} ${job.title_id}: ${reason}`, "error");
+          const reason = job.result_error || t("statusError", { status: job.result_status });
+          logActivity(t("operationError", { operation, title: job.title_id, error: reason }), "error");
           toast(reason, true);
         }
         refreshAll();
@@ -718,7 +1016,7 @@
           if (wasActive && !job.active) reportStorageJob(job);
         } catch (error) {
           if (!state.storageJob) {
-            $("transferState").textContent = "Недоступно";
+            $("transferState").textContent = t("unavailable");
             $("transferIdle").textContent = errorMessage(error);
           }
         } finally {
@@ -732,7 +1030,7 @@
         $("cancelTransfer").disabled = true;
         try {
           renderStorageJob(await api("/games/storage/cancel", { job_id: job.job_id }));
-          logActivity(`Запрошена отмена задачи ${job.job_id}`);
+          logActivity(t("cancelRequested", { id: job.job_id }));
           scheduleStorageJobPoll();
         } catch (error) {
           toast(errorMessage(error), true);
@@ -753,7 +1051,7 @@
           const mounts = libraryMounts.length ? libraryMounts : allMounts.filter((mount) => !mount.read_only);
           list.replaceChildren();
           if (!mounts.length) {
-            list.append(node("span", "subtle", "Хранилища не найдены"));
+            list.append(node("span", "subtle", t("storageNotFound")));
             return;
           }
 
@@ -768,16 +1066,16 @@
             path.title = mount.mount_point;
             head.append(path, badge(mount.read_only ? "R/O" : mount.filesystem || "FS", mount.read_only ? "" : "live"));
             row.append(head);
-            const meta = node("div", "storage-meta", `${mount.filesystem || "unknown"} · ${mount.source || "—"}`);
+            const meta = node("div", "storage-meta", `${mount.filesystem || t("unknown")} · ${mount.source || "—"}`);
             meta.title = mount.source || "";
             row.append(meta);
             const space = node("div", "storage-space");
-            space.append(node("span", "", `Свободно ${formatBytes(available)}`));
-            space.append(node("span", "", `из ${formatBytes(total)}`));
+            space.append(node("span", "", t("freeSpace", { size: formatBytes(available) })));
+            space.append(node("span", "", t("totalSpace", { size: formatBytes(total) })));
             row.append(space);
             const meter = node("div", "storage-meter");
             meter.setAttribute("role", "progressbar");
-            meter.setAttribute("aria-label", `Заполнено ${mount.mount_point}`);
+            meter.setAttribute("aria-label", t("storageUsed", { path: mount.mount_point }));
             meter.setAttribute("aria-valuemin", "0");
             meter.setAttribute("aria-valuemax", "100");
             meter.setAttribute("aria-valuenow", String(Math.round(usedPercent)));
@@ -803,13 +1101,14 @@
             api("/games", { include_size: $("includeSize").checked })
           ]);
           state.games = games.games || [];
+          state.apiVersion = version;
           $("version").textContent = `ShadowMount ${version.shadowmount_version} · API v${version.api_version}`;
-          setConnection("online", "PS5 подключена");
+          setConnection("online", "connected");
           renderStats();
           renderGames();
         } catch (error) {
-          setConnection("offline", "Нет связи");
-          $("games").replaceChildren(node("div", "empty", `Ошибка API: ${errorMessage(error)}`));
+          setConnection("offline", "disconnected");
+          $("games").replaceChildren(node("div", "empty", t("apiError", { error: errorMessage(error) })));
           toast(errorMessage(error), true);
         } finally {
           state.busy = false;
@@ -827,14 +1126,14 @@
           const data = await api("/manual/list");
           list.replaceChildren();
           if (!data.paths.length) {
-            list.append(node("span", "subtle", "Список пуст"));
+            list.append(node("span", "subtle", t("listEmpty")));
             return;
           }
           data.paths.forEach((path) => {
             const row = node("div", "manual-row");
             const value = node("span", "manual-path", path);
             value.title = path;
-            const remove = node("button", "btn small danger", "Удалить");
+            const remove = node("button", "btn small danger", t("remove"));
             remove.type = "button";
             remove.addEventListener("click", () => removeManual(path));
             row.append(value, remove);
@@ -853,7 +1152,7 @@
         try {
           const result = await api("/manual/add", { path });
           input.value = "";
-          logActivity(result.changed ? "Источник добавлен в manual.lst" : "Источник уже есть в manual.lst");
+          logActivity(t(result.changed ? "manualAdded" : "manualExists"));
           await refreshManual();
         } catch (error) {
           logActivity(errorMessage(error), "error");
@@ -862,10 +1161,10 @@
       }
 
       async function removeManual(path) {
-        if (!confirm(`Удалить источник из manual.lst?\n\n${path}`)) return;
+        if (!confirm(t("removeManualConfirm", { path }))) return;
         try {
           await api("/manual/remove", { path });
-          logActivity("Источник удалён из manual.lst");
+          logActivity(t("manualRemoved"));
           await refreshManual();
         } catch (error) {
           logActivity(errorMessage(error), "error");
@@ -878,8 +1177,8 @@
         $("scanBtn").disabled = true;
         try {
           await api("/scan", { reset_attempts: resetAttempts });
-          logActivity(resetAttempts ? "Сканирование поставлено в очередь со сбросом попыток" : "Сканирование поставлено в очередь");
-          toast("Сканирование запущено");
+          logActivity(t(resetAttempts ? "scanQueuedReset" : "scanQueued"));
+          toast(t("scanStarted"));
           setTimeout(refreshAll, 1600);
         } catch (error) {
           logActivity(errorMessage(error), "error");
@@ -905,8 +1204,17 @@
       function titleRuntime(game, operation, mode) {
         const payload = { title_id: game.title_id };
         if (mode) payload.mode = mode;
-        const label = operation === "mount" ? `Смонтировано ${game.title_id}${mode ? ` (${mode})` : ""}` : `Размонтировано ${game.title_id}`;
-        return runMutation(label, () => api(`/games/${operation}`, payload));
+        const label = operation === "mount"
+          ? t("mountedTitle", { title: game.title_id, mode: mode ? ` (${mode})` : "" })
+          : t("unmountedTitle", { title: game.title_id });
+        return runMutation(label, async () => {
+          await api(`/games/${operation}`, payload);
+          if (!$('modal').hidden && state.selected &&
+              state.selected.title_id === game.title_id) {
+            state.selected.mounted = operation === "mount";
+            renderDetails(state.selected, true);
+          }
+        });
       }
 
       function actionButton(text, action, extra = "") {
@@ -921,64 +1229,70 @@
         grid.append(node("div", "detail-value", value || "—"));
       }
 
-      function renderDetails(game) {
+      function renderDetails(game, focusRuntimeAction = false) {
         state.selected = game;
         $("modalTitle").textContent = game.title_name || game.title_id;
-        $("modalSubtitle").textContent = `${game.title_id} · ${(game.platform || "unknown").toUpperCase()}`;
+        $("modalSubtitle").textContent = `${game.title_id} · ${(game.platform || t("unknown")).toUpperCase()}`;
         const details = $("details");
         details.replaceChildren();
         details.append(coverFor(game, true));
         const content = node("div");
         const badges = node("div", "badges");
-        badges.append(badge(game.source_type));
+        badges.append(badge(game.source_type === "folder" ? t("folder") : game.source_type === "image" ? t("image") : game.source_type));
         if (game.image_type) badges.append(badge(game.image_type, "image"));
-        if (game.mounted) badges.append(badge("mounted", "live"));
+        if (game.mounted) badges.append(badge(t("mounted"), "live"));
         content.append(badges);
         const grid = node("div", "detail-grid");
         detailRow(grid, "Content ID", game.content_id);
-        detailRow(grid, "Источник", game.path);
-        detailRow(grid, "Runtime path", game.runtime_path);
-        detailRow(grid, "Размер", game.size_status === 0 ? formatBytes(game.size_bytes) : `Ошибка ${game.size_status}`);
+        detailRow(grid, t("source"), game.path);
+        detailRow(grid, t("runtimePath"), game.runtime_path);
+        detailRow(grid, t("size"), game.size_status === 0 ? formatBytes(game.size_bytes) : t("sizeError", { status: game.size_status }));
         detailRow(grid, "app.db", formatBytes(game.app_db_size_bytes));
-        detailRow(grid, "Установлена", game.install_time);
-        detailRow(grid, "Последний запуск", game.last_access_time);
+        detailRow(grid, t("installed"), game.install_time);
+        detailRow(grid, t("lastLaunch"), game.last_access_time);
         content.append(grid);
         details.append(content);
 
         const actions = $("modalActions");
         actions.replaceChildren();
-        if (game.image_backed) {
-          actions.append(actionButton("Mount R/O", () => titleRuntime(game, "mount", "ro")));
-          actions.append(actionButton("Mount R/W", () => titleRuntime(game, "mount", "rw")));
+        let runtimeAction;
+        if (game.mounted) {
+          runtimeAction = actionButton(t("disconnect"), () => titleRuntime(game, "unmount"));
+          actions.append(runtimeAction);
+        } else if (game.image_backed) {
+          runtimeAction = actionButton(t("mountReadOnly"), () => titleRuntime(game, "mount", "ro"));
+          actions.append(runtimeAction);
+          actions.append(actionButton(t("mountReadWrite"), () => titleRuntime(game, "mount", "rw")));
         } else {
-          actions.append(actionButton("Подключить", () => titleRuntime(game, "mount")));
+          runtimeAction = actionButton(t("connect"), () => titleRuntime(game, "mount"));
+          actions.append(runtimeAction);
         }
-        actions.append(actionButton("Отключить", () => titleRuntime(game, "unmount")));
         const storageBusy = Boolean(state.storageJob && state.storageJob.active);
-        const copy = actionButton("Копировать", () => storageOperation(game, "copy"));
-        const move = actionButton("Переместить", () => storageOperation(game, "move"));
-        const remove = actionButton("Удалить источник", () => deleteSource(game), "danger");
+        const copy = actionButton(t("copy"), () => storageOperation(game, "copy"));
+        const move = actionButton(t("move"), () => storageOperation(game, "move"));
+        const remove = actionButton(t("deleteSource"), () => deleteSource(game), "danger");
         copy.disabled = storageBusy;
         move.disabled = storageBusy;
         remove.disabled = storageBusy;
         if (storageBusy) {
-          copy.title = "Дождитесь завершения текущей операции с хранилищем";
+          copy.title = t("storageBusyHint");
           move.title = copy.title;
           remove.title = copy.title;
         }
         actions.append(copy, move);
-        actions.append(actionButton("Деинсталлировать", () => uninstallGame(game), "danger"));
+        actions.append(actionButton(t("uninstall"), () => uninstallGame(game), "danger"));
         actions.append(remove);
+        if (focusRuntimeAction) runtimeAction.focus();
       }
 
       async function showDetails(titleId) {
         $("modal").hidden = false;
-        $("modalTitle").textContent = "Загрузка…";
+        $("modalTitle").textContent = t("loading");
         $("modalSubtitle").textContent = titleId;
-        $("details").replaceChildren(node("div", "empty", "Подсчёт размера источника…"));
+        $("details").replaceChildren(node("div", "empty", t("loadingSource")));
         $("modalActions").replaceChildren();
         try {
-          renderDetails(await api("/games/info", { title_id: titleId }));
+          renderDetails(await api("/games/info", { title_id: titleId }), true);
         } catch (error) {
           $("details").replaceChildren(node("div", "empty", errorMessage(error)));
         }
@@ -991,10 +1305,10 @@
 
       async function storageOperation(game, operation) {
         if (state.storageJob && state.storageJob.active) {
-          toast("Уже выполняется операция с хранилищем", true);
+          toast(t("storageBusy"), true);
           return;
         }
-        const destination = prompt(`Папка назначения для ${operation === "copy" ? "копирования" : "перемещения"}:`, "/mnt/usb0");
+        const destination = prompt(t(operation === "copy" ? "copyDestination" : "moveDestination"), "/mnt/usb0");
         if (!destination) return;
         await startStorageJob(game, operation, { title_id: game.title_id, destination_dir: destination });
       }
@@ -1004,8 +1318,8 @@
           const job = await api(`/games/${operation}`, payload);
           renderStorageJob(job);
           closeModal();
-          logActivity(`${storageOperationLabel(operation)} ${game.title_id} запущено, задача ${job.job_id}`);
-          toast("Операция запущена");
+          logActivity(t("jobStarted", { operation: storageOperationLabel(operation), title: game.title_id, id: job.job_id }));
+          toast(t("operationStarted"));
           if (job.active) scheduleStorageJobPoll();
           else reportStorageJob(job);
         } catch (error) {
@@ -1016,25 +1330,30 @@
       }
 
       function uninstallGame(game) {
-        if (!confirm(`Запросить деинсталляцию ${game.title_name || game.title_id}?\n\nИсходный образ или папка не удаляются.`)) return;
-        runMutation(`Деинсталляция ${game.title_id} принята`, () => api("/games/uninstall", { title_id: game.title_id }), true);
+        if (!confirm(t("uninstallConfirm", { game: gameLabel(game) }))) return;
+        runMutation(t("uninstallAccepted", { title: game.title_id }), () => api("/games/uninstall", { title_id: game.title_id }), true);
       }
 
       async function deleteSource(game) {
         if (state.storageJob && state.storageJob.active) {
-          toast("Уже выполняется операция с хранилищем", true);
+          toast(t("storageBusy"), true);
           return;
         }
-        const entered = prompt(`Операция необратима. Для удаления физического источника введите Title ID:\n\n${game.title_id}`);
-        if (entered !== game.title_id) {
-          if (entered !== null) toast("Title ID не совпадает", true);
-          return;
-        }
+        if (!confirm(t("deleteConfirm", { game: gameLabel(game) }))) return;
         await startStorageJob(game, "delete", { title_id: game.title_id, confirm: true });
       }
 
       $("search").addEventListener("input", renderGames);
       $("filter").addEventListener("change", renderGames);
+      $("language").addEventListener("change", () => {
+        applyLanguage($("language").value, true);
+        renderStats();
+        renderGames();
+        if (state.storageJob) renderStorageJob(state.storageJob);
+        if (state.selected) renderDetails(state.selected);
+        refreshStorage();
+        refreshManual();
+      });
       $("includeSize").addEventListener("change", refreshLibrary);
       $("refreshBtn").addEventListener("click", refreshAll);
       $("scanBtn").addEventListener("click", requestScan);
@@ -1044,6 +1363,7 @@
       $("modal").addEventListener("click", (event) => { if (event.target === $("modal")) closeModal(); });
       document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !$("modal").hidden) closeModal(); });
 
+      applyLanguage(currentLanguage);
       Promise.all([refreshAll(), refreshManual(), refreshStorageJob()]);
     })();
   </script>

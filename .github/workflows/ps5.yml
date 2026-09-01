@@ -80,6 +80,18 @@ jobs:
           makepkg -c -f
           sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
 
+      - name: Build PS5 zlib package
+        working-directory: pacbrew-repo/zlib
+        run: |
+          makepkg -c -f
+          sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+
+      - name: Build PS5 libpng package
+        working-directory: pacbrew-repo/libpng
+        run: |
+          makepkg -c -f
+          sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+
       - name: Build PS5 libmicrohttpd package
         working-directory: pacbrew-repo/libmicrohttpd
         run: |

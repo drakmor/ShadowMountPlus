@@ -7,6 +7,7 @@ import errno
 import http.client
 import json
 import socket
+import struct
 import sys
 from typing import Any, Dict, Optional, Tuple
 
@@ -385,6 +386,38 @@ def test_game_details(client: ApiClient, games: list) -> None:
     for game in games:
         require(required_fields.issubset(game), "game list item lacks metadata")
         require("size_bytes" not in game, "game list calculated size by default")
+
+    thumbnail_url = next(
+        (
+            game.get("icon_url")
+            for game in games
+            if isinstance(game.get("icon_url"), str) and game.get("icon_url")
+        ),
+        "",
+    )
+    if thumbnail_url:
+        require("size=thumb" in thumbnail_url, "game list icon is not a thumbnail")
+        first_status, headers, first_thumbnail = client.request("GET", thumbnail_url)
+        second_status, _, second_thumbnail = client.request("GET", thumbnail_url)
+        require(first_status == 200, f"game thumbnail returned HTTP {first_status}")
+        require(second_status == 200, "cached game thumbnail request failed")
+        require(
+            headers.get("content-type", "").lower().startswith("image/png"),
+            "game thumbnail response is not PNG",
+        )
+        require(
+            "max-age=" in headers.get("cache-control", "").lower(),
+            "game thumbnail response is not cacheable",
+        )
+        require(
+            len(first_thumbnail) >= 24 and first_thumbnail[:8] == b"\x89PNG\r\n\x1a\n",
+            "game thumbnail has an invalid PNG header",
+        )
+        require(
+            struct.unpack(">II", first_thumbnail[16:24]) == (128, 128),
+            "game thumbnail is not 128x128",
+        )
+        require(first_thumbnail == second_thumbnail, "cached thumbnail changed")
 
     title_id = games[0].get("title_id")
     require(isinstance(title_id, str) and title_id, "game has invalid title_id")

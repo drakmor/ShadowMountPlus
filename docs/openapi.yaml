@@ -344,7 +344,7 @@ paths:
   /api/v1/games/icon:
     get:
       operationId: getGameIcon
-      summary: Stream the icon referenced by app.db icon0Info
+      summary: Stream a game icon or a cached 128x128 thumbnail
       tags: [Games]
       parameters:
         - name: title_id
@@ -352,6 +352,13 @@ paths:
           required: true
           schema:
             $ref: "#/components/schemas/TitleId"
+        - name: size
+          in: query
+          required: false
+          description: Generate and return the cached thumbnail variant
+          schema:
+            type: string
+            enum: [thumb]
       responses:
         "200":
           description: PNG icon

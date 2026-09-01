@@ -11,6 +11,7 @@
   "https://github.com/drakmor/ampr_emu/releases/latest/download/"         \
   "libSceAmpr.sprx"
 #define FAKELIB_CACHE_PATH "/data/shadowmount/cache"
+#define ICON_CACHE_DIR "/data/shadowmount/icon-cache"
 #define LOG_DIR "/data/shadowmount"
 #define LOG_FILE "/data/shadowmount/debug.log"
 #define LOG_FILE_PREV "/data/shadowmount/debug.log.1"
