@@ -5,7 +5,7 @@ static const char *const g_zh_cn[SM_L10N_COUNT] = {
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor 与社区",
     /* English: ShadowMount+ startup with web interface */
     [SM_L10N_STARTUP_WEB] =
-        "ShadowMount+ v%s\n© Drakmor 与社区\n网页界面: %s:%u",
+        "ShadowMount+ v%s\n© Drakmor 与社区\n管理: http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 已弃用，将使用 scan_depth=2。",
     /* English: ShadowMount+: scan depth %u enabled. */

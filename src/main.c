@@ -1,7 +1,11 @@
 #include "sm_platform.h"
 
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <sys/socket.h>
 #include <sys/sysctl.h>
 
 #include "sm_runtime.h"
@@ -70,6 +74,35 @@ static immediate_scan_request_t g_scan_now = {
 
 extern unsigned char config_ini_example[];
 extern unsigned int config_ini_example_len;
+
+static void resolve_web_interface_address(const char *bind_address,
+                                          char *address,
+                                          size_t address_size) {
+  (void)strlcpy(address, bind_address, address_size);
+  if (strcmp(bind_address, "0.0.0.0") != 0)
+    return;
+
+  struct ifaddrs *ifaddr = NULL;
+  if (getifaddrs(&ifaddr) != 0)
+    return;
+
+  for (const struct ifaddrs *ifa = ifaddr; ifa != NULL;
+       ifa = ifa->ifa_next) {
+    if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET ||
+        strncmp(ifa->ifa_name, "lo", 2) == 0)
+      continue;
+
+    const struct sockaddr_in *in =
+        (const struct sockaddr_in *)ifa->ifa_addr;
+    if (inet_ntop(AF_INET, &in->sin_addr, address, address_size) != NULL &&
+        strncmp(address, "0.", 2) != 0)
+      break;
+
+    (void)strlcpy(address, bind_address, address_size);
+  }
+
+  freeifaddrs(ifaddr);
+}
 
 static void on_signal(int sig) {
   (void)sig;
@@ -577,8 +610,11 @@ int main(void) {
 
   const runtime_config_t *startup_cfg = runtime_config();
   if (startup_cfg->api_enabled) {
+    char web_address[MAX_API_BIND_ADDRESS];
+    resolve_web_interface_address(startup_cfg->api_bind_address, web_address,
+                                  sizeof(web_address));
     notify_system_l10n(SM_L10N_STARTUP_WEB, SHADOWMOUNT_VERSION,
-                       startup_cfg->api_bind_address, startup_cfg->api_port);
+                       web_address, startup_cfg->api_port);
   } else {
     notify_system_l10n(SM_L10N_STARTUP, SHADOWMOUNT_VERSION);
   }
