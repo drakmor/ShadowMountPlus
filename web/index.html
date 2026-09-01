@@ -247,6 +247,14 @@
     .storage-fill { height: 100%; border-radius: inherit; background: var(--blue); }
     .storage-fill.warning { background: var(--amber); }
     .storage-fill.danger { background: var(--red); }
+    .transfer-details { display: grid; gap: 10px; margin-top: 12px; }
+    .transfer-details[hidden] { display: none; }
+    .transfer-route { overflow-wrap: anywhere; color: var(--muted); font: 11px/1.45 ui-monospace, monospace; }
+    .transfer-meter { height: 9px; margin-top: 0; }
+    .transfer-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .transfer-stat { padding: 8px 9px; border-radius: 9px; background: #0c111a; }
+    .transfer-stat strong { display: block; margin-top: 2px; font-size: 13px; }
+    .transfer-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .manual-form { display: flex; gap: 7px; margin-top: 12px; }
     .manual-form input { min-width: 0; width: 100%; }
     .manual-list, .activity-list { display: grid; gap: 7px; margin-top: 12px; }
@@ -388,6 +396,31 @@
           <div class="storage-list" id="storageList" aria-live="polite"><span class="subtle">Загрузка…</span></div>
         </section>
 
+        <section class="panel" aria-labelledby="transferHeading">
+          <div class="storage-head">
+            <h2 id="transferHeading">Операции с данными</h2>
+            <span class="badge" id="transferState">Проверка</span>
+          </div>
+          <p class="subtle" id="transferIdle">Получение статуса операции…</p>
+          <div class="transfer-details" id="transferDetails" hidden>
+            <strong id="transferSummary"></strong>
+            <div class="transfer-route" id="transferRoute"></div>
+            <div class="storage-meter transfer-meter" id="transferMeter" role="progressbar" aria-label="Готовность операции" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="storage-fill" id="transferFill"></div>
+            </div>
+            <div class="transfer-stats">
+              <div class="transfer-stat"><span class="subtle">Объём</span><strong id="transferBytes">—</strong></div>
+              <div class="transfer-stat"><span class="subtle">Файлы</span><strong id="transferFiles">—</strong></div>
+              <div class="transfer-stat"><span class="subtle">Скорость</span><strong id="transferSpeed">—</strong></div>
+              <div class="transfer-stat"><span class="subtle">Время</span><strong id="transferElapsed">—</strong></div>
+            </div>
+            <div class="transfer-actions">
+              <strong id="transferPercent">0%</strong>
+              <button class="btn small danger" id="cancelTransfer" type="button">Отменить</button>
+            </div>
+          </div>
+        </section>
+
         <section class="panel" aria-labelledby="manualHeading">
           <h2 id="manualHeading">manual.lst</h2>
           <p class="subtle">Дополнительные источники для сканирования</p>
@@ -433,7 +466,15 @@
       "use strict";
 
       const API = "/api/v1";
-      const state = { games: [], selected: null, activity: [], busy: false };
+      const state = {
+        games: [],
+        selected: null,
+        activity: [],
+        busy: false,
+        storageJob: null,
+        storagePollTimer: 0,
+        reportedStorageJob: ""
+      };
       const $ = (id) => document.getElementById(id);
 
       function node(tag, className, text) {
@@ -450,6 +491,16 @@
         const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
         const precision = index < 2 ? 0 : 1;
         return `${(value / (1024 ** index)).toFixed(precision)} ${units[index]}`;
+      }
+
+      function formatDuration(value) {
+        const totalSeconds = Math.max(0, Math.floor((Number(value) || 0) / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return hours > 0
+          ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+          : `${minutes}:${String(seconds).padStart(2, "0")}`;
       }
 
       function errorMessage(error) {
@@ -578,6 +629,115 @@
         $("imageGames").textContent = imageCount;
         $("folderGames").textContent = state.games.length - imageCount;
         $("mountedGames").textContent = state.games.filter((game) => game.mounted).length;
+      }
+
+      function storageJobStateLabel(job) {
+        const labels = {
+          idle: "Нет задачи",
+          preparing: "Подготовка",
+          measuring: "Подсчёт",
+          transferring: storageOperationLabel(job.operation),
+          deleting: "Удаление",
+          finalizing: "Завершение",
+          completed: "Готово",
+          failed: "Ошибка",
+          cancelled: "Отменено"
+        };
+        return labels[job.state] || job.state;
+      }
+
+      function storageOperationLabel(operation) {
+        if (operation === "move") return "Перемещение";
+        if (operation === "delete") return "Удаление";
+        return "Копирование";
+      }
+
+      function renderStorageJob(job) {
+        state.storageJob = job;
+        const hasJob = job && Number(job.job_id) > 0;
+        $("transferState").textContent = hasJob ? storageJobStateLabel(job) : "Нет задачи";
+        $("transferState").className = `badge ${job && job.active ? "live" : ""}`.trim();
+        $("transferIdle").hidden = hasJob;
+        $("transferIdle").textContent = "Активных операций нет";
+        $("transferDetails").hidden = !hasJob;
+        if (!hasJob) return;
+
+        const percent = Math.max(0, Math.min(100, Number(job.progress_percent) || 0));
+        const operation = storageOperationLabel(job.operation);
+        $("transferSummary").textContent = `${operation} ${job.title_id}`;
+        $("transferRoute").textContent = job.operation === "delete"
+          ? job.source
+          : `${job.source} → ${job.destination}`;
+        $("transferFill").style.width = `${percent}%`;
+        $("transferMeter").setAttribute("aria-valuenow", String(Math.round(percent)));
+        $("transferBytes").textContent = job.total_bytes > 0
+          ? `${formatBytes(Number(job.processed_bytes))} / ${formatBytes(Number(job.total_bytes))}`
+          : job.state === "measuring" ? "Подсчёт…" : formatBytes(Number(job.processed_bytes));
+        $("transferFiles").textContent = job.total_files > 0
+          ? `${job.processed_files} / ${job.total_files}`
+          : job.state === "measuring" ? "Подсчёт…" : String(job.processed_files || 0);
+        $("transferSpeed").textContent = job.speed_bytes_per_second > 0
+          ? `${formatBytes(Number(job.speed_bytes_per_second))}/с`
+          : "—";
+        $("transferElapsed").textContent = formatDuration(job.elapsed_ms);
+        $("transferPercent").textContent = `${percent.toFixed(percent < 10 && percent > 0 ? 1 : 0)}%`;
+        $("cancelTransfer").disabled = !job.cancellable || job.cancel_requested;
+        $("cancelTransfer").textContent = job.cancel_requested ? "Отмена…" : "Отменить";
+      }
+
+      function reportStorageJob(job) {
+        const key = `${job.job_id}:${job.state}`;
+        if (!job.job_id || job.active || state.reportedStorageJob === key) return;
+        state.reportedStorageJob = key;
+        const operation = storageOperationLabel(job.operation);
+        if (job.state === "completed") {
+          logActivity(`${operation} ${job.title_id} завершено`);
+          toast(`${operation} завершено`);
+        } else if (job.state === "cancelled") {
+          logActivity(`${operation} ${job.title_id} отменено`);
+          toast(`${operation} отменено`);
+        } else if (job.state === "failed") {
+          const reason = job.result_error || `ошибка ${job.result_status}`;
+          logActivity(`${operation} ${job.title_id}: ${reason}`, "error");
+          toast(reason, true);
+        }
+        refreshAll();
+      }
+
+      function scheduleStorageJobPoll() {
+        clearTimeout(state.storagePollTimer);
+        const delay = state.storageJob && state.storageJob.active ? 750 : 5000;
+        state.storagePollTimer = setTimeout(refreshStorageJob, delay);
+      }
+
+      async function refreshStorageJob() {
+        try {
+          const wasActive = Boolean(state.storageJob && state.storageJob.active);
+          const job = await api("/games/storage/status");
+          renderStorageJob(job);
+          if (wasActive && !job.active) reportStorageJob(job);
+        } catch (error) {
+          if (!state.storageJob) {
+            $("transferState").textContent = "Недоступно";
+            $("transferIdle").textContent = errorMessage(error);
+          }
+        } finally {
+          scheduleStorageJobPoll();
+        }
+      }
+
+      async function cancelStorageJob() {
+        const job = state.storageJob;
+        if (!job || !job.active || !job.cancellable) return;
+        $("cancelTransfer").disabled = true;
+        try {
+          renderStorageJob(await api("/games/storage/cancel", { job_id: job.job_id }));
+          logActivity(`Запрошена отмена задачи ${job.job_id}`);
+          scheduleStorageJobPoll();
+        } catch (error) {
+          toast(errorMessage(error), true);
+          await refreshStorageJob();
+        }
       }
 
       async function refreshStorage() {
@@ -794,10 +954,21 @@
           actions.append(actionButton("Подключить", () => titleRuntime(game, "mount")));
         }
         actions.append(actionButton("Отключить", () => titleRuntime(game, "unmount")));
-        actions.append(actionButton("Копировать", () => storageOperation(game, "copy")));
-        actions.append(actionButton("Переместить", () => storageOperation(game, "move")));
+        const storageBusy = Boolean(state.storageJob && state.storageJob.active);
+        const copy = actionButton("Копировать", () => storageOperation(game, "copy"));
+        const move = actionButton("Переместить", () => storageOperation(game, "move"));
+        const remove = actionButton("Удалить источник", () => deleteSource(game), "danger");
+        copy.disabled = storageBusy;
+        move.disabled = storageBusy;
+        remove.disabled = storageBusy;
+        if (storageBusy) {
+          copy.title = "Дождитесь завершения текущей операции с хранилищем";
+          move.title = copy.title;
+          remove.title = copy.title;
+        }
+        actions.append(copy, move);
         actions.append(actionButton("Деинсталлировать", () => uninstallGame(game), "danger"));
-        actions.append(actionButton("Удалить источник", () => deleteSource(game), "danger"));
+        actions.append(remove);
       }
 
       async function showDetails(titleId) {
@@ -818,11 +989,30 @@
         state.selected = null;
       }
 
-      function storageOperation(game, operation) {
+      async function storageOperation(game, operation) {
+        if (state.storageJob && state.storageJob.active) {
+          toast("Уже выполняется операция с хранилищем", true);
+          return;
+        }
         const destination = prompt(`Папка назначения для ${operation === "copy" ? "копирования" : "перемещения"}:`, "/mnt/usb0");
         if (!destination) return;
-        const label = `${operation === "copy" ? "Скопирован" : "Перемещён"} источник ${game.title_id}`;
-        runMutation(label, () => api(`/games/${operation}`, { title_id: game.title_id, destination_dir: destination }), true);
+        await startStorageJob(game, operation, { title_id: game.title_id, destination_dir: destination });
+      }
+
+      async function startStorageJob(game, operation, payload) {
+        try {
+          const job = await api(`/games/${operation}`, payload);
+          renderStorageJob(job);
+          closeModal();
+          logActivity(`${storageOperationLabel(operation)} ${game.title_id} запущено, задача ${job.job_id}`);
+          toast("Операция запущена");
+          if (job.active) scheduleStorageJobPoll();
+          else reportStorageJob(job);
+        } catch (error) {
+          logActivity(`${storageOperationLabel(operation)} ${game.title_id}: ${errorMessage(error)}`, "error");
+          toast(errorMessage(error), true);
+          await refreshStorageJob();
+        }
       }
 
       function uninstallGame(game) {
@@ -830,13 +1020,17 @@
         runMutation(`Деинсталляция ${game.title_id} принята`, () => api("/games/uninstall", { title_id: game.title_id }), true);
       }
 
-      function deleteSource(game) {
+      async function deleteSource(game) {
+        if (state.storageJob && state.storageJob.active) {
+          toast("Уже выполняется операция с хранилищем", true);
+          return;
+        }
         const entered = prompt(`Операция необратима. Для удаления физического источника введите Title ID:\n\n${game.title_id}`);
         if (entered !== game.title_id) {
           if (entered !== null) toast("Title ID не совпадает", true);
           return;
         }
-        runMutation(`Удалён источник ${game.title_id}`, () => api("/games/delete", { title_id: game.title_id, confirm: true }), true);
+        await startStorageJob(game, "delete", { title_id: game.title_id, confirm: true });
       }
 
       $("search").addEventListener("input", renderGames);
@@ -844,12 +1038,13 @@
       $("includeSize").addEventListener("change", refreshLibrary);
       $("refreshBtn").addEventListener("click", refreshAll);
       $("scanBtn").addEventListener("click", requestScan);
+      $("cancelTransfer").addEventListener("click", cancelStorageJob);
       $("manualForm").addEventListener("submit", addManual);
       $("closeModal").addEventListener("click", closeModal);
       $("modal").addEventListener("click", (event) => { if (event.target === $("modal")) closeModal(); });
       document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !$("modal").hidden) closeModal(); });
 
-      Promise.all([refreshAll(), refreshManual()]);
+      Promise.all([refreshAll(), refreshManual(), refreshStorageJob()]);
     })();
   </script>
 </body>

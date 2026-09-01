@@ -385,8 +385,8 @@ paths:
       requestBody:
         $ref: "#/components/requestBodies/StorageDestinationRequest"
       responses:
-        "200":
-          $ref: "#/components/responses/StorageOperationSuccess"
+        "202":
+          $ref: "#/components/responses/StorageJobAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -415,8 +415,8 @@ paths:
       requestBody:
         $ref: "#/components/requestBodies/StorageDestinationRequest"
       responses:
-        "200":
-          $ref: "#/components/responses/StorageOperationSuccess"
+        "202":
+          $ref: "#/components/responses/StorageJobAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -430,6 +430,56 @@ paths:
         "507":
           $ref: "#/components/responses/InsufficientStorage"
 
+  /api/v1/games/storage/status:
+    options:
+      operationId: preflightStorageJobStatus
+      summary: CORS preflight
+      tags: [Storage]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: getStorageJobStatus
+      summary: Get the current or last storage job
+      tags: [Storage]
+      requestBody:
+        $ref: "#/components/requestBodies/StorageJobStatusRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StorageJobStatusSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/games/storage/cancel:
+    options:
+      operationId: preflightStorageJobCancel
+      summary: CORS preflight
+      tags: [Storage]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: cancelStorageJob
+      summary: Cancel an active storage job before its irreversible phase
+      tags: [Storage]
+      requestBody:
+        $ref: "#/components/requestBodies/StorageJobCancelRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StorageJobStatusSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/games/delete:
     options:
       operationId: preflightDeleteGameSource
@@ -440,13 +490,13 @@ paths:
           $ref: "#/components/responses/Preflight"
     post:
       operationId: deleteGameSource
-      summary: Permanently delete a game folder or backing image
+      summary: Asynchronously delete a game folder or backing image
       tags: [Storage]
       requestBody:
         $ref: "#/components/requestBodies/StorageDeleteRequest"
       responses:
-        "200":
-          $ref: "#/components/responses/StorageOperationSuccess"
+        "202":
+          $ref: "#/components/responses/StorageJobAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -617,6 +667,18 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/StorageDeleteRequest"
+    StorageJobStatusRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StorageJobStatusRequest"
+    StorageJobCancelRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StorageJobCancelRequest"
 
   headers:
     AllowOrigin:
@@ -710,15 +772,25 @@ components:
           schema:
             $ref: "#/components/schemas/GameInfoResponse"
 
-    StorageOperationSuccess:
-      description: Storage operation completed and a rescan was queued
+    StorageJobAccepted:
+      description: Copy, move or delete job accepted for asynchronous execution
       headers:
         Access-Control-Allow-Origin:
           $ref: "#/components/headers/AllowOrigin"
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/StorageOperationResponse"
+            $ref: "#/components/schemas/StorageJobResponse"
+
+    StorageJobStatusSuccess:
+      description: Current or last copy, move or delete job status
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StorageJobResponse"
 
     ScanSuccess:
       description: Full rescan queued
@@ -955,6 +1027,24 @@ components:
           type: boolean
           const: true
 
+    StorageJobStatusRequest:
+      type: object
+      properties:
+        job_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Omit to return the current or most recently completed job.
+
+    StorageJobCancelRequest:
+      type: object
+      required: [job_id]
+      properties:
+        job_id:
+          type: integer
+          format: int64
+          minimum: 1
+
     VersionResponse:
       type: object
       additionalProperties: false
@@ -972,8 +1062,8 @@ components:
           type: array
           items:
             type: string
-            enum: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, list_manual_sources, add_manual_source, remove_manual_source, rescan]
-          example: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, list_manual_sources, add_manual_source, remove_manual_source, rescan]
+            enum: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, rescan]
+          example: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, rescan]
 
     StorageMount:
       type: object
@@ -1187,33 +1277,80 @@ components:
         - type: object
           required: [status, size_status]
 
-    StorageOperationResponse:
+    StorageJobResponse:
       type: object
       additionalProperties: false
-      required: [status, operation, title_id, source_type, source, destination, affected_titles, scan_queued]
+      required: [status, job_id, operation, state, active, cancellable, cancel_requested, title_id, source_type, source, destination, total_bytes, processed_bytes, total_files, processed_files, progress_percent, speed_bytes_per_second, elapsed_ms, affected_titles, result_status, result_error, scan_queued]
       properties:
         status:
           type: integer
           const: 0
+        job_id:
+          type: integer
+          format: int64
+          minimum: 0
         operation:
           type: string
-          enum: [move, copy, delete]
+          enum: ["", move, copy, delete]
+        state:
+          type: string
+          enum: [idle, preparing, measuring, transferring, deleting, finalizing, completed, failed, cancelled]
+        active:
+          type: boolean
+        cancellable:
+          type: boolean
+        cancel_requested:
+          type: boolean
         title_id:
-          $ref: "#/components/schemas/TitleId"
+          type: string
         source_type:
           type: string
-          enum: [folder, image]
+          enum: ["", folder, image]
         source:
           type: string
         destination:
           type: string
-          description: Empty for delete.
+          description: Empty for delete jobs.
+        total_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        processed_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        total_files:
+          type: integer
+          format: int64
+          minimum: 0
+        processed_files:
+          type: integer
+          format: int64
+          minimum: 0
+        progress_percent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+        speed_bytes_per_second:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Average processed-byte rate since transfer or deletion began.
+        elapsed_ms:
+          type: integer
+          format: int64
+          minimum: 0
         affected_titles:
           type: integer
-          minimum: 1
+          minimum: 0
+        result_status:
+          type: integer
+          minimum: 0
+        result_error:
+          type: string
         scan_queued:
           type: boolean
-          const: true
 
     ScanResponse:
       type: object

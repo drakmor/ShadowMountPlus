@@ -52,9 +52,11 @@ device.
 | `/api/v1/games/mount` | `{"title_id":"PPSA12345","mode":"ro"}` | Mount a managed game, optionally overriding its image mode with `ro`/`rw` |
 | `/api/v1/games/unmount` | `{"title_id":"PPSA12345"}` | Unmount a managed game |
 | `/api/v1/games/uninstall` | `{"title_id":"PPSA12345"}` | Request uninstallation through AppInstUtil |
-| `/api/v1/games/move` | `{"title_id":"PPSA12345","destination_dir":"/mnt/usb1/games"}` | Move the physical game folder or backing image, with cross-filesystem fallback |
-| `/api/v1/games/copy` | `{"title_id":"PPSA12345","destination_dir":"/mnt/usb1/games"}` | Copy the physical game folder or backing image |
-| `/api/v1/games/delete` | `{"title_id":"PPSA12345","confirm":true}` | Permanently delete the physical game folder or backing image |
+| `/api/v1/games/move` | `{"title_id":"PPSA12345","destination_dir":"/mnt/usb1/games"}` | Start an asynchronous move job |
+| `/api/v1/games/copy` | `{"title_id":"PPSA12345","destination_dir":"/mnt/usb1/games"}` | Start an asynchronous copy job |
+| `/api/v1/games/storage/status` | `{"job_id":1}` | Get current or last storage job status; `job_id` is optional |
+| `/api/v1/games/storage/cancel` | `{"job_id":1}` | Request cancellation while the active job is still cancellable |
+| `/api/v1/games/delete` | `{"title_id":"PPSA12345","confirm":true}` | Start asynchronous permanent deletion of the physical source |
 
 Example:
 
@@ -95,7 +97,7 @@ A successful version response has this shape:
   "status": 0,
   "api_version": 1,
   "shadowmount_version": "1.7",
-  "capabilities": ["web_ui", "list_images", "list_games", "game_info", "game_icon", "mount_game", "unmount_game", "uninstall_game", "move_game_source", "copy_game_source", "delete_game_source", "list_manual_sources", "add_manual_source", "remove_manual_source", "rescan"]
+  "capabilities": ["web_ui", "storage_space", "list_images", "list_games", "game_info", "game_icon", "mount_game", "unmount_game", "uninstall_game", "move_game_source", "copy_game_source", "delete_game_source", "storage_job_status", "storage_job_cancel", "list_manual_sources", "add_manual_source", "remove_manual_source", "rescan"]
 }
 ```
 
@@ -121,12 +123,29 @@ device `source`, `mount_point`, `filesystem`, `total_bytes`, `free_bytes`,
 `available_bytes`, `used_bytes` and `read_only`. `available_bytes` is the space
 available for new files; `used_bytes` is calculated against that value.
 
-Storage operations preserve the source basename and require an existing
-destination under a configured non-runtime scan root. They are synchronous,
-hold the scanner/ShellCore mutation gates, release affected runtime mounts, and
-queue a rescan after success. `move` uses `rename()` on one filesystem and exact
-copy-plus-delete across filesystems. `delete` requires `confirm=true`. A backing
-image shared by several titles is handled as one physical source.
+`copy` and `move` preserve the source basename and require an existing
+destination under a configured non-runtime scan root. They and `delete` return
+HTTP 202 with a `job_id` and continue in one background worker;
+only one of these jobs can be active. A second start returns HTTP 409/`EBUSY`.
+`delete` still requires `confirm=true`. The status response contains the phase,
+byte-based percentage, processed/total bytes,
+processed/total files, average processed-byte rate, elapsed time and final
+errno-style result. The initial `measuring` phase discovers the totals and has
+zero percent until they are known. Only the active or most recently finished
+job is retained; an older explicit `job_id` returns HTTP 404.
+
+Cancellation is cooperative during `preparing`, `measuring` and `transferring`.
+A partial copy destination is removed. A delete job becomes non-cancellable
+when it enters `deleting`, before its first physical removal. Likewise, once a
+cross-filesystem move enters
+`finalizing` and starts deleting the complete source, cancellation is rejected
+to avoid leaving the only source tree partially removed. The scanner and
+ShellCore mutation gates remain held for the whole job and a rescan is queued
+after success, cancellation or failure. `move` uses `rename()` on one
+filesystem and exact copy-plus-delete across filesystems. A backing image
+shared by several titles is handled as one physical source.
+Changing the API bind address or port restarts only the HTTP listener; an
+active storage job continues and remains available through the new listener.
 
 Mount mutations remain conservative. They return HTTP 409 with `status` set to
 `EBUSY` while a game is active, while ShellCore owns another prepared title,

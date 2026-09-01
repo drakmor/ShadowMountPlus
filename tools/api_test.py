@@ -30,6 +30,8 @@ ROUTE_UNINSTALL = "/api/v1/games/uninstall"
 ROUTE_MOVE = "/api/v1/games/move"
 ROUTE_COPY = "/api/v1/games/copy"
 ROUTE_DELETE = "/api/v1/games/delete"
+ROUTE_STORAGE_JOB_STATUS = "/api/v1/games/storage/status"
+ROUTE_STORAGE_JOB_CANCEL = "/api/v1/games/storage/cancel"
 
 
 class ApiTestError(RuntimeError):
@@ -201,6 +203,8 @@ def test_version(client: ApiClient) -> None:
         "move_game_source",
         "copy_game_source",
         "delete_game_source",
+        "storage_job_status",
+        "storage_job_cancel",
         "list_manual_sources",
         "add_manual_source",
         "remove_manual_source",
@@ -253,6 +257,91 @@ def test_storage(client: ApiClient) -> int:
         require(type(mount["read_only"]) is bool, "storage read_only must be boolean")
     print(f"[API-TEST] storage mounts={count}")
     return count
+
+
+def validate_storage_job(response: Dict[str, Any]) -> None:
+    required_fields = {
+        "job_id",
+        "operation",
+        "state",
+        "active",
+        "cancellable",
+        "cancel_requested",
+        "title_id",
+        "source_type",
+        "source",
+        "destination",
+        "total_bytes",
+        "processed_bytes",
+        "total_files",
+        "processed_files",
+        "progress_percent",
+        "speed_bytes_per_second",
+        "elapsed_ms",
+        "affected_titles",
+        "result_status",
+        "result_error",
+        "scan_queued",
+    }
+    require(required_fields.issubset(response), "storage job response lacks fields")
+    job_id = integer_field(response, "job_id")
+    require(job_id >= 0, "storage job ID is invalid")
+    operation = response["operation"]
+    valid_operation = operation == "" if job_id == 0 else operation in {
+        "copy",
+        "move",
+        "delete",
+    }
+    require(
+        valid_operation,
+        "storage job operation is invalid",
+    )
+    if operation == "delete":
+        require(response["destination"] == "", "delete job has a destination")
+    require(
+        response["state"]
+        in {
+            "idle",
+            "preparing",
+            "measuring",
+            "transferring",
+            "deleting",
+            "finalizing",
+            "completed",
+            "failed",
+            "cancelled",
+        },
+        "storage job state is invalid",
+    )
+    for key in ("active", "cancellable", "cancel_requested", "scan_queued"):
+        require(type(response[key]) is bool, f"storage job {key} must be boolean")
+    for key in (
+        "total_bytes",
+        "processed_bytes",
+        "total_files",
+        "processed_files",
+        "speed_bytes_per_second",
+        "elapsed_ms",
+        "affected_titles",
+        "result_status",
+    ):
+        require(integer_field(response, key) >= 0, f"storage job {key} is invalid")
+    progress = response["progress_percent"]
+    require(
+        type(progress) in (int, float) and 0 <= progress <= 100,
+        "storage job progress_percent is invalid",
+    )
+
+
+def test_storage_job_status(client: ApiClient) -> None:
+    http_status, response = client.post(ROUTE_STORAGE_JOB_STATUS, {})
+    require(http_status == 200, f"storage job status returned HTTP {http_status}")
+    require(integer_field(response, "status") == 0, "storage job status failed")
+    validate_storage_job(response)
+    print(
+        f"[API-TEST] storage job={response['state']} "
+        f"(id={response['job_id']}, active={response['active']})"
+    )
 
 
 def test_list(client: ApiClient, route: str, key: str) -> list:
@@ -445,6 +534,9 @@ def test_mutation_validation(client: ApiClient) -> None:
         (ROUTE_MOVE, {"title_id": "INVALID", "destination_dir": "/mnt"}),
         (ROUTE_COPY, {"title_id": "INVALID", "destination_dir": "/mnt"}),
         (ROUTE_DELETE, {"title_id": "INVALID", "confirm": True}),
+        (ROUTE_DELETE, {"title_id": "PPSA00000"}),
+        (ROUTE_STORAGE_JOB_STATUS, {"job_id": "invalid"}),
+        (ROUTE_STORAGE_JOB_CANCEL, {"job_id": 0}),
     )
     for route, payload in invalid_requests:
         http_status, response = client.post(route, payload)
@@ -500,6 +592,7 @@ def main() -> int:
         web_result = test_index_page(client)
         test_version(client)
         storage_count = test_storage(client)
+        test_storage_job_status(client)
         images = test_list(client, ROUTE_IMAGES, "images")
         games = test_list(client, ROUTE_GAMES, "games")
         test_game_details(client, games)
