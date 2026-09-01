@@ -18,6 +18,8 @@
 #define MAX_HOOK_PROLOGUE_SIZE SM_SHELLCORE_BRIDGE_MAX_PROLOGUE_SIZE
 #define ABSOLUTE_JUMP_SIZE SM_SHELLCORE_BRIDGE_ABSOLUTE_JUMP_SIZE
 #define TRAMPOLINE_SIZE SM_SHELLCORE_BRIDGE_TRAMPOLINE_SIZE
+#define BRIDGE_SIGNATURE_SIZE 64u
+#define BRIDGE_VM_WRITE_MARKER UINT64_C(0x534d564d44495254)
 
 static const uint8_t k_expected_function_prologue[] = {0x55, 0x48, 0x89, 0xe5};
 
@@ -54,6 +56,7 @@ extern const uint8_t sm_shellcore_bridge_connect[];
 extern const uint8_t sm_shellcore_bridge_read[];
 extern const uint8_t sm_shellcore_bridge_write[];
 extern const uint8_t sm_shellcore_bridge_close[];
+extern const uint8_t sm_shellcore_bridge_vm_write_marker[];
 
 typedef struct {
   const uint8_t *slot;
@@ -159,6 +162,140 @@ static bool remote_hook_matches(pid_t pid, uintptr_t source,
   uint8_t patch[MAX_HOOK_PROLOGUE_SIZE];
   return build_hook_patch(patch, destination, patch_size) &&
          verify_remote_bytes(pid, source, patch, patch_size);
+}
+
+static bool parse_absolute_jump(const uint8_t *patch, size_t patch_size,
+                                uintptr_t *destination_out) {
+  if (!patch || !destination_out || patch_size < ABSOLUTE_JUMP_SIZE ||
+      patch[0] != 0x48 || patch[1] != 0xb8 || patch[10] != 0xff ||
+      patch[11] != 0xe0) {
+    return false;
+  }
+  for (size_t i = ABSOLUTE_JUMP_SIZE; i < patch_size; ++i) {
+    if (patch[i] != 0x90)
+      return false;
+  }
+  memcpy(destination_out, patch + 2, sizeof(*destination_out));
+  return true;
+}
+
+/*
+ * A forced payload replacement can bypass our shutdown path while leaving
+ * ShellCore alive. Recover only a bridge with this exact code signature and
+ * valid embedded trampolines; unknown hooks remain untouched.
+ */
+static bool recover_stale_bridge(
+    pid_t pid, const sm_shellcore_remote_t *remote,
+    const shellcore_hook_record_t hooks[SHELLCORE_MAX_HOOK_COUNT],
+    size_t hook_count, size_t bridge_size) {
+  static const uint8_t *const hook_symbols[SHELLCORE_MAX_HOOK_COUNT] = {
+      sm_shellcore_bridge_launch_hook,
+      sm_shellcore_bridge_install_all_hook,
+  };
+  static const uint8_t *const trampoline_symbols[SHELLCORE_MAX_HOOK_COUNT] = {
+      sm_shellcore_bridge_launch_trampoline,
+      sm_shellcore_bridge_install_all_trampoline,
+  };
+  uint8_t originals[SHELLCORE_MAX_HOOK_COUNT][MAX_HOOK_PROLOGUE_SIZE] = {{0}};
+  uint8_t original_sizes[SHELLCORE_MAX_HOOK_COUNT] = {0};
+  bool stale[SHELLCORE_MAX_HOOK_COUNT] = {false};
+  uintptr_t bridge_address = 0;
+  size_t stale_count = 0;
+
+  for (size_t i = 0; i < hook_count; ++i) {
+    sm_shellcore_target_t target = hooks[i].target;
+    uintptr_t target_address = remote->targets[target];
+    uint8_t patch_size = remote->offsets->targets[target].patch_size;
+    uint8_t patch[MAX_HOOK_PROLOGUE_SIZE];
+    if (patch_size < ABSOLUTE_JUMP_SIZE ||
+        patch_size > MAX_HOOK_PROLOGUE_SIZE ||
+        !sm_remote_process_read(pid, target_address, patch, patch_size)) {
+      return false;
+    }
+    if (memcmp(patch, k_expected_function_prologue,
+               sizeof(k_expected_function_prologue)) == 0) {
+      continue;
+    }
+
+    uintptr_t destination = 0;
+    size_t hook_offset =
+        (size_t)(hook_symbols[i] - sm_shellcore_bridge_blob_start);
+    if (!parse_absolute_jump(patch, patch_size, &destination) ||
+        destination < hook_offset) {
+      return false;
+    }
+    uintptr_t candidate = destination - hook_offset;
+    if ((bridge_address && candidate != bridge_address) ||
+        candidate > UINTPTR_MAX - bridge_size) {
+      return false;
+    }
+    bridge_address = candidate;
+    stale[i] = true;
+    ++stale_count;
+  }
+  if (stale_count == 0)
+    return true;
+
+  if (!verify_remote_bytes(pid, bridge_address, sm_shellcore_bridge_blob_start,
+                           BRIDGE_SIGNATURE_SIZE)) {
+    return false;
+  }
+  if (!sm_remote_process_lock(pid, bridge_address, bridge_size) ||
+      !verify_remote_bytes(pid, bridge_address, sm_shellcore_bridge_blob_start,
+                           BRIDGE_SIGNATURE_SIZE)) {
+    return false;
+  }
+
+  for (size_t i = 0; i < hook_count; ++i) {
+    if (!stale[i])
+      continue;
+    sm_shellcore_target_t target = hooks[i].target;
+    uintptr_t target_address = remote->targets[target];
+    uint8_t patch_size = remote->offsets->targets[target].patch_size;
+    size_t trampoline_offset =
+        (size_t)(trampoline_symbols[i] - sm_shellcore_bridge_blob_start);
+    uint8_t trampoline[TRAMPOLINE_SIZE];
+    uintptr_t return_address = 0;
+    if (trampoline_offset > bridge_size ||
+        TRAMPOLINE_SIZE > bridge_size - trampoline_offset ||
+        !sm_remote_process_read(pid, bridge_address + trampoline_offset,
+                                trampoline, sizeof(trampoline)) ||
+        memcmp(trampoline, k_expected_function_prologue,
+               sizeof(k_expected_function_prologue)) != 0 ||
+        !parse_absolute_jump(trampoline + patch_size, ABSOLUTE_JUMP_SIZE,
+                             &return_address) ||
+        return_address != target_address + patch_size) {
+      return false;
+    }
+    memcpy(originals[i], trampoline, patch_size);
+    original_sizes[i] = patch_size;
+  }
+
+  for (size_t i = 0; i < hook_count; ++i) {
+    if (stale[i] &&
+        !restore_remote_bytes(pid, remote->targets[hooks[i].target],
+                              originals[i], original_sizes[i])) {
+      log_debug("  [SHELLCORE] stale hook recovery incomplete; bridge kept "
+                "locked");
+      return false;
+    }
+  }
+
+  uint64_t marker = 0;
+  size_t marker_offset =
+      (size_t)(sm_shellcore_bridge_vm_write_marker -
+               sm_shellcore_bridge_blob_start);
+  bool vm_dirty = marker_offset <= bridge_size &&
+                  sizeof(marker) <= bridge_size - marker_offset &&
+                  sm_remote_process_read(pid, bridge_address + marker_offset,
+                                         &marker, sizeof(marker)) &&
+                  marker == BRIDGE_VM_WRITE_MARKER;
+  bool unlocked = vm_dirty &&
+                  sm_remote_process_unlock(pid, bridge_address, bridge_size);
+  log_debug("  [SHELLCORE] stale bridge detached: address=0x%lx size=0x%zx "
+            "locked=%d",
+            (unsigned long)bridge_address, bridge_size, unlocked ? 0 : 1);
+  return true;
 }
 
 static bool cleanup_remote_bridge(
@@ -312,6 +449,12 @@ static bool install_hooks_for_pid(pid_t pid) {
   hooks.hooks[0].target = SM_SHELLCORE_TARGET_LAUNCH_APP;
   hooks.hooks[1].target = SM_SHELLCORE_TARGET_INSTALL_ALL;
 
+  if (!recover_stale_bridge(pid, &hooks.remote, hooks.hooks, hook_count,
+                            bridge_size)) {
+    log_debug("  [SHELLCORE] existing hook is not a recoverable bridge");
+    goto done;
+  }
+
   for (size_t i = 0; i < hook_count; ++i) {
     shellcore_hook_record_t *hook = &hooks.hooks[i];
     uintptr_t target_address = hooks.remote.targets[hook->target];
@@ -350,6 +493,17 @@ static bool install_hooks_for_pid(pid_t pid) {
               bridge_size);
     goto done;
   }
+  /*
+   * The old physical-write path bypassed VM dirty accounting, so an anonymous
+   * bridge page could be reclaimed and restored as zeroes. Populate through
+   * PT_IO below and keep the bridge resident for the lifetime of the hook.
+   */
+  if (!sm_remote_process_lock(pid, bridge_address, bridge_size)) {
+    log_debug("  [SHELLCORE] failed to lock bridge memory: address=0x%lx "
+              "size=0x%zx",
+              (unsigned long)bridge_address, bridge_size);
+    goto done;
+  }
 
   shellcore_hook_record_t *launch_hook_record = &hooks.hooks[0];
   uintptr_t launch_target = hooks.remote.targets[launch_hook_record->target];
@@ -377,9 +531,9 @@ static bool install_hooks_for_pid(pid_t pid) {
   if (!resolve_bridge_imports(pid, bridge, blob_size))
     goto done;
 
-  bool bridge_written =
-      sm_remote_process_write(pid, bridge_address, bridge, bridge_size) &&
-      verify_remote_bytes(pid, bridge_address, bridge, bridge_size);
+  /* PT_IO updates VM accounting; mlock keeps the populated page resident. */
+  bool bridge_written = sm_remote_process_write_attached(
+      pid, bridge_address, bridge, bridge_size);
   bool protection_ok = false;
   if (bridge_written) {
     protection_ok =
@@ -393,7 +547,7 @@ static bool install_hooks_for_pid(pid_t pid) {
     }
   }
   if (!bridge_written || !protection_ok) {
-    log_debug("  [SHELLCORE] bridge install verification failed");
+    log_debug("  [SHELLCORE] bridge install failed");
     goto done;
   }
 
@@ -451,7 +605,7 @@ done:
         (uintptr_t)(sm_shellcore_bridge_launch_trampoline -
                     sm_shellcore_bridge_blob_start);
     log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld bridge=0x%lx+0x%zx "
-              "launch=1 trampoline=0x%lx install=%d prot=%s",
+              "launch=1 trampoline=0x%lx install=%d prot=%s locked=1",
               hooks.remote.offsets->name, (long)pid,
               (unsigned long)bridge_address, bridge_size,
               (unsigned long)launch_trampoline,
@@ -560,6 +714,16 @@ void sm_shellcore_hooks_stop(void) {
       restored = false;
     }
   }
+  bool bridge_unlocked = true;
+  if (restored && g_hooks.bridge_address) {
+    bridge_unlocked = sm_remote_process_unlock(
+        pid, g_hooks.bridge_address, g_hooks.bridge_size);
+    if (!bridge_unlocked) {
+      log_debug("  [SHELLCORE] inactive bridge unlock failed: address=0x%lx "
+                "size=0x%zx",
+                (unsigned long)g_hooks.bridge_address, g_hooks.bridge_size);
+    }
+  }
   if (!sm_remote_process_detach(pid)) {
     log_debug("  [SHELLCORE] failed to detach after hook cleanup: pid=%ld",
               (long)pid);
@@ -576,8 +740,10 @@ void sm_shellcore_hooks_stop(void) {
     // A thread that entered the bridge before its prologue was restored may
     // still return through it after detach. Keep the small bridge mapping in
     // ShellCore rather than introducing a shutdown-only use-after-unmap race.
-    log_debug("  [SHELLCORE] inactive bridge retained: address=0x%lx size=0x%zx",
-              (unsigned long)g_hooks.bridge_address, g_hooks.bridge_size);
+    log_debug("  [SHELLCORE] inactive bridge retained: address=0x%lx size=0x%zx "
+              "locked=%d",
+              (unsigned long)g_hooks.bridge_address, g_hooks.bridge_size,
+              bridge_unlocked ? 0 : 1);
   }
   memset(&g_hooks, 0, sizeof(g_hooks));
   pthread_mutex_unlock(&g_install_mutex);

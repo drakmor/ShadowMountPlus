@@ -136,6 +136,22 @@ uintptr_t sm_remote_process_map(pid_t pid, size_t size) {
   return (uintptr_t)result;
 }
 
+bool sm_remote_process_lock(pid_t pid, uintptr_t address, size_t size) {
+  if (!address || size == 0)
+    return false;
+  const uint64_t args[6] = {address, size, 0, 0, 0, 0};
+  uint64_t result = UINT64_MAX;
+  return remote_syscall(pid, SYS_mlock, args, &result) && result == 0;
+}
+
+bool sm_remote_process_unlock(pid_t pid, uintptr_t address, size_t size) {
+  if (!address || size == 0)
+    return false;
+  const uint64_t args[6] = {address, size, 0, 0, 0, 0};
+  uint64_t result = UINT64_MAX;
+  return remote_syscall(pid, SYS_munlock, args, &result) && result == 0;
+}
+
 bool sm_remote_process_unmap(pid_t pid, uintptr_t address, size_t size) {
   if (!address || size == 0)
     return false;
@@ -207,14 +223,25 @@ bool sm_remote_process_read(pid_t pid, uintptr_t address, void *buffer,
   return mdbg_copyout(pid, (intptr_t)address, buffer, size) == 0;
 }
 
+bool sm_remote_process_write_attached(pid_t pid, uintptr_t address,
+                                      const void *buffer, size_t size) {
+  if (!buffer || size == 0 || address > UINTPTR_MAX - (size - 1u))
+    return false;
+  struct ptrace_io_desc io = {
+      .piod_op = PIOD_WRITE_D,
+      .piod_offs = (void *)address,
+      .piod_addr = (void *)buffer,
+      .piod_len = size,
+  };
+  return privileged_ptrace(PT_IO, pid, &io, 0) == 0 && io.piod_len == size;
+}
+
 bool sm_remote_process_write(pid_t pid, uintptr_t address, const void *buffer,
                              size_t size) {
   if (!buffer || size == 0 || address > UINTPTR_MAX - (size - 1u))
     return false;
-  if (mdbg_copyin(pid, buffer, (intptr_t)address, size) == 0)
-    return true;
   if ((kernel_get_fw_version() >> 16) <= 0x0820u)
-    return false;
+    return mdbg_copyin(pid, buffer, (intptr_t)address, size) == 0;
 
   void *probe = malloc(size);
   if (!probe)

@@ -20,6 +20,7 @@
     .global sm_shellcore_bridge_read
     .global sm_shellcore_bridge_write
     .global sm_shellcore_bridge_close
+    .global sm_shellcore_bridge_vm_write_marker
 
 sm_shellcore_bridge_blob_start:
 sm_shellcore_bridge_launch_hook:
@@ -225,6 +226,10 @@ sm_shellcore_bridge_sockaddr:
     .byte sm_shellcore_bridge_sockaddr_end - sm_shellcore_bridge_sockaddr, 1
     .asciz SM_SHELLCORE_SOCKET_PATH
 sm_shellcore_bridge_sockaddr_end:
+    .p2align 3
+sm_shellcore_bridge_vm_write_marker:
+    /* Identifies bridge pages populated through PT_IO (VM-dirty). */
+    .quad 0x534d564d44495254
 
     /*
      * PS5 user pages are 16 KiB. Keep all executable code and immutable
