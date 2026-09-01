@@ -20,11 +20,16 @@
 #define SM_API_ROUTE_GAME_MOVE "/api/v1/games/move"
 #define SM_API_ROUTE_GAME_COPY "/api/v1/games/copy"
 #define SM_API_ROUTE_GAME_DELETE "/api/v1/games/delete"
+#define SM_API_ROUTE_GAME_UNPACK "/api/v1/games/unpack"
 #define SM_API_ROUTE_GAME_STORAGE_STATUS "/api/v1/games/storage/status"
 #define SM_API_ROUTE_GAME_STORAGE_CANCEL "/api/v1/games/storage/cancel"
 #define SM_API_ROUTE_MANUAL_LIST "/api/v1/manual/list"
 #define SM_API_ROUTE_MANUAL_ADD "/api/v1/manual/add"
 #define SM_API_ROUTE_MANUAL_REMOVE "/api/v1/manual/remove"
+#define SM_API_ROUTE_SETTINGS "/api/v1/settings"
+#define SM_API_ROUTE_SETTINGS_UPDATE "/api/v1/settings/update"
+#define SM_API_ROUTE_DEBUG_LOG "/api/v1/debug-log"
+#define SM_API_ROUTE_KERNEL_LOG "/api/v1/kernel-log"
 #define SM_API_ROUTE_SCAN "/api/v1/scan"
 
 #endif

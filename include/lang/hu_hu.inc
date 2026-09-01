@@ -3,6 +3,9 @@ static const char *const g_hu_hu[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Ugrás a hibakeresési beállításokhoz",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor és a közösség",
+    /* English: ShadowMount+ startup with web interface */
+    [SM_L10N_STARTUP_WEB] =
+        "ShadowMount+ v%s\n© Drakmor és a közösség\nWebes felület: %s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: a recursive_scan=1 elavult, scan_depth=2 lesz használva.",
     /* English: ShadowMount+: scan depth %u enabled. */

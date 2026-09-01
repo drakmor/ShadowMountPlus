@@ -1,6 +1,7 @@
 #include "sm_platform.h"
 
 #include <inttypes.h>
+#include <pthread.h>
 #include <stdlib.h>
 
 #include "sm_config_mount.h"
@@ -96,6 +97,7 @@ typedef struct {
 } sm_mdbg_state_t;
 
 static sm_mdbg_state_t g_mdbg;
+static pthread_mutex_t g_mdbg_kernel_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static bool sm_mdbg_enabled(void);
 #if !MDBG_SKIP_PRIVILEGE_ELEVATION
@@ -157,8 +159,12 @@ static int elevate_to_coredump(void) {
 #endif
 
 static bool ensure_mdbg_privileges(void) {
-  if (g_mdbg.privilege_probe_done)
-    return g_mdbg.privilege_ready;
+  pthread_mutex_lock(&g_mdbg_kernel_log_mutex);
+  if (g_mdbg.privilege_probe_done) {
+    bool ready = g_mdbg.privilege_ready;
+    pthread_mutex_unlock(&g_mdbg_kernel_log_mutex);
+    return ready;
+  }
 
   g_mdbg.privilege_probe_done = true;
 #if MDBG_SKIP_PRIVILEGE_ELEVATION
@@ -174,7 +180,9 @@ static bool ensure_mdbg_privileges(void) {
   }
 #endif
 
-  return g_mdbg.privilege_ready;
+  bool ready = g_mdbg.privilege_ready;
+  pthread_mutex_unlock(&g_mdbg_kernel_log_mutex);
+  return ready;
 }
 
 static int mdbg_call_raw(int64_t pid, uint64_t subcmd, uint64_t arg,
@@ -285,9 +293,10 @@ static int fetch_log_text(const char **text_out, size_t *text_len_out) {
   *text_out = NULL;
   *text_len_out = 0;
 
-  int ret =
-      MDBG_FETCH_LOG_TEXT(g_mdbg.log_storage, g_mdbg.log_buffer_size, &raw_text,
-                          &raw_len);
+  pthread_mutex_lock(&g_mdbg_kernel_log_mutex);
+  int ret = MDBG_FETCH_LOG_TEXT(g_mdbg.log_storage, g_mdbg.log_buffer_size,
+                                &raw_text, &raw_len);
+  pthread_mutex_unlock(&g_mdbg_kernel_log_mutex);
   if (ret < 0)
     return ret;
 
@@ -299,6 +308,78 @@ static int fetch_log_text(const char **text_out, size_t *text_len_out) {
 
   *text_out = raw_text;
   *text_len_out = (size_t)raw_len;
+  return 0;
+}
+
+int sm_mdbg_get_log_tail(size_t max_bytes, char **text_out,
+                         size_t *text_length_out, size_t *total_length_out) {
+  if (!text_out || !text_length_out || !total_length_out || max_bytes == 0)
+    return EINVAL;
+  *text_out = NULL;
+  *text_length_out = 0;
+  *total_length_out = 0;
+
+  if (!ensure_mdbg_privileges())
+    return EACCES;
+
+  uint64_t raw_buffer_size = sceKernelDebugGetLogBufferSize();
+  if (raw_buffer_size == 0 || raw_buffer_size > SIZE_MAX)
+    return EOVERFLOW;
+  size_t buffer_size = (size_t)raw_buffer_size;
+  char *storage = malloc(buffer_size);
+  if (!storage)
+    return ENOMEM;
+
+  char *raw_text = NULL;
+  uint64_t raw_length = 0;
+  pthread_mutex_lock(&g_mdbg_kernel_log_mutex);
+  int ret = MDBG_FETCH_LOG_TEXT(storage, buffer_size, &raw_text, &raw_length);
+  pthread_mutex_unlock(&g_mdbg_kernel_log_mutex);
+  if (ret != 0) {
+    free(storage);
+    return EIO;
+  }
+  if (!raw_text || raw_length == 0) {
+    free(storage);
+    char *empty = calloc(1u, 1u);
+    if (!empty)
+      return ENOMEM;
+    *text_out = empty;
+    return 0;
+  }
+
+  uintptr_t storage_start = (uintptr_t)storage;
+  uintptr_t text_start = (uintptr_t)raw_text;
+  if (text_start < storage_start || text_start > storage_start + buffer_size) {
+    free(storage);
+    return EIO;
+  }
+  size_t text_offset = (size_t)(text_start - storage_start);
+  if (raw_length > buffer_size - text_offset) {
+    free(storage);
+    return EOVERFLOW;
+  }
+
+  size_t total_length = (size_t)raw_length;
+  size_t start = total_length > max_bytes ? total_length - max_bytes : 0;
+  if (start > 0) {
+    char *newline = memchr(raw_text + start, '\n', total_length - start);
+    if (newline)
+      start = (size_t)(newline - raw_text) + 1u;
+  }
+  size_t text_length = total_length - start;
+  char *result = malloc(text_length + 1u);
+  if (!result) {
+    free(storage);
+    return ENOMEM;
+  }
+  memcpy(result, raw_text + start, text_length);
+  result[text_length] = '\0';
+  free(storage);
+
+  *text_out = result;
+  *text_length_out = text_length;
+  *total_length_out = total_length;
   return 0;
 }
 

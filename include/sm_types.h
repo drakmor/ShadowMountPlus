@@ -122,6 +122,7 @@ typedef struct {
 } attached_unit_detach_state_t;
 
 typedef struct runtime_config {
+  bool api_enabled;
   bool debug_enabled;
   bool quiet_mode;
   bool mount_read_only;

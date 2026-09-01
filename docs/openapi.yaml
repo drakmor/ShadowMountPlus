@@ -196,8 +196,8 @@ paths:
           $ref: "#/components/responses/Preflight"
     post:
       operationId: listManualSources
-      summary: List normalized source paths from manual.lst
-      description: Comments and empty lines are omitted. A missing file is returned as an empty list.
+      summary: List direct game source paths from manual.lst
+      description: Entries identify individual game folders or images, not recursive scan roots. Comments and empty lines are omitted.
       tags: [Manual sources]
       requestBody:
         $ref: "#/components/requestBodies/EmptyRequest"
@@ -377,6 +377,136 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/settings:
+    options:
+      operationId: preflightGetSettings
+      summary: CORS preflight
+      tags: [Settings]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: getSettings
+      summary: Read web-managed settings and recursive scan roots
+      tags: [Settings]
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyRequest"
+      responses:
+        "200":
+          description: Current runtime settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/settings/update:
+    options:
+      operationId: preflightUpdateSettings
+      summary: CORS preflight
+      tags: [Settings]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: updateSettings
+      summary: Atomically update web-managed config.ini keys
+      description: Preserves unrelated keys and comments, then queues scanner-owned runtime reload.
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsUpdateRequest"
+      responses:
+        "200":
+          description: Settings saved and reload queued
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/debug-log:
+    options:
+      operationId: preflightGetDebugLog
+      summary: CORS preflight
+      tags: [Settings]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: getDebugLog
+      summary: Read a bounded tail of debug.log
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                max_bytes:
+                  type: integer
+                  minimum: 4096
+                  maximum: 262144
+                  default: 131072
+      responses:
+        "200":
+          description: Debug log tail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DebugLogResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/kernel-log:
+    options:
+      operationId: preflightGetKernelLog
+      summary: CORS preflight
+      tags: [Settings]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: getKernelLog
+      summary: Read recent events from the SDK log stream used by crash detection
+      description: Uses the sceKernelDebugGetSdkLogText snapshot shared with crash detection.
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                max_bytes:
+                  type: integer
+                  minimum: 4096
+                  maximum: 262144
+                  default: 131072
+      responses:
+        "200":
+          description: SDK kernel-log tail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KernelLogResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/games/move:
     options:
       operationId: preflightMoveGameSource
@@ -434,6 +564,42 @@ paths:
           $ref: "#/components/responses/Busy"
         "500":
           $ref: "#/components/responses/InternalError"
+        "507":
+          $ref: "#/components/responses/InsufficientStorage"
+
+  /api/v1/games/unpack:
+    options:
+      operationId: preflightUnpackGameImage
+      summary: CORS preflight
+      tags: [Storage]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: unpackGameImage
+      summary: Mount an image read-only and copy its game tree into a folder
+      tags: [Storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StorageUnpackRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/StorageJobAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
         "507":
           $ref: "#/components/responses/InsufficientStorage"
 
@@ -780,7 +946,7 @@ components:
             $ref: "#/components/schemas/GameInfoResponse"
 
     StorageJobAccepted:
-      description: Copy, move or delete job accepted for asynchronous execution
+      description: Copy, move, delete or unpack job accepted for asynchronous execution
       headers:
         Access-Control-Allow-Origin:
           $ref: "#/components/headers/AllowOrigin"
@@ -790,7 +956,7 @@ components:
             $ref: "#/components/schemas/StorageJobResponse"
 
     StorageJobStatusSuccess:
-      description: Current or last copy, move or delete job status
+      description: Current or last copy, move, delete or unpack job status
       headers:
         Access-Control-Allow-Origin:
           $ref: "#/components/headers/AllowOrigin"
@@ -1034,6 +1200,22 @@ components:
           type: boolean
           const: true
 
+    StorageUnpackRequest:
+      type: object
+      required: [title_id, destination_dir]
+      properties:
+        title_id:
+          $ref: "#/components/schemas/TitleId"
+        destination_dir:
+          type: string
+          pattern: "^/.+"
+          maxLength: 1023
+          description: Existing directory under a configured scan root. A TITLE_ID child directory is created.
+        delete_source:
+          type: boolean
+          default: false
+          description: Delete the backing image only after a complete copy and successful unmount.
+
     StorageJobStatusRequest:
       type: object
       properties:
@@ -1052,6 +1234,92 @@ components:
           format: int64
           minimum: 1
 
+    SettingsUpdateRequest:
+      type: object
+      required: [debug, quiet_mode, update_emulators, allow_lan_access, fan_target_temperature, scan_paths]
+      properties:
+        debug:
+          type: boolean
+        quiet_mode:
+          type: boolean
+        update_emulators:
+          type: boolean
+        allow_lan_access:
+          type: boolean
+          description: Bind to 0.0.0.0 when true or 127.0.0.1 when false.
+        fan_target_temperature:
+          type: integer
+          description: Zero selects system control; otherwise 50 through 91 degrees Celsius.
+          oneOf:
+            - const: 0
+            - minimum: 50
+              maximum: 91
+        scan_paths:
+          type: array
+          description: Explicit custom roots only. An empty array restores compile-time defaults.
+          maxItems: 256
+          items:
+            type: string
+            pattern: "^/.+"
+            maxLength: 1023
+
+    SettingsResponse:
+      allOf:
+        - $ref: "#/components/schemas/SettingsUpdateRequest"
+        - type: object
+          required: [status, api_enabled, scan_path_count]
+          properties:
+            status:
+              type: integer
+              const: 0
+            api_enabled:
+              type: boolean
+              description: Whether the HTTP API is enabled in config.ini.
+            scan_path_count:
+              type: integer
+              minimum: 0
+
+    DebugLogResponse:
+      type: object
+      additionalProperties: false
+      required: [status, file_size, returned_bytes, truncated, content]
+      properties:
+        status:
+          type: integer
+          const: 0
+        file_size:
+          type: integer
+          format: int64
+          minimum: 0
+        returned_bytes:
+          type: integer
+          minimum: 0
+          maximum: 262144
+        truncated:
+          type: boolean
+        content:
+          type: string
+
+    KernelLogResponse:
+      type: object
+      additionalProperties: false
+      required: [status, total_bytes, returned_bytes, truncated, content]
+      properties:
+        status:
+          type: integer
+          const: 0
+        total_bytes:
+          type: integer
+          minimum: 0
+        returned_bytes:
+          type: integer
+          minimum: 0
+          maximum: 262144
+        truncated:
+          type: boolean
+        content:
+          type: string
+
     VersionResponse:
       type: object
       additionalProperties: false
@@ -1069,8 +1337,8 @@ components:
           type: array
           items:
             type: string
-            enum: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, rescan]
-          example: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, rescan]
+            enum: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan]
+          example: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan]
 
     StorageMount:
       type: object
@@ -1287,7 +1555,7 @@ components:
     StorageJobResponse:
       type: object
       additionalProperties: false
-      required: [status, job_id, operation, state, active, cancellable, cancel_requested, title_id, source_type, source, destination, total_bytes, processed_bytes, total_files, processed_files, progress_percent, speed_bytes_per_second, elapsed_ms, affected_titles, result_status, result_error, scan_queued]
+      required: [status, job_id, operation, state, active, cancellable, cancel_requested, title_id, source_type, source, runtime_source, destination, delete_source, total_bytes, processed_bytes, total_files, processed_files, progress_percent, speed_bytes_per_second, elapsed_ms, affected_titles, result_status, result_error, scan_queued]
       properties:
         status:
           type: integer
@@ -1298,7 +1566,7 @@ components:
           minimum: 0
         operation:
           type: string
-          enum: ["", move, copy, delete]
+          enum: ["", move, copy, delete, unpack]
         state:
           type: string
           enum: [idle, preparing, measuring, transferring, deleting, finalizing, completed, failed, cancelled]
@@ -1315,9 +1583,14 @@ components:
           enum: ["", folder, image]
         source:
           type: string
+        runtime_source:
+          type: string
         destination:
           type: string
           description: Empty for delete jobs.
+        delete_source:
+          type: boolean
+          description: True only for unpack jobs that will remove the image after successful extraction.
         total_bytes:
           type: integer
           format: int64

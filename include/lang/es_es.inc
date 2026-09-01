@@ -3,6 +3,9 @@ static const char *const g_es_es[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Ir a ajustes de depuración",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor y la comunidad",
+    /* English: ShadowMount+ startup with web interface */
+    [SM_L10N_STARTUP_WEB] =
+        "ShadowMount+ v%s\n© Drakmor y la comunidad\nInterfaz web: %s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 está obsoleto, se usará scan_depth=2.",
     /* English: ShadowMount+: scan depth %u enabled. */

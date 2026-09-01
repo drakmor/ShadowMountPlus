@@ -3,6 +3,9 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "デバッグ設定へ移動",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor とコミュニティ",
+    /* English: ShadowMount+ startup with web interface */
+    [SM_L10N_STARTUP_WEB] =
+        "ShadowMount+ v%s\n© Drakmor とコミュニティ\nWebインターフェース: %s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 は非推奨です。scan_depth=2 を使用します。",
     /* English: ShadowMount+: scan depth %u enabled. */

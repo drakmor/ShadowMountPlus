@@ -575,7 +575,13 @@ int main(void) {
     log_debug("  [MOUNT] remount_system_ex failed: %s", strerror(errno));
   }
 
-  notify_system_l10n(SM_L10N_STARTUP, SHADOWMOUNT_VERSION);
+  const runtime_config_t *startup_cfg = runtime_config();
+  if (startup_cfg->api_enabled) {
+    notify_system_l10n(SM_L10N_STARTUP_WEB, SHADOWMOUNT_VERSION,
+                       startup_cfg->api_bind_address, startup_cfg->api_port);
+  } else {
+    notify_system_l10n(SM_L10N_STARTUP, SHADOWMOUNT_VERSION);
+  }
   log_non_empty_scan_paths();
 
   if (runtime_config()->legacy_recursive_scan_forced) {

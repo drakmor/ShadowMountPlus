@@ -3,6 +3,9 @@ static const char *const g_tr_tr[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Hata ayıklama ayarlarına git",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor ve Topluluk",
+    /* English: ShadowMount+ startup with web interface */
+    [SM_L10N_STARTUP_WEB] =
+        "ShadowMount+ v%s\n© Drakmor ve Topluluk\nWeb arayüzü: %s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1 kullanımdan kaldırıldı; scan_depth=2 kullanılacak.",
     /* English: ShadowMount+: scan depth %u enabled. */

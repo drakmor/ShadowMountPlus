@@ -31,8 +31,13 @@ ROUTE_UNINSTALL = "/api/v1/games/uninstall"
 ROUTE_MOVE = "/api/v1/games/move"
 ROUTE_COPY = "/api/v1/games/copy"
 ROUTE_DELETE = "/api/v1/games/delete"
+ROUTE_UNPACK = "/api/v1/games/unpack"
 ROUTE_STORAGE_JOB_STATUS = "/api/v1/games/storage/status"
 ROUTE_STORAGE_JOB_CANCEL = "/api/v1/games/storage/cancel"
+ROUTE_SETTINGS = "/api/v1/settings"
+ROUTE_SETTINGS_UPDATE = "/api/v1/settings/update"
+ROUTE_DEBUG_LOG = "/api/v1/debug-log"
+ROUTE_KERNEL_LOG = "/api/v1/kernel-log"
 
 
 class ApiTestError(RuntimeError):
@@ -204,11 +209,15 @@ def test_version(client: ApiClient) -> None:
         "move_game_source",
         "copy_game_source",
         "delete_game_source",
+        "unpack_game_image",
         "storage_job_status",
         "storage_job_cancel",
         "list_manual_sources",
         "add_manual_source",
         "remove_manual_source",
+        "manage_settings",
+        "read_debug_log",
+        "read_kernel_log",
     }
     require(
         required_capabilities.issubset(capabilities),
@@ -271,7 +280,9 @@ def validate_storage_job(response: Dict[str, Any]) -> None:
         "title_id",
         "source_type",
         "source",
+        "runtime_source",
         "destination",
+        "delete_source",
         "total_bytes",
         "processed_bytes",
         "total_files",
@@ -292,6 +303,7 @@ def validate_storage_job(response: Dict[str, Any]) -> None:
         "copy",
         "move",
         "delete",
+        "unpack",
     }
     require(
         valid_operation,
@@ -314,7 +326,13 @@ def validate_storage_job(response: Dict[str, Any]) -> None:
         },
         "storage job state is invalid",
     )
-    for key in ("active", "cancellable", "cancel_requested", "scan_queued"):
+    for key in (
+        "active",
+        "cancellable",
+        "cancel_requested",
+        "delete_source",
+        "scan_queued",
+    ):
         require(type(response[key]) is bool, f"storage job {key} must be boolean")
     for key in (
         "total_bytes",
@@ -343,6 +361,49 @@ def test_storage_job_status(client: ApiClient) -> None:
         f"[API-TEST] storage job={response['state']} "
         f"(id={response['job_id']}, active={response['active']})"
     )
+
+
+def test_settings_and_log(client: ApiClient) -> None:
+    http_status, settings = client.post(ROUTE_SETTINGS, {})
+    require(http_status == 200, f"settings returned HTTP {http_status}")
+    require(integer_field(settings, "status") == 0, "settings request failed")
+    for key in (
+        "api_enabled",
+        "allow_lan_access",
+        "debug",
+        "quiet_mode",
+        "update_emulators",
+    ):
+        require(type(settings.get(key)) is bool, f"settings {key} must be boolean")
+    require(settings["api_enabled"], "API reports itself disabled")
+    fan_target = integer_field(settings, "fan_target_temperature")
+    require(fan_target == 0 or 50 <= fan_target <= 91, "fan target is invalid")
+    scan_paths = settings.get("scan_paths")
+    require(isinstance(scan_paths, list), "scan_paths must be an array")
+    require(
+        len(scan_paths) == integer_field(settings, "scan_path_count"),
+        "scan path count does not match",
+    )
+    require(
+        all(isinstance(path, str) and path.startswith("/") for path in scan_paths),
+        "scan_paths contains an invalid path",
+    )
+
+    for route, name, total_key in (
+        (ROUTE_DEBUG_LOG, "debug log", "file_size"),
+        (ROUTE_KERNEL_LOG, "kernel log", "total_bytes"),
+    ):
+        http_status, log = client.post(route, {"max_bytes": 4096})
+        require(http_status == 200, f"{name} returned HTTP {http_status}")
+        require(integer_field(log, "status") == 0, f"{name} request failed")
+        require(isinstance(log.get("content"), str), f"{name} content must be text")
+        require(type(log.get("truncated")) is bool, f"{name} truncated must be boolean")
+        require(integer_field(log, total_key) >= 0, f"{name} total size is invalid")
+        require(
+            0 <= integer_field(log, "returned_bytes") <= 4096,
+            f"{name} response is too large",
+        )
+    print(f"[API-TEST] settings={len(scan_paths)} scan paths, logs=PASS")
 
 
 def test_list(client: ApiClient, route: str, key: str) -> list:
@@ -566,10 +627,36 @@ def test_mutation_validation(client: ApiClient) -> None:
         (ROUTE_UNINSTALL, {"title_id": "INVALID"}),
         (ROUTE_MOVE, {"title_id": "INVALID", "destination_dir": "/mnt"}),
         (ROUTE_COPY, {"title_id": "INVALID", "destination_dir": "/mnt"}),
+        (ROUTE_UNPACK, {"title_id": "INVALID", "destination_dir": "/mnt"}),
         (ROUTE_DELETE, {"title_id": "INVALID", "confirm": True}),
         (ROUTE_DELETE, {"title_id": "PPSA00000"}),
         (ROUTE_STORAGE_JOB_STATUS, {"job_id": "invalid"}),
         (ROUTE_STORAGE_JOB_CANCEL, {"job_id": 0}),
+        (ROUTE_SETTINGS_UPDATE, {}),
+        (
+            ROUTE_SETTINGS_UPDATE,
+            {
+                "debug": True,
+                "quiet_mode": False,
+                "update_emulators": False,
+                "allow_lan_access": False,
+                "fan_target_temperature": 0,
+                "scan_paths": ["/"],
+            },
+        ),
+        (
+            ROUTE_SETTINGS_UPDATE,
+            {
+                "debug": True,
+                "quiet_mode": False,
+                "update_emulators": False,
+                "allow_lan_access": False,
+                "fan_target_temperature": 0,
+                "scan_paths": ["/mnt/usb0\ndebug=0"],
+            },
+        ),
+        (ROUTE_DEBUG_LOG, {"max_bytes": 1}),
+        (ROUTE_KERNEL_LOG, {"max_bytes": 1}),
     )
     for route, payload in invalid_requests:
         http_status, response = client.post(route, payload)
@@ -626,6 +713,7 @@ def main() -> int:
         test_version(client)
         storage_count = test_storage(client)
         test_storage_job_status(client)
+        test_settings_and_log(client)
         images = test_list(client, ROUTE_IMAGES, "images")
         games = test_list(client, ROUTE_GAMES, "games")
         test_game_details(client, games)

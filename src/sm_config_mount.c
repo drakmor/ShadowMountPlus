@@ -38,6 +38,7 @@ typedef struct {
   runtime_config_t cfg;
   char scan_path_storage[MAX_SCAN_PATHS][MAX_PATH];
   int scan_path_count;
+  int custom_scan_path_count;
   image_mode_rule_t image_mode_rules[MAX_IMAGE_MODE_RULES];
   char kstuff_no_pause_title_ids[MAX_KSTUFF_TITLE_RULES][MAX_TITLE_ID];
   int kstuff_no_pause_title_count;
@@ -69,6 +70,7 @@ static _Atomic int g_runtime_state_active_index = 0;
 static atomic_bool g_runtime_cfg_ready = false;
 static config_file_stamp_t g_config_file_stamp;
 static pthread_mutex_t g_autotune_file_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_config_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static char *trim_ascii(char *s);
 static bool parse_ini_line(char *line, char **key_out, char **value_out);
@@ -109,6 +111,20 @@ static bool lookup_kstuff_delay_override_in_file(const char *path,
 static bool upsert_kstuff_delay_override_in_file(const char *path,
                                                  const char *title_id,
                                                  uint32_t delay_seconds);
+
+static bool web_managed_config_key(const char *key) {
+  return strcasecmp(key, "debug") == 0 ||
+         strcasecmp(key, "quiet_mode") == 0 ||
+         strcasecmp(key, "update_emulators") == 0 ||
+         strcasecmp(key, "fan_target_temperature") == 0 ||
+         strcasecmp(key, "api_bind_address") == 0 ||
+         strcasecmp(key, "api_bind_adress") == 0 ||
+         strcasecmp(key, "scanpath") == 0;
+}
+
+static int config_io_error(void) {
+  return errno != 0 ? errno : EIO;
+}
 
 static char *trim_ascii(char *s) {
   while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
@@ -185,6 +201,7 @@ static attach_backend_t default_ufs_backend(void) {
 
 static void clear_runtime_scan_paths(runtime_config_state_t *state) {
   state->scan_path_count = 0;
+  state->custom_scan_path_count = 0;
   memset(state->scan_path_storage, 0, sizeof(state->scan_path_storage));
 }
 
@@ -242,6 +259,7 @@ static void clear_kstuff_title_rules(runtime_config_state_t *state) {
 
 static void init_runtime_config_defaults(runtime_config_state_t *state) {
   memset(state, 0, sizeof(*state));
+  state->cfg.api_enabled = true;
   state->cfg.debug_enabled = true;
   state->cfg.quiet_mode = false;
   state->cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
@@ -321,6 +339,7 @@ static void apply_reloadable_runtime_fields(runtime_config_state_t *dst,
                                             const runtime_config_state_t *src) {
   dst->cfg = src->cfg;
   dst->scan_path_count = src->scan_path_count;
+  dst->custom_scan_path_count = src->custom_scan_path_count;
   memcpy(dst->scan_path_storage, src->scan_path_storage,
          sizeof(dst->scan_path_storage));
   memcpy(dst->image_mode_rules, src->image_mode_rules,
@@ -366,6 +385,19 @@ const char *get_scan_path(int index) {
   ensure_runtime_config_ready();
   const runtime_config_state_t *state = active_runtime_state();
   if (index < 0 || index >= state->scan_path_count)
+    return NULL;
+  return state->scan_path_storage[index];
+}
+
+int get_custom_scan_path_count(void) {
+  ensure_runtime_config_ready();
+  return active_runtime_state()->custom_scan_path_count;
+}
+
+const char *get_custom_scan_path(int index) {
+  ensure_runtime_config_ready();
+  const runtime_config_state_t *state = active_runtime_state();
+  if (index < 0 || index >= state->custom_scan_path_count)
     return NULL;
   return state->scan_path_storage[index];
 }
@@ -607,6 +639,10 @@ static bool normalize_absolute_path_value(const char *value,
   size_t len = strlen(trimmed);
   if (len == 0 || len >= MAX_PATH || trimmed[0] != '/')
     return false;
+  for (size_t i = 0; i < len; ++i) {
+    if (iscntrl((unsigned char)trimmed[i]) || trimmed[i] == '#')
+      return false;
+  }
 
   while (len > 1 && trimmed[len - 1] == '/') {
     trimmed[len - 1] = '\0';
@@ -1264,7 +1300,18 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
-    if (strcasecmp(key, "api_bind_address") == 0) {
+    if (strcasecmp(key, "api_enabled") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key,
+                  value);
+        continue;
+      }
+      state->cfg.api_enabled = bval;
+      continue;
+    }
+
+    if (strcasecmp(key, "api_bind_address") == 0 ||
+        strcasecmp(key, "api_bind_adress") == 0) {
       struct in_addr address;
       if (strlen(value) >= sizeof(state->cfg.api_bind_address) ||
           inet_pton(AF_INET, value, &address) != 1) {
@@ -1272,6 +1319,9 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
                   line_no, key, value);
         continue;
       }
+      if (strcasecmp(key, "api_bind_adress") == 0)
+        log_debug("  [CFG] legacy api_bind_adress at line %d; use "
+                  "api_bind_address", line_no);
       (void)strlcpy(state->cfg.api_bind_address, value,
                     sizeof(state->cfg.api_bind_address));
       continue;
@@ -1679,6 +1729,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
   if (has_custom_scanpaths && state->scan_path_count == 0) {
     log_debug("  [CFG] no valid scanpath entries, using defaults");
     init_runtime_scan_paths_defaults(state);
+  } else if (has_custom_scanpaths) {
+    state->custom_scan_path_count = state->scan_path_count;
   }
   add_runtime_managed_scan_paths(state);
 
@@ -1701,7 +1753,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       kstuff_delay_rule_count++;
   }
 
-  log_debug("  [CFG] loaded: debug=%d quiet=%d language=%s ro=%d force=%d "
+  log_debug("  [CFG] loaded: api_enabled=%d debug=%d quiet=%d language=%s "
+            "ro=%d force=%d "
             "persistent_image_mounts=%d app_install_all=%d "
             "auto_remove_missing_games=%d "
             "auto_remove_games_with_dlc=%d auto_remove_missing_delay_s=%u "
@@ -1719,6 +1772,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "lvd_sec(exfat=%u ufs=%u pfs=%u) md_sec(exfat=%u ufs=%u) "
             "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d "
             "kstuff_no_pause=%d kstuff_delay_rules=%d",
+            state->cfg.api_enabled ? 1 : 0,
             state->cfg.debug_enabled ? 1 : 0, state->cfg.quiet_mode ? 1 : 0,
             sm_l10n_language_name(state->cfg.language_id),
             state->cfg.mount_read_only ? 1 : 0,
@@ -1795,5 +1849,167 @@ bool reload_runtime_config_if_changed(bool *reloaded_out) {
   activate_runtime_config_state(candidate_slot);
   if (reloaded_out)
     *reloaded_out = true;
+  return true;
+}
+
+bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
+                                  bool update_emulators_enabled,
+                                  bool allow_lan_access,
+                                  uint32_t fan_target_temperature_c,
+                                  const char *const *scan_paths,
+                                  size_t scan_path_count) {
+  if ((fan_target_temperature_c != FAN_TARGET_TEMPERATURE_SYSTEM &&
+       (fan_target_temperature_c < MIN_FAN_TARGET_TEMPERATURE_C ||
+        fan_target_temperature_c > MAX_FAN_TARGET_TEMPERATURE_C)) ||
+      scan_path_count > MAX_SCAN_PATHS ||
+      (scan_path_count > 0 && !scan_paths)) {
+    errno = EINVAL;
+    return false;
+  }
+
+  char(*normalized_paths)[MAX_PATH] =
+      scan_path_count > 0 ? calloc(scan_path_count, MAX_PATH) : NULL;
+  if (scan_path_count > 0 && !normalized_paths) {
+    errno = ENOMEM;
+    return false;
+  }
+  size_t normalized_count = 0;
+  for (size_t i = 0; i < scan_path_count; ++i) {
+    char path[MAX_PATH];
+    if (!normalize_absolute_path_value(scan_paths[i], path) ||
+        strcmp(path, "/") == 0 ||
+        is_under_image_mount_base(path)) {
+      free(normalized_paths);
+      errno = EINVAL;
+      return false;
+    }
+    bool duplicate = false;
+    for (size_t j = 0; j < normalized_count; ++j) {
+      if (strcmp(normalized_paths[j], path) == 0) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (!duplicate) {
+      (void)strlcpy(normalized_paths[normalized_count], path, MAX_PATH);
+      normalized_count++;
+    }
+  }
+
+  pthread_mutex_lock(&g_config_file_mutex);
+  (void)mkdir(LOG_DIR, 0777);
+  FILE *in = fopen(CONFIG_FILE, "r");
+  if (!in && errno != ENOENT) {
+    int saved_errno = config_io_error();
+    pthread_mutex_unlock(&g_config_file_mutex);
+    free(normalized_paths);
+    errno = saved_errno;
+    return false;
+  }
+
+  char temp_path[MAX_PATH];
+  int temp_written = snprintf(temp_path, sizeof(temp_path), "%s.web.tmp",
+                              CONFIG_FILE);
+  if (temp_written < 0 || (size_t)temp_written >= sizeof(temp_path)) {
+    if (in)
+      (void)fclose(in);
+    pthread_mutex_unlock(&g_config_file_mutex);
+    free(normalized_paths);
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  (void)unlink(temp_path);
+  FILE *out = fopen(temp_path, "w");
+  if (!out) {
+    int saved_errno = config_io_error();
+    if (in)
+      (void)fclose(in);
+    pthread_mutex_unlock(&g_config_file_mutex);
+    free(normalized_paths);
+    errno = saved_errno;
+    return false;
+  }
+
+  errno = 0;
+  int saved_errno = 0;
+  int last_written = '\n';
+  char line[MAX_PATH + 256u];
+  while (in && fgets(line, sizeof(line), in)) {
+    bool truncated = strchr(line, '\n') == NULL && !feof(in);
+    char parsed[sizeof(line)];
+    (void)strlcpy(parsed, line, sizeof(parsed));
+    char *key = NULL;
+    char *value = NULL;
+    char *trimmed = trim_ascii(parsed);
+    bool skip = strcmp(trimmed,
+                       "# Managed by the ShadowMount web interface.") == 0;
+    if (!skip)
+      skip = parse_ini_line(parsed, &key, &value) &&
+             web_managed_config_key(key);
+    if (!skip && fputs(line, out) == EOF) {
+      saved_errno = config_io_error();
+      break;
+    }
+    if (!skip && line[0] != '\0')
+      last_written = (unsigned char)line[strlen(line) - 1u];
+    if (!truncated)
+      continue;
+    int ch;
+    while ((ch = fgetc(in)) != EOF) {
+      if (!skip && fputc(ch, out) == EOF && saved_errno == 0)
+        saved_errno = config_io_error();
+      if (!skip)
+        last_written = ch;
+      if (ch == '\n')
+        break;
+    }
+    if (saved_errno != 0)
+      break;
+  }
+  if (in && ferror(in) && saved_errno == 0)
+    saved_errno = config_io_error();
+  if (saved_errno == 0 && last_written != '\n' && fputc('\n', out) == EOF)
+    saved_errno = config_io_error();
+  if (saved_errno == 0 &&
+      fprintf(out,
+              "\n# Managed by the ShadowMount web interface.\n"
+              "debug=%u\nquiet_mode=%u\nupdate_emulators=%u\n"
+              "api_bind_address=%s\n",
+              debug_enabled ? 1u : 0u, quiet_mode ? 1u : 0u,
+              update_emulators_enabled ? 1u : 0u,
+              allow_lan_access ? "0.0.0.0" : "127.0.0.1") < 0) {
+    saved_errno = config_io_error();
+  }
+  if (saved_errno == 0) {
+    if (fan_target_temperature_c == FAN_TARGET_TEMPERATURE_SYSTEM) {
+      if (fputs("fan_target_temperature=system\n", out) == EOF)
+        saved_errno = config_io_error();
+    } else if (fprintf(out, "fan_target_temperature=%u\n",
+                       fan_target_temperature_c) < 0) {
+      saved_errno = config_io_error();
+    }
+  }
+  for (size_t i = 0; saved_errno == 0 && i < normalized_count; ++i) {
+    if (fprintf(out, "scanpath=%s\n", normalized_paths[i]) < 0)
+      saved_errno = config_io_error();
+  }
+  if (fflush(out) != 0 && saved_errno == 0)
+    saved_errno = config_io_error();
+  if (saved_errno == 0 && fsync(fileno(out)) != 0)
+    saved_errno = config_io_error();
+  if (fclose(out) != 0 && saved_errno == 0)
+    saved_errno = config_io_error();
+  if (in && fclose(in) != 0 && saved_errno == 0)
+    saved_errno = config_io_error();
+  if (saved_errno == 0 && rename(temp_path, CONFIG_FILE) != 0)
+    saved_errno = config_io_error();
+  if (saved_errno != 0)
+    (void)unlink(temp_path);
+  pthread_mutex_unlock(&g_config_file_mutex);
+  free(normalized_paths);
+  if (saved_errno != 0) {
+    errno = saved_errno;
+    return false;
+  }
   return true;
 }

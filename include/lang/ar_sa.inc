@@ -3,6 +3,9 @@ static const char *const g_ar_sa[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "الانتقال إلى إعدادات التصحيح",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor والمجتمع",
+    /* English: ShadowMount+ startup with web interface */
+    [SM_L10N_STARTUP_WEB] =
+        "ShadowMount+ v%s\n© Drakmor والمجتمع\nواجهة الويب: %s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "شادوماونت+: لم يعد الفحص التكراري مدعوماً، وسيتم استخدام عمق الفحص ٢.",
     /* English: ShadowMount+: scan depth %u enabled. */

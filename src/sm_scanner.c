@@ -1229,7 +1229,8 @@ static bool apply_runtime_config_reload_effects(int kq,
                                                 const runtime_config_t *old_cfg,
                                                 const runtime_config_t *new_cfg,
                                                 bool scan_topology_changed) {
-  if (strcmp(old_cfg->api_bind_address, new_cfg->api_bind_address) != 0 ||
+  if (old_cfg->api_enabled != new_cfg->api_enabled ||
+      strcmp(old_cfg->api_bind_address, new_cfg->api_bind_address) != 0 ||
       old_cfg->api_port != new_cfg->api_port) {
     if (!sm_api_service_reconfigure())
       log_debug("  [CFG] HTTP API reconfigure failed: %s", strerror(errno));

@@ -82,6 +82,18 @@
       font-size: 13px;
     }
 
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+
+    .language-select {
+      min-width: 110px;
+      min-height: 36px;
+    }
+
     .connection-dot {
       width: 9px;
       height: 9px;
@@ -108,7 +120,7 @@
 
     .toolbar {
       display: grid;
-      grid-template-columns: minmax(220px, 1fr) 150px 110px auto auto auto;
+      grid-template-columns: minmax(220px, 1fr) 150px auto auto auto;
       gap: 10px;
       padding: 13px;
       border-radius: var(--radius);
@@ -273,6 +285,12 @@
     }
 
     .manual-path { overflow: hidden; color: var(--muted); font: 11px/1.4 ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .settings-form { display: grid; gap: 10px; margin-top: 12px; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+    .setting-row select { width: 112px; }
+    .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .subheading { margin-top: 17px; font-size: 14px; }
+    .log-view { min-height: 460px; max-height: 76vh; margin: 0; overflow: auto; padding: 20px; background: #080c12; color: #c8d7ea; font: 14px/1.55 ui-monospace, "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
     .activity-item { border-left: 2px solid var(--line); padding-left: 9px; color: var(--muted); font-size: 12px; }
     .activity-item.ok { border-color: var(--green); }
     .activity-item.error { border-color: var(--red); color: #ff9aa3; }
@@ -298,6 +316,7 @@
 
     .modal[hidden] { display: none; }
     .modal-card { width: min(720px, 100%); max-height: 90vh; overflow: auto; border-radius: 18px; }
+    .modal-card.log-card { width: min(1440px, 96vw); }
     .modal-head { display: flex; align-items: start; justify-content: space-between; gap: 20px; padding: 18px; border-bottom: 1px solid var(--line); }
     .close { width: 36px; min-height: 36px; padding: 0; font-size: 22px; }
     .details { display: grid; grid-template-columns: 168px minmax(0, 1fr); align-items: start; gap: 18px; padding: 18px; }
@@ -325,14 +344,17 @@
 
     @media (max-width: 980px) {
       .toolbar { grid-template-columns: minmax(180px, 1fr) 150px auto; }
-      .toolbar .check { order: 2; }
       .layout { grid-template-columns: 1fr; }
       .sidebar { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     @media (max-width: 660px) {
+      .modal { padding: 10px; }
+      .modal-card.log-card { width: 100%; }
+      .log-view { min-height: 60vh; max-height: 75vh; padding: 14px; font-size: 13px; }
       .shell { padding: 14px; }
-      .topbar { align-items: flex-start; }
+      .topbar { flex-direction: column; align-items: stretch; }
+      .topbar-actions { justify-content: space-between; }
       .toolbar { grid-template-columns: 1fr 1fr; }
       .toolbar #search { grid-column: 1 / -1; }
       .stats { grid-template-columns: 1fr 1fr; }
@@ -354,9 +376,15 @@
           <p class="subtle" id="version" data-i18n="connecting">Connecting to API…</p>
         </div>
       </div>
-      <div class="connection" id="connection" role="status">
-        <span class="connection-dot"></span>
-        <span id="connectionText" data-i18n="checking">Checking</span>
+      <div class="topbar-actions">
+        <div class="connection" id="connection" role="status">
+          <span class="connection-dot"></span>
+          <span id="connectionText" data-i18n="checking">Checking</span>
+        </div>
+        <select class="language-select" id="language" aria-label="Language" data-i18n-aria-label="language">
+          <option value="en">English</option>
+          <option value="ru">Русский</option>
+        </select>
       </div>
     </header>
 
@@ -368,10 +396,6 @@
         <option value="image" data-i18n="images">Images</option>
         <option value="ps4">PS4</option>
         <option value="ps5">PS5</option>
-      </select>
-      <select id="language" aria-label="Language" data-i18n-aria-label="language">
-        <option value="en">English</option>
-        <option value="ru">Русский</option>
       </select>
       <label class="check"><input id="includeSize" type="checkbox"> <span data-i18n="calculateSize">Calculate size</span></label>
       <button class="btn" id="refreshBtn" type="button" data-i18n="refresh">Refresh</button>
@@ -428,11 +452,31 @@
           </div>
         </section>
 
-        <section class="panel" aria-labelledby="manualHeading">
-          <h2 id="manualHeading">manual.lst</h2>
-          <p class="subtle" data-i18n="manualDescription">Additional scan sources</p>
+        <section class="panel" aria-labelledby="settingsHeading">
+          <h2 id="settingsHeading" data-i18n="settings">Settings</h2>
+          <form class="settings-form" id="settingsForm">
+            <label class="check"><input id="debugEnabled" type="checkbox"> <span data-i18n="debugLog">Debug log</span></label>
+            <label class="check"><input id="quietMode" type="checkbox"> <span data-i18n="quietMode">Quiet mode</span></label>
+            <label class="check"><input id="updateEmulators" type="checkbox"> <span data-i18n="autoUpdateEmulator">Auto-update emulator</span></label>
+            <label class="check"><input id="allowLanAccess" type="checkbox"> <span data-i18n="allowLanAccess">Allow local network access</span></label>
+            <label class="setting-row"><span data-i18n="fanTemperature">Fan target</span><select id="fanTemperature"><option value="0" data-i18n="systemControlled">System controlled</option></select></label>
+            <div class="settings-actions">
+              <button class="btn small primary" type="submit" data-i18n="saveSettings">Save settings</button>
+              <button class="btn small" id="viewLog" type="button" data-i18n="viewLog">View debug log</button>
+              <button class="btn small" id="viewKernelLog" type="button" data-i18n="viewKernelLog">View kernel log</button>
+            </div>
+          </form>
+          <h3 class="subheading" data-i18n="scanPaths">Scan paths</h3>
+          <p class="subtle" data-i18n="scanPathsDescription">Custom recursive roots; defaults stay hidden</p>
+          <form class="manual-form" id="scanPathForm">
+            <input id="scanPath" required placeholder="/mnt/usb0/games">
+            <button class="btn small" type="submit" data-i18n="add">Add</button>
+          </form>
+          <div class="manual-list" id="scanPathList"><span class="subtle" data-i18n="loading">Loading…</span></div>
+          <h3 class="subheading" id="manualHeading">manual.lst</h3>
+          <p class="subtle" data-i18n="manualDescription">Direct paths to individual game folders or images</p>
           <form class="manual-form" id="manualForm">
-            <input id="manualPath" required placeholder="/mnt/usb0/games">
+            <input id="manualPath" required placeholder="/mnt/usb0/games/PPSA12345">
             <button class="btn small" type="submit" data-i18n="add">Add</button>
           </form>
           <div class="manual-list" id="manualList"><span class="subtle" data-i18n="loading">Loading…</span></div>
@@ -466,6 +510,22 @@
     </div>
   </div>
 
+  <div class="modal" id="logModal" hidden role="dialog" aria-modal="true" aria-labelledby="logTitle">
+    <div class="modal-card log-card">
+      <div class="modal-head">
+        <div>
+          <h2 id="logTitle" data-i18n="debugLogTitle">Debug log</h2>
+          <p class="subtle" id="logSubtitle"></p>
+        </div>
+        <div class="settings-actions">
+          <button class="btn small" id="refreshLog" type="button" data-i18n="refresh">Refresh</button>
+          <button class="btn close" id="closeLog" type="button" aria-label="Close" data-i18n-aria-label="close">&times;</button>
+        </div>
+      </div>
+      <pre class="log-view" id="logContent"></pre>
+    </div>
+  </div>
+
   <div class="toast" id="toast" hidden role="status"></div>
 
   <script>
@@ -481,9 +541,13 @@
         storageJob: null,
         storagePollTimer: 0,
         reportedStorageJob: "",
+        scanPaths: [],
         apiVersion: null,
         connectionStatus: "",
-        connectionKey: "checking"
+        connectionKey: "checking",
+        logRoute: "/debug-log",
+        logTitleKey: "debugLogTitle",
+        logTriggerId: "viewLog"
       };
       const $ = (id) => document.getElementById(id);
 
@@ -519,8 +583,27 @@
           perSecond: "/s",
           time: "Time",
           cancel: "Cancel",
-          manualDescription: "Additional scan sources",
+          manualDescription: "Direct paths to individual game folders or images",
           add: "Add",
+          settings: "Settings",
+          debugLog: "Debug log",
+          quietMode: "Quiet mode",
+          autoUpdateEmulator: "Auto-update emulator",
+          allowLanAccess: "Allow local network access",
+          fanTemperature: "Fan target",
+          systemControlled: "System controlled",
+          saveSettings: "Save settings",
+          settingsSaved: "Settings saved; runtime reload queued",
+          viewLog: "View debug log",
+          viewKernelLog: "View kernel log",
+          debugLogTitle: "Debug log",
+          kernelLogTitle: "Kernel log",
+          logBytes: "Showing {shown} of {total}",
+          scanPaths: "Scan paths",
+          scanPathsDescription: "Custom recursive roots; an empty list uses built-in defaults",
+          scanPathAdded: "Scan path added locally; save settings to apply",
+          scanPathRemoved: "Scan path removed locally; save settings to apply",
+          invalidAbsolutePath: "Enter a non-root absolute path",
           scanOptions: "Scan options",
           resetAttempts: "Reset attempt counters",
           resetAttemptsDescription: "This option applies only to the next forced scan.",
@@ -550,6 +633,7 @@
           operationCopy: "Copying",
           operationMove: "Moving",
           operationDelete: "Deleting",
+          operationUnpack: "Unpacking",
           noActiveOperations: "No active operations",
           calculating: "Calculating…",
           cancelling: "Cancelling…",
@@ -588,6 +672,7 @@
           mountReadWrite: "Mount R/W",
           copy: "Copy",
           move: "Move",
+          unpack: "Unpack",
           deleteSource: "Delete source",
           storageBusyHint: "Wait for the current storage operation to finish",
           uninstall: "Uninstall",
@@ -595,6 +680,8 @@
           storageBusy: "A storage operation is already running",
           copyDestination: "Destination folder for copying:",
           moveDestination: "Destination folder for moving:",
+          unpackDestination: "Destination folder for unpacking. A {title} subfolder will be created:",
+          unpackDeleteConfirm: "Delete the source image only after unpacking completes successfully?\n\nCancel keeps the image.",
           jobStarted: "{operation} {title} started as job {id}",
           operationStarted: "Operation started",
           uninstallConfirm: "Request uninstall of {game}?\n\nThe source image or folder will not be deleted.",
@@ -632,8 +719,27 @@
           perSecond: "/с",
           time: "Время",
           cancel: "Отменить",
-          manualDescription: "Дополнительные источники сканирования",
+          manualDescription: "Прямые пути к отдельным папкам игр или образам",
           add: "Добавить",
+          settings: "Настройки",
+          debugLog: "Журнал отладки",
+          quietMode: "Тихий режим",
+          autoUpdateEmulator: "Автообновление эмулятора",
+          allowLanAccess: "Разрешить доступ из локальной сети",
+          fanTemperature: "Целевая температура",
+          systemControlled: "Управление системой",
+          saveSettings: "Сохранить настройки",
+          settingsSaved: "Настройки сохранены; обновление конфигурации поставлено в очередь",
+          viewLog: "Просмотреть журнал",
+          viewKernelLog: "Просмотреть журнал ядра",
+          debugLogTitle: "Журнал отладки",
+          kernelLogTitle: "Журнал ядра",
+          logBytes: "Показано {shown} из {total}",
+          scanPaths: "Точки сканирования",
+          scanPathsDescription: "Пользовательские корни; при пустом списке используются встроенные пути",
+          scanPathAdded: "Точка добавлена локально; сохраните настройки для применения",
+          scanPathRemoved: "Точка удалена локально; сохраните настройки для применения",
+          invalidAbsolutePath: "Введите абсолютный путь, отличный от корня",
           scanOptions: "Параметры сканирования",
           resetAttempts: "Сбросить счётчики попыток",
           resetAttemptsDescription: "Параметр применяется только к следующему принудительному сканированию.",
@@ -663,6 +769,7 @@
           operationCopy: "Копирование",
           operationMove: "Перемещение",
           operationDelete: "Удаление",
+          operationUnpack: "Распаковка",
           noActiveOperations: "Активных операций нет",
           calculating: "Подсчёт…",
           cancelling: "Отмена…",
@@ -701,6 +808,7 @@
           mountReadWrite: "Подключить R/W",
           copy: "Копировать",
           move: "Переместить",
+          unpack: "Распаковать",
           deleteSource: "Удалить источник",
           storageBusyHint: "Дождитесь завершения текущей операции с хранилищем",
           uninstall: "Деинсталлировать",
@@ -708,6 +816,8 @@
           storageBusy: "Уже выполняется операция с хранилищем",
           copyDestination: "Папка назначения для копирования:",
           moveDestination: "Папка назначения для перемещения:",
+          unpackDestination: "Папка назначения для распаковки. В ней будет создана подпапка {title}:",
+          unpackDeleteConfirm: "Удалить исходный образ только после успешного завершения распаковки?\n\nОтмена сохранит образ.",
           jobStarted: "{operation} {title} запущено, задача {id}",
           operationStarted: "Операция запущена",
           uninstallConfirm: "Запросить деинсталляцию {game}?\n\nИсходный образ или папка не удаляются.",
@@ -751,6 +861,7 @@
           $("version").textContent = `ShadowMount ${state.apiVersion.shadowmount_version} · API v${state.apiVersion.api_version}`;
         }
         if (state.connectionStatus) setConnection(state.connectionStatus, state.connectionKey);
+        if (!$("logModal").hidden) $("logTitle").textContent = t(state.logTitleKey);
         if (persist) {
           try { localStorage.setItem("shadowmount.language", currentLanguage); } catch (_) { /* Keep the in-memory selection. */ }
         }
@@ -947,6 +1058,7 @@
       function storageOperationLabel(operation) {
         if (operation === "move") return t("operationMove");
         if (operation === "delete") return t("operationDelete");
+        if (operation === "unpack") return t("operationUnpack");
         return t("operationCopy");
       }
 
@@ -1144,6 +1256,121 @@
         }
       }
 
+      function renderScanPaths() {
+        const list = $("scanPathList");
+        list.replaceChildren();
+        if (!state.scanPaths.length) {
+          list.append(node("span", "subtle", t("listEmpty")));
+          return;
+        }
+        state.scanPaths.forEach((path, index) => {
+          const row = node("div", "manual-row");
+          const value = node("span", "manual-path", path);
+          value.title = path;
+          const remove = node("button", "btn small danger", t("remove"));
+          remove.type = "button";
+          remove.addEventListener("click", () => {
+            state.scanPaths.splice(index, 1);
+            renderScanPaths();
+            toast(t("scanPathRemoved"));
+          });
+          row.append(value, remove);
+          list.append(row);
+        });
+      }
+
+      async function refreshSettings() {
+        try {
+          const settings = await api("/settings");
+          $("debugEnabled").checked = Boolean(settings.debug);
+          $("quietMode").checked = Boolean(settings.quiet_mode);
+          $("updateEmulators").checked = Boolean(settings.update_emulators);
+          $("allowLanAccess").checked = Boolean(settings.allow_lan_access);
+          $("fanTemperature").value = String(settings.fan_target_temperature || 0);
+          state.scanPaths = Array.isArray(settings.scan_paths) ? settings.scan_paths.slice() : [];
+          renderScanPaths();
+        } catch (error) {
+          $("scanPathList").replaceChildren(node("span", "subtle", errorMessage(error)));
+        }
+      }
+
+      function addScanPath(event) {
+        event.preventDefault();
+        const input = $("scanPath");
+        let path = input.value.trim();
+        while (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+        if (!path.startsWith("/") || path === "/") {
+          toast(t("invalidAbsolutePath"), true);
+          return;
+        }
+        if (!state.scanPaths.includes(path)) state.scanPaths.push(path);
+        input.value = "";
+        renderScanPaths();
+        toast(t("scanPathAdded"));
+      }
+
+      async function saveSettings(event) {
+        event.preventDefault();
+        const submit = $("settingsForm").querySelector('button[type="submit"]');
+        submit.disabled = true;
+        try {
+          await api("/settings/update", {
+            debug: $("debugEnabled").checked,
+            quiet_mode: $("quietMode").checked,
+            update_emulators: $("updateEmulators").checked,
+            allow_lan_access: $("allowLanAccess").checked,
+            fan_target_temperature: Number($("fanTemperature").value),
+            scan_paths: state.scanPaths
+          });
+          logActivity(t("settingsSaved"));
+          toast(t("settingsSaved"));
+          setTimeout(refreshSettings, 1200);
+        } catch (error) {
+          logActivity(errorMessage(error), "error");
+          toast(errorMessage(error), true);
+        } finally {
+          submit.disabled = false;
+        }
+      }
+
+      async function refreshLog() {
+        $("refreshLog").disabled = true;
+        try {
+          const result = await api(state.logRoute, { max_bytes: 262144 });
+          $("logContent").textContent = result.content || "";
+          $("logSubtitle").textContent = t("logBytes", {
+            shown: formatBytes(Number(result.returned_bytes)),
+            total: formatBytes(Number(result.total_bytes !== undefined
+              ? result.total_bytes : result.file_size))
+          });
+          $("logContent").scrollTop = $("logContent").scrollHeight;
+        } catch (error) {
+          $("logContent").textContent = errorMessage(error);
+          $("logSubtitle").textContent = "";
+        } finally {
+          $("refreshLog").disabled = false;
+        }
+      }
+
+      function showLog(route, titleKey, triggerId) {
+        state.logRoute = route;
+        state.logTitleKey = titleKey;
+        state.logTriggerId = triggerId;
+        $("logModal").hidden = false;
+        $("logTitle").textContent = t(titleKey);
+        $("logContent").textContent = t("loading");
+        $("refreshLog").focus();
+        refreshLog();
+      }
+
+      function showDebugLog() { showLog("/debug-log", "debugLogTitle", "viewLog"); }
+      function showKernelLog() { showLog("/kernel-log", "kernelLogTitle", "viewKernelLog"); }
+
+      function closeDebugLog() {
+        $("logModal").hidden = true;
+        $(state.logTriggerId).focus();
+      }
+
       async function addManual(event) {
         event.preventDefault();
         const input = $("manualPath");
@@ -1270,16 +1497,22 @@
         const storageBusy = Boolean(state.storageJob && state.storageJob.active);
         const copy = actionButton(t("copy"), () => storageOperation(game, "copy"));
         const move = actionButton(t("move"), () => storageOperation(game, "move"));
+        const unpack = game.image_backed
+          ? actionButton(t("unpack"), () => unpackImage(game))
+          : null;
         const remove = actionButton(t("deleteSource"), () => deleteSource(game), "danger");
         copy.disabled = storageBusy;
         move.disabled = storageBusy;
+        if (unpack) unpack.disabled = storageBusy || game.mounted;
         remove.disabled = storageBusy;
         if (storageBusy) {
           copy.title = t("storageBusyHint");
           move.title = copy.title;
+          if (unpack) unpack.title = copy.title;
           remove.title = copy.title;
         }
         actions.append(copy, move);
+        if (unpack) actions.append(unpack);
         actions.append(actionButton(t("uninstall"), () => uninstallGame(game), "danger"));
         actions.append(remove);
         if (focusRuntimeAction) runtimeAction.focus();
@@ -1311,6 +1544,21 @@
         const destination = prompt(t(operation === "copy" ? "copyDestination" : "moveDestination"), "/mnt/usb0");
         if (!destination) return;
         await startStorageJob(game, operation, { title_id: game.title_id, destination_dir: destination });
+      }
+
+      async function unpackImage(game) {
+        if (state.storageJob && state.storageJob.active) {
+          toast(t("storageBusy"), true);
+          return;
+        }
+        const destination = prompt(t("unpackDestination", { title: game.title_id }), "/mnt/usb0");
+        if (!destination) return;
+        const deleteSourceAfter = confirm(t("unpackDeleteConfirm"));
+        await startStorageJob(game, "unpack", {
+          title_id: game.title_id,
+          destination_dir: destination,
+          delete_source: deleteSourceAfter
+        });
       }
 
       async function startStorageJob(game, operation, payload) {
@@ -1351,6 +1599,7 @@
         renderGames();
         if (state.storageJob) renderStorageJob(state.storageJob);
         if (state.selected) renderDetails(state.selected);
+        renderScanPaths();
         refreshStorage();
         refreshManual();
       });
@@ -1359,12 +1608,28 @@
       $("scanBtn").addEventListener("click", requestScan);
       $("cancelTransfer").addEventListener("click", cancelStorageJob);
       $("manualForm").addEventListener("submit", addManual);
+      $("settingsForm").addEventListener("submit", saveSettings);
+      $("scanPathForm").addEventListener("submit", addScanPath);
+      $("viewLog").addEventListener("click", showDebugLog);
+      $("viewKernelLog").addEventListener("click", showKernelLog);
+      $("refreshLog").addEventListener("click", refreshLog);
+      $("closeLog").addEventListener("click", closeDebugLog);
+      $("logModal").addEventListener("click", (event) => { if (event.target === $("logModal")) closeDebugLog(); });
       $("closeModal").addEventListener("click", closeModal);
       $("modal").addEventListener("click", (event) => { if (event.target === $("modal")) closeModal(); });
-      document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !$("modal").hidden) closeModal(); });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (!$("logModal").hidden) closeDebugLog();
+        else if (!$("modal").hidden) closeModal();
+      });
 
+      for (let temperature = 50; temperature <= 91; temperature += 1) {
+        const option = node("option", "", `${temperature} °C`);
+        option.value = String(temperature);
+        $("fanTemperature").append(option);
+      }
       applyLanguage(currentLanguage);
-      Promise.all([refreshAll(), refreshManual(), refreshStorageJob()]);
+      Promise.all([refreshAll(), refreshManual(), refreshSettings(), refreshStorageJob()]);
     })();
   </script>
 </body>

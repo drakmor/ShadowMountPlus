@@ -2,6 +2,7 @@
 #define SM_MDBG_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -22,5 +23,9 @@ void sm_mdbg_game_shutdown(void);
 uint64_t sm_mdbg_next_wake_us(uint64_t now_us);
 // Poll the tracked process for mdbg crash-candidate state.
 void sm_mdbg_poll(void);
+// Return a caller-owned tail of the same SDK log stream used by crash
+// detection. The total byte count describes the current complete snapshot.
+int sm_mdbg_get_log_tail(size_t max_bytes, char **text_out,
+                         size_t *text_length_out, size_t *total_length_out);
 
 #endif

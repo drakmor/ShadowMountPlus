@@ -3,6 +3,9 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "디버그 설정으로 이동",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor 및 커뮤니티",
+    /* English: ShadowMount+ startup with web interface */
+    [SM_L10N_STARTUP_WEB] =
+        "ShadowMount+ v%s\n© Drakmor 및 커뮤니티\n웹 인터페이스: %s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1은 더 이상 권장되지 않으며 scan_depth=2를 사용합니다.",
     /* English: ShadowMount+: scan depth %u enabled. */

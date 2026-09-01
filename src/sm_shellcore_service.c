@@ -201,6 +201,7 @@ static int begin_runtime_release(const char *title_id,
   bool different_title = has_owner && !owner;
   bool blocked = different_title || g_service.releasing_title_id[0] != '\0' ||
                  (prepared && g_service.prepare_in_progress) ||
+                 (public_request && g_service.external_mutation_in_progress) ||
                  (public_request && prepared &&
                   (g_service.launch_pending || g_service.prepared.app_id != 0));
   if (!blocked) {

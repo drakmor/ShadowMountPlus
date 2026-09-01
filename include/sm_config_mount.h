@@ -2,6 +2,7 @@
 #define SM_CONFIG_MOUNT_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct runtime_config runtime_config_t;
@@ -12,12 +13,23 @@ void ensure_runtime_config_ready(void);
 bool load_runtime_config(void);
 // Reload runtime configuration from disk when config.ini changed.
 bool reload_runtime_config_if_changed(bool *reloaded_out);
+// Atomically persist the settings exposed by the HTTP API while preserving
+// unrelated config.ini keys and comments. Runtime reload remains scanner-owned.
+bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
+                                  bool update_emulators_enabled,
+                                  bool allow_lan_access,
+                                  uint32_t fan_target_temperature_c,
+                                  const char *const *scan_paths,
+                                  size_t scan_path_count);
 // Return the current runtime configuration.
 const runtime_config_t *runtime_config(void);
 // Return the number of configured scan roots.
 int get_scan_path_count(void);
 // Return a scan root by index, or NULL if out of range.
 const char *get_scan_path(int index);
+// Return only scan roots explicitly configured through scanpath entries.
+int get_custom_scan_path_count(void);
+const char *get_custom_scan_path(int index);
 // Return scan depth for a root, including managed container-root expansion.
 uint32_t get_scan_depth_for_root(const char *scan_path);
 // Resolve a per-image read-only override from the file name.
