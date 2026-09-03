@@ -286,8 +286,9 @@
 
     .manual-path { overflow: hidden; color: var(--muted); font: 11px/1.4 ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
     .settings-form { display: grid; gap: 10px; margin-top: 12px; }
+    .settings-form .check { white-space: normal; }
     .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
-    .setting-row select { width: 112px; }
+    .setting-row select, .setting-row input { width: 112px; }
     .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
     .subheading { margin-top: 17px; font-size: 14px; }
     .log-view { min-height: 460px; max-height: 76vh; margin: 0; overflow: auto; padding: 20px; background: #080c12; color: #c8d7ea; font: 14px/1.55 ui-monospace, "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -457,7 +458,10 @@
           <form class="settings-form" id="settingsForm">
             <label class="check"><input id="debugEnabled" type="checkbox"> <span data-i18n="debugLog">Debug log</span></label>
             <label class="check"><input id="quietMode" type="checkbox"> <span data-i18n="quietMode">Quiet mode</span></label>
-            <label class="check"><input id="updateEmulators" type="checkbox"> <span data-i18n="autoUpdateEmulator">Auto-update emulator</span></label>
+            <label class="check"><input id="updateEmulators" type="checkbox"> <span data-i18n="updateFakelibEmulators">Update game fakelib emulators</span></label>
+            <label class="check"><input id="autoUpdateAmpr" type="checkbox"> <span data-i18n="autoUpdateAmpr">Update AMPR emulator from GitHub</span></label>
+            <label class="check"><input id="autoRemoveMissingGames" type="checkbox"> <span data-i18n="autoRemoveMissingGames">Remove unavailable app icons</span></label>
+            <label class="setting-row"><span data-i18n="autoRemoveDelay">Removal delay (seconds)</span><input id="autoRemoveMissingDelay" type="number" min="1" max="86400" step="1" value="300" required></label>
             <label class="check"><input id="allowLanAccess" type="checkbox"> <span data-i18n="allowLanAccess">Allow local network access</span></label>
             <label class="setting-row"><span data-i18n="fanTemperature">Fan target</span><select id="fanTemperature"><option value="0" data-i18n="systemControlled">System controlled</option></select></label>
             <div class="settings-actions">
@@ -588,7 +592,10 @@
           settings: "Settings",
           debugLog: "Debug log",
           quietMode: "Quiet mode",
-          autoUpdateEmulator: "Auto-update emulator",
+          updateFakelibEmulators: "Update game fakelib emulators",
+          autoUpdateAmpr: "Update AMPR emulator from GitHub",
+          autoRemoveMissingGames: "Remove unavailable app icons",
+          autoRemoveDelay: "Removal delay (seconds)",
           allowLanAccess: "Allow local network access",
           fanTemperature: "Fan target",
           systemControlled: "System controlled",
@@ -724,7 +731,10 @@
           settings: "Настройки",
           debugLog: "Журнал отладки",
           quietMode: "Тихий режим",
-          autoUpdateEmulator: "Автообновление эмулятора",
+          updateFakelibEmulators: "Обновлять эмуляторы в fakelib игр",
+          autoUpdateAmpr: "Обновлять эмулятор AMPR с GitHub",
+          autoRemoveMissingGames: "Удалять иконки недоступных приложений",
+          autoRemoveDelay: "Задержка удаления (секунды)",
           allowLanAccess: "Разрешить доступ из локальной сети",
           fanTemperature: "Целевая температура",
           systemControlled: "Управление системой",
@@ -1285,6 +1295,10 @@
           $("debugEnabled").checked = Boolean(settings.debug);
           $("quietMode").checked = Boolean(settings.quiet_mode);
           $("updateEmulators").checked = Boolean(settings.update_emulators);
+          $("autoUpdateAmpr").checked = Boolean(settings.auto_update_ampr);
+          $("autoRemoveMissingGames").checked = Boolean(settings.auto_remove_missing_games);
+          $("autoRemoveMissingDelay").value = String(settings.auto_remove_missing_delay_seconds || 300);
+          syncAutoRemoveControls();
           $("allowLanAccess").checked = Boolean(settings.allow_lan_access);
           $("fanTemperature").value = String(settings.fan_target_temperature || 0);
           state.scanPaths = Array.isArray(settings.scan_paths) ? settings.scan_paths.slice() : [];
@@ -1292,6 +1306,10 @@
         } catch (error) {
           $("scanPathList").replaceChildren(node("span", "subtle", errorMessage(error)));
         }
+      }
+
+      function syncAutoRemoveControls() {
+        $("autoRemoveMissingDelay").disabled = !$("autoRemoveMissingGames").checked;
       }
 
       function addScanPath(event) {
@@ -1318,6 +1336,9 @@
             debug: $("debugEnabled").checked,
             quiet_mode: $("quietMode").checked,
             update_emulators: $("updateEmulators").checked,
+            auto_update_ampr: $("autoUpdateAmpr").checked,
+            auto_remove_missing_games: $("autoRemoveMissingGames").checked,
+            auto_remove_missing_delay_seconds: Number($("autoRemoveMissingDelay").value),
             allow_lan_access: $("allowLanAccess").checked,
             fan_target_temperature: Number($("fanTemperature").value),
             scan_paths: state.scanPaths
@@ -1609,6 +1630,7 @@
       $("cancelTransfer").addEventListener("click", cancelStorageJob);
       $("manualForm").addEventListener("submit", addManual);
       $("settingsForm").addEventListener("submit", saveSettings);
+      $("autoRemoveMissingGames").addEventListener("change", syncAutoRemoveControls);
       $("scanPathForm").addEventListener("submit", addScanPath);
       $("viewLog").addEventListener("click", showDebugLog);
       $("viewKernelLog").addEventListener("click", showKernelLog);

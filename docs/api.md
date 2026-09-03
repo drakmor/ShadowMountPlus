@@ -55,7 +55,7 @@ device.
 | `/api/v1/manual/add` | `{"path":"/mnt/usb0/games/PPSA12345"}` | Idempotently add one game source to `manual.lst` |
 | `/api/v1/manual/remove` | `{"path":"/mnt/usb0/games/PPSA12345"}` | Remove matching source lines from `manual.lst` |
 | `/api/v1/settings` | `{}` | Read web-managed runtime settings and scan paths |
-| `/api/v1/settings/update` | `{"debug":true,"quiet_mode":false,"update_emulators":true,"allow_lan_access":true,"fan_target_temperature":0,"scan_paths":["/mnt/usb0/games"]}` | Atomically update the web-managed part of `config.ini` |
+| `/api/v1/settings/update` | `{"debug":true,"quiet_mode":false,"update_emulators":true,"auto_update_ampr":false,"auto_remove_missing_games":false,"auto_remove_missing_delay_seconds":300,"allow_lan_access":true,"fan_target_temperature":0,"scan_paths":["/mnt/usb0/games"]}` | Atomically update the web-managed part of `config.ini` |
 | `/api/v1/debug-log` | `{"max_bytes":131072}` | Read a bounded tail of `debug.log` for the web log dialog |
 | `/api/v1/kernel-log` | `{"max_bytes":131072}` | Read a bounded tail of the SDK kernel-log stream used by crash detection |
 | `/api/v1/games` | `{"include_size":false}` | Detailed game snapshot; optional physical source-size calculation |
@@ -200,6 +200,8 @@ trailing-slash normalization as the scanner; comments and empty lines are not
 included. A missing `manual.lst` is reported as an empty list.
 
 The settings update owns only `debug`, `quiet_mode`, `update_emulators`,
+`auto_update_ampr`, `auto_remove_missing_games`,
+`auto_remove_missing_delay_seconds`,
 `api_bind_address`, `fan_target_temperature`, and repeated `scanpath` keys. The
 `allow_lan_access` field maps to `0.0.0.0` when enabled and `127.0.0.1` when
 disabled. It atomically rewrites those keys while preserving every unrelated

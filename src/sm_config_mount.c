@@ -116,6 +116,10 @@ static bool web_managed_config_key(const char *key) {
   return strcasecmp(key, "debug") == 0 ||
          strcasecmp(key, "quiet_mode") == 0 ||
          strcasecmp(key, "update_emulators") == 0 ||
+         strcasecmp(key, "auto_update_ampr") == 0 ||
+         strcasecmp(key, "auto_remove_missing_games") == 0 ||
+         strcasecmp(key, "auto_remove_missing_delay_seconds") == 0 ||
+         strcasecmp(key, "auto_remove_missing_delay_sec") == 0 ||
          strcasecmp(key, "fan_target_temperature") == 0 ||
          strcasecmp(key, "api_bind_address") == 0 ||
          strcasecmp(key, "api_bind_adress") == 0 ||
@@ -1854,11 +1858,18 @@ bool reload_runtime_config_if_changed(bool *reloaded_out) {
 
 bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   bool update_emulators_enabled,
+                                  bool auto_update_ampr_enabled,
+                                  bool auto_remove_missing_games,
+                                  uint32_t auto_remove_missing_delay_seconds,
                                   bool allow_lan_access,
                                   uint32_t fan_target_temperature_c,
                                   const char *const *scan_paths,
                                   size_t scan_path_count) {
-  if ((fan_target_temperature_c != FAN_TARGET_TEMPERATURE_SYSTEM &&
+  if (auto_remove_missing_delay_seconds <
+          MIN_AUTO_REMOVE_MISSING_DELAY_SECONDS ||
+      auto_remove_missing_delay_seconds >
+          MAX_AUTO_REMOVE_MISSING_DELAY_SECONDS ||
+      (fan_target_temperature_c != FAN_TARGET_TEMPERATURE_SYSTEM &&
        (fan_target_temperature_c < MIN_FAN_TARGET_TEMPERATURE_C ||
         fan_target_temperature_c > MAX_FAN_TARGET_TEMPERATURE_C)) ||
       scan_path_count > MAX_SCAN_PATHS ||
@@ -1974,9 +1985,15 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
       fprintf(out,
               "\n# Managed by the ShadowMount web interface.\n"
               "debug=%u\nquiet_mode=%u\nupdate_emulators=%u\n"
+              "auto_update_ampr=%u\n"
+              "auto_remove_missing_games=%u\n"
+              "auto_remove_missing_delay_seconds=%u\n"
               "api_bind_address=%s\n",
               debug_enabled ? 1u : 0u, quiet_mode ? 1u : 0u,
               update_emulators_enabled ? 1u : 0u,
+              auto_update_ampr_enabled ? 1u : 0u,
+              auto_remove_missing_games ? 1u : 0u,
+              auto_remove_missing_delay_seconds,
               allow_lan_access ? "0.0.0.0" : "127.0.0.1") < 0) {
     saved_errno = config_io_error();
   }

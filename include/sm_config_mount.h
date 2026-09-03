@@ -17,6 +17,9 @@ bool reload_runtime_config_if_changed(bool *reloaded_out);
 // unrelated config.ini keys and comments. Runtime reload remains scanner-owned.
 bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   bool update_emulators_enabled,
+                                  bool auto_update_ampr_enabled,
+                                  bool auto_remove_missing_games,
+                                  uint32_t auto_remove_missing_delay_seconds,
                                   bool allow_lan_access,
                                   uint32_t fan_target_temperature_c,
                                   const char *const *scan_paths,

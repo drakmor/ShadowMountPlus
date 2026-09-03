@@ -373,11 +373,15 @@ def test_settings_and_log(client: ApiClient) -> None:
         "debug",
         "quiet_mode",
         "update_emulators",
+        "auto_update_ampr",
+        "auto_remove_missing_games",
     ):
         require(type(settings.get(key)) is bool, f"settings {key} must be boolean")
     require(settings["api_enabled"], "API reports itself disabled")
     fan_target = integer_field(settings, "fan_target_temperature")
     require(fan_target == 0 or 50 <= fan_target <= 91, "fan target is invalid")
+    remove_delay = integer_field(settings, "auto_remove_missing_delay_seconds")
+    require(1 <= remove_delay <= 86400, "auto-remove delay is invalid")
     scan_paths = settings.get("scan_paths")
     require(isinstance(scan_paths, list), "scan_paths must be an array")
     require(
@@ -633,6 +637,18 @@ def test_mutation_validation(client: ApiClient) -> None:
         (ROUTE_STORAGE_JOB_STATUS, {"job_id": "invalid"}),
         (ROUTE_STORAGE_JOB_CANCEL, {"job_id": 0}),
         (ROUTE_SETTINGS_UPDATE, {}),
+        (
+            ROUTE_SETTINGS_UPDATE,
+            {
+                "debug": True,
+                "quiet_mode": False,
+                "update_emulators": False,
+                "auto_remove_missing_delay_seconds": 0,
+                "allow_lan_access": False,
+                "fan_target_temperature": 0,
+                "scan_paths": [],
+            },
+        ),
         (
             ROUTE_SETTINGS_UPDATE,
             {

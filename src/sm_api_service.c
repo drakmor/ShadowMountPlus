@@ -1603,6 +1603,12 @@ static void handle_settings(struct MHD_Connection *connection) {
       !add_json_bool(response, "quiet_mode", cfg.quiet_mode) ||
       !add_json_bool(response, "update_emulators",
                      cfg.update_emulators_enabled) ||
+      !add_json_bool(response, "auto_update_ampr",
+                     cfg.auto_update_ampr_enabled) ||
+      !add_json_bool(response, "auto_remove_missing_games",
+                     cfg.auto_remove_missing_games) ||
+      !add_json_int(response, "auto_remove_missing_delay_seconds",
+                    cfg.auto_remove_missing_delay_seconds) ||
       !add_json_int(response, "fan_target_temperature",
                     cfg.fan_target_temperature_c) ||
       !add_json_int(response, "scan_path_count", (int64_t)count)) {
@@ -1616,15 +1622,25 @@ static void handle_settings(struct MHD_Connection *connection) {
 
 static void handle_settings_update(struct MHD_Connection *connection,
                                    struct json_object *request) {
+  runtime_config_t current_cfg = *runtime_config();
   bool debug_enabled = false;
   bool quiet_mode = false;
   bool update_emulators = false;
+  bool auto_update_ampr = current_cfg.auto_update_ampr_enabled;
+  bool auto_remove_missing_games = current_cfg.auto_remove_missing_games;
   bool allow_lan_access = false;
+  struct json_object *remove_delay_value = NULL;
   struct json_object *fan_value = NULL;
   struct json_object *paths_value = NULL;
   if (!get_required_bool(request, "debug", &debug_enabled) ||
       !get_required_bool(request, "quiet_mode", &quiet_mode) ||
       !get_required_bool(request, "update_emulators", &update_emulators) ||
+      !get_optional_bool(request, "auto_update_ampr",
+                         current_cfg.auto_update_ampr_enabled,
+                         &auto_update_ampr) ||
+      !get_optional_bool(request, "auto_remove_missing_games",
+                         current_cfg.auto_remove_missing_games,
+                         &auto_remove_missing_games) ||
       !get_required_bool(request, "allow_lan_access", &allow_lan_access) ||
       !json_object_object_get_ex(request, "fan_target_temperature",
                                  &fan_value) ||
@@ -1633,6 +1649,25 @@ static void handle_settings_update(struct MHD_Connection *connection,
       !json_object_is_type(paths_value, json_type_array)) {
     send_error_response(connection, 400, EINVAL,
                         "settings fields have invalid types");
+    return;
+  }
+
+  int64_t remove_delay_int = current_cfg.auto_remove_missing_delay_seconds;
+  if (json_object_object_get_ex(request,
+                                "auto_remove_missing_delay_seconds",
+                                &remove_delay_value)) {
+    if (!json_object_is_type(remove_delay_value, json_type_int)) {
+      send_error_response(connection, 400, EINVAL,
+                          "settings fields have invalid types");
+      return;
+    }
+    remove_delay_int = json_object_get_int64(remove_delay_value);
+  }
+  if (remove_delay_int < MIN_AUTO_REMOVE_MISSING_DELAY_SECONDS ||
+      remove_delay_int > MAX_AUTO_REMOVE_MISSING_DELAY_SECONDS) {
+    send_error_response(
+        connection, 400, EINVAL,
+        "auto_remove_missing_delay_seconds must be 1..86400");
     return;
   }
 
@@ -1668,6 +1703,8 @@ static void handle_settings_update(struct MHD_Connection *connection,
   }
   if (!valid || !sm_config_write_web_settings(
                     debug_enabled, quiet_mode, update_emulators,
+                    auto_update_ampr, auto_remove_missing_games,
+                    (uint32_t)remove_delay_int,
                     allow_lan_access,
                     (uint32_t)fan_value_int, paths, path_count)) {
     int status = valid && errno != 0 ? errno : EINVAL;

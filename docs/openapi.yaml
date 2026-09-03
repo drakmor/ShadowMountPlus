@@ -1244,6 +1244,17 @@ components:
           type: boolean
         update_emulators:
           type: boolean
+        auto_update_ampr:
+          type: boolean
+          description: Download libSceAmpr.sprx updates from the configured GitHub release URL. Omission preserves the current value for compatibility with older web clients.
+        auto_remove_missing_games:
+          type: boolean
+          description: Remove app registrations whose source remains unavailable. Omission preserves the current value for compatibility with older web clients.
+        auto_remove_missing_delay_seconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+          description: Omission preserves the current value for compatibility with older web clients.
         allow_lan_access:
           type: boolean
           description: Bind to 0.0.0.0 when true or 127.0.0.1 when false.
