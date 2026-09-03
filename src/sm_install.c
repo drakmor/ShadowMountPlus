@@ -62,6 +62,24 @@ static app_install_title_dir_fn_t resolve_app_install_title_dir(void) {
   return NULL;
 }
 
+bool sm_install_register_title_dir(const char *title_id,
+                                   const char *install_dir,
+                                   int *result_out) {
+  if (!title_id || !install_dir || !result_out)
+    return false;
+
+  if (sm_shellcore_install_bridge_enabled())
+    return sm_shellcore_install_title_dir(title_id, install_dir, result_out);
+
+  app_install_title_dir_fn_t install_title_dir =
+      resolve_app_install_title_dir();
+  if (!install_title_dir)
+    return false;
+
+  *result_out = install_title_dir(title_id, install_dir, NULL);
+  return true;
+}
+
 static bool is_appmeta_file(const char *name) {
   if (!name)
     return false;
@@ -332,26 +350,20 @@ static bool mount_and_install(const char *src_path, const char *title_id,
 
   // REGISTER
   int res = 0;
-  if (sm_shellcore_install_bridge_enabled()) {
-    if (!sm_shellcore_install_title_dir(title_id, APP_BASE "/", &res)) {
+  bool bridge_enabled = sm_shellcore_install_bridge_enabled();
+  if (!sm_install_register_title_dir(title_id, APP_BASE "/", &res)) {
+    if (bridge_enabled) {
       log_debug("  [REG] internal AppInstallTitleDir bridge unavailable");
       notify_system_l10n(SM_L10N_REGISTER_BRIDGE_UNAVAILABLE, title_name,
                          title_id);
-      return false;
-    }
-    mark_register_attempted(title_id);
-  } else {
-    app_install_title_dir_fn_t app_install_title_dir_fn =
-        resolve_app_install_title_dir();
-    if (!app_install_title_dir_fn) {
+    } else {
       log_debug("  [REG] sceAppInstUtilAppInstallTitleDir unavailable");
       notify_system_l10n(SM_L10N_REGISTER_FAILED_UNAVAILABLE, title_name,
                          title_id);
-      return false;
     }
-    mark_register_attempted(title_id);
-    res = app_install_title_dir_fn(title_id, APP_BASE "/", NULL);
+    return false;
   }
+  mark_register_attempted(title_id);
   if (res == 0) {
     invalidate_app_db_title_cache();
     clear_register_attempts(title_id);

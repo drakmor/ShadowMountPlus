@@ -23,6 +23,7 @@ KERNEL_SYS_STUB_SO := src/libkernel_sys_ext.so
 KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUBS_DIR)/libkernel_sys.c src/libkernel_sys_ext.c
 
 ASSET_SRCS := src/notify_icon_asset.c src/config_ini_example_asset.c src/web_index_asset.c
+ASSET_SRCS += src/shell_icon_param_asset.c
 SRCS := src/main.c $(wildcard src/sm_*.c) $(ASSET_SRCS)
 ASM_SRCS := src/sm_shellcore_bridge.S
 OBJS := $(SRCS:.c=.o) $(ASM_SRCS:.S=.o)
@@ -40,7 +41,7 @@ usb-info.elf: tools/usb_info.c
 shadowmountplus.elf: $(OBJS) $(KERNEL_SYS_STUB_SO)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(KERNEL_SYS_STUB_SO) $(LIBS)
 	$(PS5_PAYLOAD_SDK)/bin/prospero-strip --strip-all $@
-	rm -f src/notify_icon_asset.c src/config_ini_example_asset.c src/web_index_asset.c
+	rm -f $(ASSET_SRCS)
 
 $(KERNEL_SYS_STUB_SO): $(KERNEL_SYS_STUB_SRCS)
 	test -f "$(PS5_SCE_STUBS_DIR)/libkernel_sys.c"
@@ -53,6 +54,9 @@ src/config_ini_example_asset.c: config.ini.example
 	xxd -i $< > $@
 
 src/web_index_asset.c: web/index.html
+	xxd -i $< > $@
+
+src/shell_icon_param_asset.c: assets/shell_icon_param.json
 	xxd -i $< > $@
 
 src/sm_api_service.o src/sm_icon_thumb.o: CFLAGS += $(HOMEBREW_CFLAGS)
@@ -72,4 +76,4 @@ src/%.o: src/%.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f shadowmountplus.elf usb-info.elf api-test.elf kill.elf src/*.o $(KERNEL_SYS_STUB_SO) src/notify_icon_asset.c src/config_ini_example_asset.c src/web_index_asset.c
+	rm -f shadowmountplus.elf usb-info.elf api-test.elf kill.elf src/*.o $(KERNEL_SYS_STUB_SO) $(ASSET_SRCS)

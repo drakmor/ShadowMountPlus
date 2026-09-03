@@ -16,6 +16,7 @@
 #include "sm_shellcore_flags.h"
 #include "sm_shellcore_hooks.h"
 #include "sm_shellcore_service.h"
+#include "sm_shell_icon.h"
 #include "sm_config_mount.h"
 #include "sm_game_lifecycle.h"
 #include "sm_kstuff.h"
@@ -593,6 +594,7 @@ int main(void) {
     log_debug("  [SHELLCORE] lifecycle hooks unavailable; stock behavior kept");
     notify_system_l10n(SM_L10N_SHELLCORE_HOOKS_FAILED);
   }
+  sm_shell_icon_install_if_missing();
   if (!refresh_game_lifecycle_watcher())
     log_debug("  [GAME] lifecycle watcher unavailable");
   // Publish the initial AppFocus only after its lifecycle/kstuff consumers.
