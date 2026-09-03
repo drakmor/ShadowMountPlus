@@ -96,6 +96,8 @@ An autonomous example library UI is provided as `web/index.html`. Copy it to
 in a browser, for example `http://192.168.1.50:10101/`. The file is read for
 each request, so it can be replaced without restarting ShadowMount. If it is
 missing, `GET /` returns HTTP 404 with the normal JSON error response.
+The bundled interface covers all 31 console locales, selects the closest match
+from the browser locale, and keeps a manually selected locale in local storage.
 
 ## Responses
 
