@@ -7,6 +7,7 @@
 #include <pthread.h>
 
 #include "sm_limits.h"
+#include "sm_kstuff.h"
 #include "sm_log.h"
 #include "sm_runtime.h"
 #include "sm_shellcore_hooks.h"
@@ -71,6 +72,42 @@ static const shellcore_import_t k_bridge_imports[] = {
     {sm_shellcore_bridge_write, "write"},
     {sm_shellcore_bridge_close, "close"},
 };
+
+static pid_t find_shellcore_pid(void);
+
+static bool wait_for_bridge_mprotect(pid_t pid, uintptr_t address,
+                                     size_t size) {
+  bool waiting_logged = false;
+
+  for (unsigned int waited_us = 0;
+       waited_us <= SHELLCORE_MPROTECT_WAIT_MAX_US;
+       waited_us += SHELLCORE_MPROTECT_WAIT_POLL_US) {
+    if (should_stop_requested())
+      return false;
+
+    if (sm_kstuff_remote_mprotect(pid, address, size,
+                                  PROT_READ | PROT_EXEC)) {
+      if (waiting_logged)
+        log_debug("  [SHELLCORE] bridge mprotect ready: pid=%ld",
+                  (long)pid);
+      return true;
+    }
+
+    if (!waiting_logged) {
+      log_debug("  [SHELLCORE] waiting for executable bridge protection");
+      waiting_logged = true;
+    }
+    if (waited_us == SHELLCORE_MPROTECT_WAIT_MAX_US)
+      break;
+    if (sleep_with_stop_check(SHELLCORE_MPROTECT_WAIT_POLL_US))
+      return false;
+  }
+
+  log_debug("  [SHELLCORE] bridge mprotect timeout after %u ms; hook "
+            "injection skipped",
+            SHELLCORE_MPROTECT_WAIT_MAX_US / 1000u);
+  return false;
+}
 
 typedef struct {
   sm_shellcore_target_t target;
@@ -428,6 +465,7 @@ static bool install_hooks_for_pid(pid_t pid) {
     return false;
   }
 
+  bool attached = true;
   bool ok = false;
   bool cleanup_pending = false;
   size_t patched_count = 0;
@@ -493,18 +531,6 @@ static bool install_hooks_for_pid(pid_t pid) {
               bridge_size);
     goto done;
   }
-  /*
-   * The old physical-write path bypassed VM dirty accounting, so an anonymous
-   * bridge page could be reclaimed and restored as zeroes. Populate through
-   * PT_IO below and keep the bridge resident for the lifetime of the hook.
-   */
-  if (!sm_remote_process_lock(pid, bridge_address, bridge_size)) {
-    log_debug("  [SHELLCORE] failed to lock bridge memory: address=0x%lx "
-              "size=0x%zx",
-              (unsigned long)bridge_address, bridge_size);
-    goto done;
-  }
-
   shellcore_hook_record_t *launch_hook_record = &hooks.hooks[0];
   uintptr_t launch_target = hooks.remote.targets[launch_hook_record->target];
   shellcore_hook_record_t *install_hook_record = &hooks.hooks[1];
@@ -531,24 +557,37 @@ static bool install_hooks_for_pid(pid_t pid) {
   if (!resolve_bridge_imports(pid, bridge, blob_size))
     goto done;
 
-  /* PT_IO updates VM accounting; mlock keeps the populated page resident. */
-  bool bridge_written = sm_remote_process_write_attached(
-      pid, bridge_address, bridge, bridge_size);
-  bool protection_ok = false;
-  if (bridge_written) {
-    protection_ok =
-        kernel_mprotect(pid, (intptr_t)bridge_address, code_size,
-                        PROT_READ | PROT_EXEC) == 0;
-    if (install_hook_enabled && protection_ok) {
-      protection_ok =
-          kernel_mprotect(pid, (intptr_t)(bridge_address + code_size),
-                          bridge_size - code_size,
-                          PROT_READ | PROT_WRITE) == 0;
-    }
-  }
-  if (!bridge_written || !protection_ok) {
-    log_debug("  [SHELLCORE] bridge install failed");
+  if (!sm_remote_process_write_attached(pid, bridge_address, bridge,
+                                        bridge_size)) {
+    log_debug("  [SHELLCORE] failed to write bridge memory");
     goto done;
+  }
+  if (!sm_remote_process_lock(pid, bridge_address, bridge_size)) {
+    log_debug("  [SHELLCORE] failed to lock bridge memory: "
+              "address=0x%lx size=0x%zx",
+              (unsigned long)bridge_address, bridge_size);
+    goto done;
+  }
+
+  /* Never publish a hook until the bridge's actual RX transition succeeds. */
+  if (!sm_remote_process_protect(pid, bridge_address, code_size,
+                                 PROT_READ | PROT_EXEC)) {
+    if (!sm_remote_process_detach(pid)) {
+      log_debug("  [SHELLCORE] failed to detach before mprotect wait: pid=%ld",
+                (long)pid);
+      if (sm_remote_process_detach(pid))
+        attached = false;
+      goto done;
+    }
+    attached = false;
+    if (!wait_for_bridge_mprotect(pid, bridge_address, code_size))
+      goto done;
+    if (!sm_remote_process_attach(pid)) {
+      log_debug("  [SHELLCORE] failed to reattach after mprotect: pid=%ld",
+                (long)pid);
+      goto done;
+    }
+    attached = true;
   }
 
   uintptr_t launch_hook =
@@ -580,13 +619,21 @@ static bool install_hooks_for_pid(pid_t pid) {
   ok = true;
 
 done:
-  if (!ok) {
-    cleanup_pending = !cleanup_remote_bridge(
-                          pid, &hooks.remote, hooks.hooks, patched_count,
-                          bridge_address, bridge_size) &&
-                      patched_count != 0;
+  if (!attached && bridge_address) {
+    attached = sm_remote_process_attach(pid);
+    if (!attached) {
+      log_debug("  [SHELLCORE] failed to attach for bridge cleanup: pid=%ld",
+                (long)pid);
+    }
   }
-  bool detached = sm_remote_process_detach(pid);
+  if (!ok) {
+    cleanup_pending =
+        attached &&
+        !cleanup_remote_bridge(pid, &hooks.remote, hooks.hooks, patched_count,
+                               bridge_address, bridge_size) &&
+        patched_count != 0;
+  }
+  bool detached = !attached || sm_remote_process_detach(pid);
   if (!detached) {
     log_debug("  [SHELLCORE] failed to detach from pid=%ld", (long)pid);
     if (ok) {

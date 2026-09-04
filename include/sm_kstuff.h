@@ -5,10 +5,18 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#define SM_KSTUFF_KEKCALL_CHECK UINT64_C(0xffffffff00000027)
+#define SM_KSTUFF_KEKCALL_REMOTE_SYSCALL UINT64_C(0x500000027)
+
 // Resolve firmware-specific kstuff sysentvec addresses and initialize state.
 void sm_kstuff_init(void);
 // Shut down runtime kstuff control state.
 void sm_kstuff_shutdown(void);
+// Return true when kstuff answers its own KEKCALL_CHECK readiness probe.
+bool sm_kstuff_is_loaded(void);
+// Run mprotect for another process through kstuff's remote-syscall service.
+bool sm_kstuff_remote_mprotect(pid_t pid, uintptr_t address, size_t size,
+                               int protection);
 // Return true when firmware-specific kstuff control is available.
 bool sm_kstuff_is_supported(void);
 // Return true when both tracked kstuff sysentvecs are enabled.

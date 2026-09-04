@@ -22,6 +22,9 @@ bool sm_remote_process_attach(pid_t pid);
 bool sm_remote_process_detach(pid_t pid);
 // Manage anonymous memory while the remote process is attached.
 uintptr_t sm_remote_process_map(pid_t pid, size_t size);
+// Change mapping protection through the target process's syscall path.
+bool sm_remote_process_protect(pid_t pid, uintptr_t address, size_t size,
+                               int protection);
 // Pin long-lived anonymous mappings while remote hooks can execute.
 bool sm_remote_process_lock(pid_t pid, uintptr_t address, size_t size);
 bool sm_remote_process_unlock(pid_t pid, uintptr_t address, size_t size);

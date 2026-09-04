@@ -136,6 +136,15 @@ uintptr_t sm_remote_process_map(pid_t pid, size_t size) {
   return (uintptr_t)result;
 }
 
+bool sm_remote_process_protect(pid_t pid, uintptr_t address, size_t size,
+                               int protection) {
+  if (!address || size == 0)
+    return false;
+  const uint64_t args[6] = {address, size, (uint64_t)protection, 0, 0, 0};
+  uint64_t result = UINT64_MAX;
+  return remote_syscall(pid, SYS_mprotect, args, &result) && result == 0;
+}
+
 bool sm_remote_process_lock(pid_t pid, uintptr_t address, size_t size) {
   if (!address || size == 0)
     return false;
