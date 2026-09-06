@@ -13,6 +13,7 @@ struct PathStateEntry {
   bool missing_param_limit_logged;
   bool image_mount_limit_logged;
   bool backport_mount_blocked;
+  bool backport_permissions_incomplete_logged;
   bool manual_missing_source_logged;
   bool game_info_cached;
   bool game_info_valid;
@@ -84,6 +85,7 @@ static struct PathStateEntry *create_path_state(const char *path) {
         if (g_path_state[k].missing_param_attempts == 0 &&
             g_path_state[k].image_mount_attempts == 0 &&
             !g_path_state[k].backport_mount_blocked &&
+            !g_path_state[k].backport_permissions_incomplete_logged &&
             !g_path_state[k].manual_missing_source_logged &&
             !g_path_state[k].game_info_cached) {
           evict_k = k;
@@ -300,6 +302,25 @@ void clear_backport_mount_failure(const char *path) {
   if (!entry)
     return;
   entry->backport_mount_blocked = false;
+}
+
+bool note_backport_permissions_incomplete_once(const char *path) {
+  if (!path || path[0] == '\0')
+    return false;
+  struct PathStateEntry *entry = get_or_create_path_state(path);
+  if (!entry || entry->backport_permissions_incomplete_logged)
+    return false;
+  entry->backport_permissions_incomplete_logged = true;
+  return true;
+}
+
+void clear_backport_permissions_incomplete(const char *path) {
+  if (!path || path[0] == '\0')
+    return;
+  struct PathStateEntry *entry = find_path_state(path);
+  if (!entry)
+    return;
+  entry->backport_permissions_incomplete_logged = false;
 }
 
 bool note_manual_missing_source_once(const char *path) {

@@ -902,11 +902,148 @@ void unmount_usb_sources_for_suspend(void) {
   log_debug("[SLEEP] USB-backed mount cleanup done");
 }
 
+typedef struct {
+  size_t fixed;
+  size_t failures;
+  int first_error;
+  char first_failed_path[MAX_PATH];
+} backport_permission_repair_t;
+
+static bool backport_filesystem_needs_permission_repair(const char *path) {
+  struct statfs filesystem;
+  if (statfs(path, &filesystem) != 0)
+    return false;
+
+  if (strcmp(filesystem.f_fstypename, "nullfs") == 0) {
+    char source_path[MAX_PATH];
+    if (filesystem.f_mntfromname[0] != '/' ||
+        strlcpy(source_path, filesystem.f_mntfromname,
+                sizeof(source_path)) >= sizeof(source_path) ||
+        statfs(source_path, &filesystem) != 0) {
+      return false;
+    }
+  }
+
+  return strcmp(filesystem.f_fstypename, "ufs") == 0 ||
+         strcmp(filesystem.f_fstypename, "bfs") == 0;
+}
+
+static void note_backport_permission_failure(
+    backport_permission_repair_t *repair, const char *path, int error) {
+  repair->failures++;
+  if (repair->first_failed_path[0] != '\0')
+    return;
+
+  repair->first_error = error;
+  (void)strlcpy(repair->first_failed_path, path,
+                sizeof(repair->first_failed_path));
+}
+
+static bool repair_backport_path_permissions(
+    const char *path, backport_permission_repair_t *repair) {
+  if (should_stop_requested() || runtime_sleep_mode_active())
+    return false;
+
+  struct stat st;
+  if (lstat(path, &st) != 0) {
+    if (errno != ENOENT)
+      note_backport_permission_failure(repair, path, errno);
+    return true;
+  }
+  if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode))
+    return true;
+
+  if ((st.st_mode & 07777) != 0777) {
+    if (chmod(path, 0777) != 0) {
+      note_backport_permission_failure(repair, path, errno);
+      return true;
+    } else {
+      repair->fixed++;
+    }
+  }
+
+  if (!S_ISDIR(st.st_mode))
+    return true;
+
+  DIR *directory = opendir(path);
+  if (!directory) {
+    note_backport_permission_failure(repair, path, errno);
+    return true;
+  }
+
+  bool completed = true;
+  while (true) {
+    if (should_stop_requested() || runtime_sleep_mode_active()) {
+      completed = false;
+      break;
+    }
+
+    errno = 0;
+    struct dirent *entry = readdir(directory);
+    if (!entry) {
+      if (errno != 0)
+        note_backport_permission_failure(repair, path, errno);
+      break;
+    }
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      continue;
+
+    char child_path[MAX_PATH];
+    int written = snprintf(child_path, sizeof(child_path), "%s/%s", path,
+                           entry->d_name);
+    if (written < 0 || (size_t)written >= sizeof(child_path)) {
+      note_backport_permission_failure(repair, path, ENAMETOOLONG);
+      continue;
+    }
+    if (!repair_backport_path_permissions(child_path, repair)) {
+      completed = false;
+      break;
+    }
+  }
+  if (closedir(directory) != 0)
+    note_backport_permission_failure(repair, path, errno);
+  return completed;
+}
+
+static void repair_backport_permissions_for_scan_root(const char *scan_path) {
+  char backports_root[MAX_PATH];
+  if (!build_backports_root_path(scan_path, backports_root))
+    return;
+
+  struct stat root_st;
+  if (lstat(backports_root, &root_st) != 0 || !S_ISDIR(root_st.st_mode))
+    return;
+  if (!backport_filesystem_needs_permission_repair(backports_root)) {
+    clear_backport_permissions_incomplete(backports_root);
+    return;
+  }
+
+  backport_permission_repair_t repair = {0};
+  if (!repair_backport_path_permissions(backports_root, &repair))
+    return;
+
+  if (repair.fixed != 0)
+    log_debug("  [BKP] permissions fixed: root=%s entries=%zu", backports_root,
+              repair.fixed);
+  if (repair.failures == 0) {
+    clear_backport_permissions_incomplete(backports_root);
+  } else if (note_backport_permissions_incomplete_once(backports_root)) {
+    log_debug("  [BKP] permission repair incomplete: root=%s failures=%zu "
+              "first=%s (%s)",
+              backports_root, repair.failures, repair.first_failed_path,
+              strerror(repair.first_error));
+  }
+}
+
 static void collect_scan_candidates_from_root(
     const char *scan_path, scan_candidate_t *candidates, int max_candidates,
     int *candidate_count, const scan_app_db_context_t *app_db,
     char discovered_param_roots[][MAX_PATH],
     int *discovered_param_root_count, bool *unstable_found_out) {
+  if (should_stop_requested() || runtime_sleep_mode_active())
+    return;
+
+  repair_backport_permissions_for_scan_root(scan_path);
   if (should_stop_requested() || runtime_sleep_mode_active())
     return;
 
