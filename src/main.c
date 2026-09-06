@@ -141,7 +141,7 @@ bool should_stop_requested(void) {
   }
 
   if (remove(KILL_FILE) == 0) {
-    g_stop_requested = 1;
+    request_shutdown_stop("STOP file " KILL_FILE);
     return true;
   }
   return false;
