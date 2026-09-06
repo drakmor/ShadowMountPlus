@@ -10,14 +10,15 @@ CFLAGS += -DSHADOWMOUNT_VERSION=\"$(VERSION_TAG)\"
 # Linker
 LDFLAGS := -flto=thin -Wl,--gc-sections
 
-# Standard Libraries Only
-LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lsqlite3
+# Standard libraries only.
+LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lsqlite3 -lSceIpmi
 PS5_SCE_STUBS_DIR ?= $(PS5_PAYLOAD_SDK)/src/sce_stubs
 KERNEL_SYS_STUB_SO := src/libkernel_sys_ext.so
 KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUBS_DIR)/libkernel_sys.c src/libkernel_sys_ext.c
 
 ASSET_SRCS := src/notify_icon_asset.c src/config_ini_example_asset.c
-SRCS := src/main.c $(wildcard src/sm_*.c) $(ASSET_SRCS)
+IPMI_SRCS := src/ipmi_symbols.c src/ipmi_client.c src/ipmi_handler.c
+SRCS := src/main.c $(wildcard src/sm_*.c) $(IPMI_SRCS) $(ASSET_SRCS)
 OBJS := $(SRCS:.c=.o)
 HEADERS := $(wildcard include/*.h)
 

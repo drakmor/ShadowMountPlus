@@ -1,0 +1,470 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include "ipmi_handler.h"
+
+#include "sm_env_ipmi_dispatch.h"
+#include "ipmi_log.h"
+
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+typedef uint64_t u64;
+
+typedef enum SlotKind {
+    KIND_UNKNOWN = 0,
+    KIND_DTOR,
+    KIND_SYNC_DATAINFO,
+    KIND_SYNC_RAW,
+    KIND_ASYNC_DATAINFO,
+    KIND_ASYNC_RAW,
+    KIND_SESSION_KILLED,
+} SlotKind;
+
+static const char* kind_name(SlotKind k) {
+    switch (k) {
+        case KIND_DTOR:            return "~EventHandler";
+        case KIND_SYNC_DATAINFO:   return "onSyncMethodDispatch(DataInfo)";
+        case KIND_SYNC_RAW:        return "onSyncMethodDispatch(raw)";
+        case KIND_ASYNC_DATAINFO:  return "onAsyncMethodDispatch(DataInfo)";
+        case KIND_ASYNC_RAW:       return "onAsyncMethodDispatch(raw)";
+        case KIND_SESSION_KILLED:  return "onSessionKilled";
+        default:                   return "UNIDENTIFIED";
+    }
+}
+
+// Widest window we are willing to treat as EventHandler's vtable.
+//
+// Measured: the class has nine virtuals, not the seven its exported methods
+// imply, and they are not in export order:
+//
+//   [0x00] ~D1  [0x08] ~D0  [0x10] onSyncMethodDispatch(DataInfo)
+//   [0x18] onAsyncMethodDispatch(DataInfo)
+//   [0x20] [0x28] two slots sharing one address outside libSceIpmi --
+//                 unexported, so unnameable by this method
+//   [0x30] onSessionKilled  [0x38] onSyncMethodDispatch(raw)
+//   [0x40] onAsyncMethodDispatch(raw), by elimination
+//
+// A cap of 8 stopped one slot short of that last one and reported it missing.
+// Twelve covers it with slack; the scan stops at the last slot it can name, so
+// a larger cap cannot run past the end of the vtable.
+enum { kMaxSlots = 12 };
+
+// Our vtable, laid out as the Itanium ABI wants it: offset-to-top and typeinfo
+// first, then the function pointers. The object's vptr points at g_vtable[2].
+//
+// Only the slots the scan named are copied. Reading further is not free
+// padding: measured, the two words after the last virtual are the next vtable's
+// offset-to-top and typeinfo, and the words after those are another class's
+// methods. Copying them would install unrelated functions as our own.
+static void*    g_vtable[2 + kMaxSlots];
+static SlotKind g_kind[kMaxSlots];
+
+// The handler object itself. EventHandler is an interface and should carry no
+// data, but the padding costs nothing and a wrong guess about that would
+// otherwise be a memory corruption rather than a log line.
+typedef struct HandlerObject {
+    void**        vptr;
+    unsigned char reserved[0x40];
+} HandlerObject;
+static HandlerObject g_handler;
+
+// One-shot: the first Session* we are handed gets its vtable dumped, which is
+// how SessionImpl's slots get identified for the reply path later.
+static const IpmiSyms* g_syms;
+static bool            g_sessionDumped;
+
+// What the connect callback saw, captured without touching a file or klog. Read
+// and printed later by handler_drain_connect_log() from the resident loop.
+typedef struct ConnectRecord {
+    volatile bool pending;
+    unsigned      calls;
+    int           slot;
+    u64           srv, cfg, extra;
+    unsigned char cfgHead[0x40];
+    uint64_t      memorySize;
+    uint64_t      memorySizeSet;
+    int           createSessionSlot;
+    int           createSessionRc;
+    u64           session;
+} ConnectRecord;
+static ConnectRecord g_connect;
+
+// Session memory for createSession. Static, not malloc'd: this is used from
+// inside the connection window, where the less that happens the better.
+static unsigned char g_sessionMem[0x20000] __attribute__((aligned(16)));
+
+// Deliberately branch-light and I/O-free: this runs inside the connection
+// window. Two memcpys and some stores.
+static void capture_connect(int slot, void* self, u64 srv, u64 cfg, u64 extra) {
+    (void)self;
+    g_connect.calls++;
+    g_connect.slot  = slot;
+    g_connect.srv   = srv;
+    g_connect.cfg   = cfg;
+    g_connect.extra = extra;
+    if (cfg) {
+        memcpy(g_connect.cfgHead, (const void*)(cfg),
+               sizeof(g_connect.cfgHead));
+        memcpy(&g_connect.memorySize,
+               (const unsigned char*)(cfg) + 0x148, 8);
+    }
+
+    // Create the session the connection needs. Our return value reaches the
+    // client as serviceResult=0, yet without this the client's transport status
+    // is 1, which libSceIpmi maps to 0x8002000d -- "accepted, but no session
+    // exists". The framework hands this callback exactly what createSession
+    // wants: the Server*, the SessionImpl::Config*, and a seeded memorySize.
+    g_connect.createSessionSlot = -1;
+    g_connect.createSessionRc = 0;
+    g_connect.session = 0;
+    if (srv && g_syms && g_syms->srvCreateSession) {
+        // Say how big the buffer is. The framework seeds memorySize with a
+        // floor of 0x10 and expects the handler to supply both the memory and
+        // its size. Left at 0x10, createSession succeeded and one command
+        // dispatched, then IPMIMGR killed the process (signo=0xa0020320
+        // opt32=0x02010006) -- a session running off the end of 16 bytes.
+        const uint64_t have = sizeof(g_sessionMem);
+        memcpy((unsigned char*)(cfg) + 0x148, &have, 8);
+        g_connect.memorySizeSet = have;
+
+        const int slotIdx = ipmi_vtable_slot_of((void*)(srv),
+                                                g_syms->srvCreateSession, 24);
+        g_connect.createSessionSlot = slotIdx;
+        if (slotIdx >= 0) {
+            void* const* vt = *(void* const* const*)(srv);
+            typedef int (*CreateSessionFn)(void* self, void** out, void* cfg,
+                                           void* mem);
+            void* session = NULL;
+            g_connect.createSessionRc =
+                ((CreateSessionFn)vt[slotIdx])(
+                    (void*)(srv), &session,
+                    (void*)(cfg), g_sessionMem);
+            g_connect.session = (u64)(session);
+        }
+    }
+    g_connect.pending = true;
+}
+
+static int64_t slot_dispatch(int slot, void* self, u64 a1, u64 a2, u64 a3, u64 a4,
+                      u64 a5, u64 a6) {
+    const SlotKind kind = (slot >= 0 && slot < kMaxSlots) ? g_kind[slot]
+                                                          : KIND_UNKNOWN;
+
+    switch (kind) {
+        case KIND_DTOR:
+            // Deliberately does not free anything: the object is static. The
+            // deleting destructor (~D0) landing here would otherwise call
+            // operator delete on a global.
+            logf_("EVH slot[%#04x] ~EventHandler self=%p (no-op: object is static)",
+                  slot * 8, self);
+            return 0;
+
+        case KIND_SYNC_DATAINFO: {
+            IpmiSession* session      = (IpmiSession*)(a1);
+            uint32_t       method       = (uint32_t)(a2);
+            const IpmiDataInfo* in    = (const IpmiDataInfo*)(a3);
+            uint32_t       inCount      = (uint32_t)(a4);
+            IpmiOutBuffer* out        = (IpmiOutBuffer*)(a5);
+            uint32_t       outCount     = (uint32_t)(a6);
+
+            logf_("SYNC  slot[%#04x] session=%p method=%#x inCount=%u outCount=%u",
+                  slot * 8, (void*)session, method, inCount, outCount);
+
+            if (session && !g_sessionDumped) {
+                g_sessionDumped = true;
+                ipmi_dump_vtable(g_syms, session, "session", 24);
+            }
+
+            for (uint32_t i = 0; i < inCount && i < 8; i++) {
+                logf_("  in[%u]  ptr=%p size=%zu", i, in ? in[i].data : NULL,
+                      in ? in[i].size : 0);
+                if (in && in[i].data) log_hexdump("       data", in[i].data, in[i].size);
+            }
+            // Zero `written` for every out entry, first. The framework leaves
+            // it uninitialised in a buffer it reuses between commands, so a
+            // command that returns without writing an out-param inherits the
+            // previous one's length. Measured: an unhandled command with a
+            // 4-byte out buffer responded with written=8 left over from the
+            // previous one and the client was killed for the mismatch
+            // (_ipmimgrRaiseException signo=0xa002031f opt64=0x18). Every path
+            // out -- answered, refused or unhandled -- must leave a truthful
+            // length.
+            for (uint32_t i = 0; i < outCount && out; i++) out[i].written = 0;
+            for (uint32_t i = 0; i < outCount && i < 8; i++) {
+                logf_("  out[%u] ptr=%p capacity=%zu", i,
+                      out ? out[i].data : NULL, out ? out[i].capacity : 0);
+            }
+
+            const int rc = sm_env_ipmi_dispatch(session, method, in, inCount,
+                                              out, outCount);
+
+            // Answer the request. Returning does not imply it: the framework
+            // calls this vtable slot and then returns without replying itself,
+            // and leaving a request unanswered gets the server killed
+            // (_ipmimgrRaiseException signo=0xa0020320 opt32=0x02010006).
+            // Writing into the out buffer is not sufficient on its own.
+            // Responding comes before logging so the reply does not wait on
+            // file I/O.
+            int respondRc = 0;
+            int respondSlot = -1;
+            if (session && g_syms && g_syms->sessRespondSyncBuf) {
+                respondSlot = ipmi_vtable_slot_of(session,
+                                                  g_syms->sessRespondSyncBuf, 24);
+                if (respondSlot >= 0) {
+                    void* const* svt =
+                        *(void* const* const*)(session);
+                    typedef int (*RespondFn)(void* self, int result,
+                                             const IpmiOutBuffer* out,
+                                             uint32_t outCount);
+                    respondRc = ((RespondFn)svt[respondSlot])(
+                        session, rc, out, outCount);
+                }
+            }
+
+            logf_("  -> rc=%#010x, out[0].written=%zu, "
+                  "respondToSyncMethodRequest slot=%d rc=%#010x%s",
+                  (unsigned)rc, (outCount && out) ? out[0].written : 0,
+                  respondSlot,
+                  (unsigned)respondRc,
+                  respondSlot < 0 ? "   <-- NOT FOUND: the request is unanswered "
+                                    "and the kernel will kill us" : "");
+            return rc;
+        }
+
+        case KIND_SYNC_RAW:
+            // Not implemented on purpose: the descriptor form is what our client
+            // sends and what a real sandboxed title has been served on, and
+            // nothing has ever arrived here. A dispatch that did would mean the
+            // wire shape is not what we measured, which is worth seeing in a log
+            // and is not worth answering blind.
+            logf_("SYNC-RAW slot[%#04x] session=%p method=%#x a3=%#lx a4=%#lx "
+                  "a5=%#lx a6=%#lx -- not implemented, refusing",
+                  slot * 8, (void*)a1, (unsigned)a2, (unsigned long)a3,
+                  (unsigned long)a4, (unsigned long)a5, (unsigned long)a6);
+            return SM_ENV_IPMI_ENOTSUP;
+
+        case KIND_ASYNC_DATAINFO: {
+            const IpmiDataInfo* in = (const IpmiDataInfo*)(a4);
+            uint32_t inCount         = (uint32_t)(a5);
+            logf_("ASYNC slot[%#04x] session=%p method=%#x unk=%#x inCount=%u",
+                  slot * 8, (void*)a1, (unsigned)a2, (unsigned)a3, inCount);
+            for (uint32_t i = 0; i < inCount && i < 8; i++) {
+                logf_("  in[%u]  ptr=%p size=%zu", i, in ? in[i].data : NULL,
+                      in ? in[i].size : 0);
+            }
+            // No async command is in scope; refusing is honest and cannot hang
+            // the caller the way an unhandled command would.
+            return SM_ENV_IPMI_ENOTSUP;
+        }
+
+        case KIND_ASYNC_RAW:
+            logf_("ASYNC-RAW slot[%#04x] session=%p method=%#x unk=%#x a4=%#lx "
+                  "a5=%#lx a6=%#lx -- not implemented, refusing",
+                  slot * 8, (void*)a1, (unsigned)a2, (unsigned)a3,
+                  (unsigned long)a4, (unsigned long)a5, (unsigned long)a6);
+            return SM_ENV_IPMI_ENOTSUP;
+
+        case KIND_SESSION_KILLED:
+            logf_("SESSION KILLED slot[%#04x] session=%p", slot * 8, (void*)a1);
+            g_sessionDumped = false;      // next session dumps again
+            return 0;
+
+        default:
+            // An unnamed slot, accepted rather than refused. Slot 0x20 is on
+            // the connect path: it arrives as (this, Server*, Session::Config*,
+            // void* extra) with memorySize seeded to a floor of 0x10, and
+            // whatever it returns goes straight back to the connecting client.
+            // While this refused, the client saw connect rc=0x8002000d
+            // serviceResult=0x80d90009. A callback that gates the connection
+            // has to succeed or nothing else ever runs; an unknown command is
+            // the opposite, and is refused.
+            //
+            // Not hooking it is not the safer option either: 0x20 and 0x28
+            // share one address we cannot name or vet.
+            capture_connect(slot, self, a1, a2, a3);
+            return 0;
+    }
+}
+
+// One thunk per slot so that the slot index is known without reading any
+// per-call state -- the firmware tells us nothing about which slot it entered.
+#define SLOT_THUNK(n)                                                        \
+    static int64_t evh_slot##n(void* self, u64 a1, u64 a2, u64 a3,       \
+                                   u64 a4, u64 a5, u64 a6) {                 \
+        return slot_dispatch(n, self, a1, a2, a3, a4, a5, a6);               \
+    }
+SLOT_THUNK(0)  SLOT_THUNK(1)  SLOT_THUNK(2)  SLOT_THUNK(3)
+SLOT_THUNK(4)  SLOT_THUNK(5)  SLOT_THUNK(6)  SLOT_THUNK(7)
+SLOT_THUNK(8)  SLOT_THUNK(9)  SLOT_THUNK(10) SLOT_THUNK(11)
+#undef SLOT_THUNK
+
+static void* const kThunks[kMaxSlots] = {
+    (void*)evh_slot0,  (void*)evh_slot1,  (void*)evh_slot2,  (void*)evh_slot3,
+    (void*)evh_slot4,  (void*)evh_slot5,  (void*)evh_slot6,  (void*)evh_slot7,
+    (void*)evh_slot8,  (void*)evh_slot9,  (void*)evh_slot10, (void*)evh_slot11,
+};
+
+// Bit per known EventHandler method, so that a slot whose address matches more
+// than one of them (identical bodies folded to one address by the linker) can
+// be reported as ambiguous rather than silently resolved to whichever we
+// checked first.
+enum {
+    M_D1 = 1 << 0, M_D0 = 1 << 1, M_D2 = 1 << 2,
+    M_SYNC_DI = 1 << 3, M_SYNC_RAW = 1 << 4,
+    M_ASYNC_DI = 1 << 5, M_ASYNC_RAW = 1 << 6, M_KILLED = 1 << 7,
+    M_DTORS = M_D1 | M_D0 | M_D2,
+};
+
+static unsigned match_mask(const IpmiSyms* s, const void* v) {
+    unsigned m = 0;
+    if (!v) return 0;
+    if (v == s->evhD1)             m |= M_D1;
+    if (v == s->evhD0)             m |= M_D0;
+    if (v == s->evhD2)             m |= M_D2;
+    if (v == s->evhSyncDataInfo)   m |= M_SYNC_DI;
+    if (v == s->evhSyncRaw)        m |= M_SYNC_RAW;
+    if (v == s->evhAsyncDataInfo)  m |= M_ASYNC_DI;
+    if (v == s->evhAsyncRaw)       m |= M_ASYNC_RAW;
+    if (v == s->evhSessionKilled)  m |= M_KILLED;
+    return m;
+}
+
+static SlotKind kind_from_mask(unsigned m) {
+    if (!m) return KIND_UNKNOWN;
+    // Destructors routinely share one address (D1 and D2 are the same code),
+    // so a mask that is entirely destructors is still an unambiguous answer.
+    if ((m & ~(unsigned)M_DTORS) == 0) return KIND_DTOR;
+    switch (m) {
+        case M_SYNC_DI:    return KIND_SYNC_DATAINFO;
+        case M_SYNC_RAW:   return KIND_SYNC_RAW;
+        case M_ASYNC_DI:   return KIND_ASYNC_DATAINFO;
+        case M_ASYNC_RAW:  return KIND_ASYNC_RAW;
+        case M_KILLED:     return KIND_SESSION_KILLED;
+        default:           return KIND_UNKNOWN;   // ambiguous: two names, one address
+    }
+}
+
+
+void handler_drain_connect_log(void) {
+    if (!g_connect.pending) return;
+    g_connect.pending = false;
+
+    uint32_t clientPid = 0, maxOut = 0, numEventFlag = 0, numMsgQueue = 0;
+    memcpy(&clientPid,    g_connect.cfgHead + 0x00, 4);
+    memcpy(&maxOut,       g_connect.cfgHead + 0x08, 4);
+    memcpy(&numEventFlag, g_connect.cfgHead + 0x38, 4);
+    memcpy(&numMsgQueue,  g_connect.cfgHead + 0x40, 4);
+
+    logf_("CONNECT callback (drained) slot[%#04x] call#%u srv=%#lx cfg=%#lx "
+          "extra=%#lx -- returned 0 with NO logging inside the callback",
+          g_connect.slot * 8, g_connect.calls, (unsigned long)g_connect.srv,
+          (unsigned long)g_connect.cfg, (unsigned long)g_connect.extra);
+    logf_("  SessionImpl::Config clientPid=%u maxOutstanding=%u "
+          "numEventFlag=%u numMsgQueue=%u memorySize=%#lx",
+          clientPid, maxOut, numEventFlag, numMsgQueue,
+          (unsigned long)g_connect.memorySize);
+    logf_("  memorySize seeded %#lx -> set to %#lx before createSession",
+          (unsigned long)g_connect.memorySize,
+          (unsigned long)g_connect.memorySizeSet);
+    logf_("  createSession slot=%d rc=%#010x session=%#lx%s",
+          g_connect.createSessionSlot, (unsigned)g_connect.createSessionRc,
+          (unsigned long)g_connect.session,
+          g_connect.createSessionSlot < 0
+              ? "   <-- NOT FOUND in the Server vtable"
+              : (g_connect.session ? "   <-- a session exists now"
+                                   : "   <-- no session was produced"));
+}
+
+HandlerBuild handler_build(const IpmiSyms* syms) {
+    HandlerBuild out = {NULL, 0, false};
+    g_syms = syms;
+
+    if (!syms->evhVtable) {
+        logf_("the EventHandler vtable symbol did not resolve; the layout cannot "
+              "be measured and this does not guess it");
+        return out;
+    }
+
+    void** ztv = (void**)(syms->evhVtable);
+
+    // Locate the address point. A _ZTV symbol normally points at the start of
+    // the vtable object -- offset-to-top, then typeinfo, then the methods -- so
+    // the address point is +2 slots, but some toolchains export the address
+    // point itself. Rather than assume either, find the first slot that is one
+    // of the methods we resolved by name.
+    int ap = -1;
+    for (int i = 0; i < 6 && ap < 0; i++) {
+        if (match_mask(syms, ztv[i])) ap = i;
+    }
+    if (ap < 0) {
+        logf_("none of the exported EventHandler methods appears in the first six "
+              "words at %p -- either the vtable symbol is not what we think, or "
+              "every method folded to an address we did not resolve. Refusing to "
+              "build a handler on that.", syms->evhVtable);
+        for (int i = 0; i < 6; i++) logf_("  ztv[%#04x] = %p", i * 8, ztv[i]);
+        return out;
+    }
+    logf_("EventHandler vtable %p, address point +%#x", syms->evhVtable, ap * 8);
+
+    void** base = ztv + ap;
+
+    // Length: run to the last slot that matches something we resolved. Stopping
+    // at the first miss would truncate on an unexported virtual; running to a
+    // fixed count would install a thunk over whatever follows the vtable.
+    int slots = 0;
+    unsigned seen = 0;
+    for (int i = 0; i < kMaxSlots; i++) {
+        const unsigned m = match_mask(syms, base[i]);
+        if (m) { slots = i + 1; seen |= m; }
+    }
+    out.slotCount = slots;
+
+    logf_("---- EventHandler vtable order, measured (%d slots)", slots);
+    for (int i = 0; i < slots; i++) {
+        const unsigned m = match_mask(syms, base[i]);
+        g_kind[i] = kind_from_mask(m);
+        const char* sym = ipmi_syms_name(syms, base[i]);
+        logf_("  [%#04x] %p  %-32s%s", i * 8, base[i], kind_name(g_kind[i]),
+              (g_kind[i] == KIND_UNKNOWN && sym) ? " (ambiguous address)" : "");
+    }
+    for (int i = slots; i < kMaxSlots; i++) g_kind[i] = KIND_UNKNOWN;
+
+    const unsigned wanted = M_SYNC_DI | M_SYNC_RAW | M_ASYNC_DI | M_ASYNC_RAW |
+                            M_KILLED;
+    if ((seen & wanted) != wanted) {
+        logf_("  note: not every exported method was located in the vtable "
+              "(seen=%#x wanted=%#x); unidentified slots log rather than "
+              "answering", seen & wanted, wanted);
+    }
+
+    // Carry the offset-to-top and typeinfo across when the symbol pointed at
+    // the start of the vtable object rather than at its address point. Nothing
+    // here reads them, but the real pair is more honest than whatever happened
+    // to precede the methods.
+    g_vtable[0] = (ap >= 2) ? ztv[ap - 2] : NULL;
+    g_vtable[1] = (ap >= 1) ? ztv[ap - 1] : NULL;
+    for (int i = 0; i < slots && i < kMaxSlots; i++) g_vtable[2 + i] = kThunks[i];
+
+    memset(&g_handler, 0, sizeof(g_handler));
+    g_handler.vptr = &g_vtable[2];
+
+    logf_("handler object=%p vptr=%p (offset-to-top=%p typeinfo=%p)",
+          (void*)&g_handler, (void*)g_handler.vptr, g_vtable[0], g_vtable[1]);
+    for (int i = 0; i < slots; i++) {
+        logf_("  ours [%#04x] = %p  %s", i * 8, g_vtable[2 + i],
+              kind_name(g_kind[i]));
+    }
+
+    for (int i = 0; i < slots; i++) {
+        if (g_kind[i] == KIND_SYNC_DATAINFO) out.syncDispatchProven = true;
+    }
+    if (!out.syncDispatchProven) {
+        logf_("the descriptor-form sync dispatch slot was not identified; the "
+              "service would come up and log whatever arrives, but refuse every "
+              "command");
+    }
+
+    out.handler = (IpmiEventHandler*)(&g_handler);
+    return out;
+}

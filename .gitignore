@@ -6,3 +6,4 @@ notify.txt
 src/notify_icon_asset.c
 refs/*
 docs/*
+*.so
