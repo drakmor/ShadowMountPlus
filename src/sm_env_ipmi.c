@@ -90,6 +90,13 @@ static void *dispatcher_thread(void *arg) {
   // worker naming itself renames the whole payload -- it stops being findable as
   // shadowmountplus.elf, and you cannot kill what you cannot find.
   TryDispatchFn tryDispatch = (TryDispatchFn)g_syms.srvTryDispatch;
+  // Taken once, deliberately. Re-reading g_srv every iteration raced teardown:
+  // it cleared g_srv before signalling the stop, so a dispatcher already past
+  // its !g_disp_stop check called tryDispatch(NULL) -- a null this into a
+  // firmware virtual. g_srv is not volatile either, so that read was a data
+  // race as well as a lifetime one. Teardown waits for g_disp_alive to clear
+  // before it destroys anything, so this reference cannot outlive its object.
+  void *const srv = g_srv;
 
   g_disp_alive = true;
   if (!tryDispatch) {
@@ -101,7 +108,7 @@ static void *dispatcher_thread(void *arg) {
 
   logf_("polling tryDispatch every %ums", kPollMs);
   while (!g_disp_stop) {
-    const int rc = tryDispatch(g_srv, g_work_buf, g_work_size);
+    const int rc = tryDispatch(srv, g_work_buf, g_work_size);
     if (rc != 0) {
       logf_("tryDispatch rc=%#010x -- stopping", (unsigned)rc);
       break;
@@ -180,7 +187,6 @@ static void server_teardown(const char *why) {
 
   if (!srv)
     return;
-  g_srv = NULL; // before the calls: nothing may reuse it
 
   // Ask, then wait for the dispatcher to actually be out. Destroying the server
   // while tryDispatch is inside it is a use-after-free, and the window is a
@@ -193,11 +199,17 @@ static void server_teardown(const char *why) {
     // Do not destroy. destroy() succeeds only on status == 0; a dispatch in
     // flight either refuses or wedges this process unkillably. Leaving it
     // undestroyed is harmless -- process exit releases the name.
+    // g_srv deliberately left set: the registration really is still live, and
+    // a later serve() must see that rather than trying to register a second
+    // server on a name this process still holds.
     logf_("%s: dispatcher is still inside tryDispatch -- not destroying; "
           "process exit will release the name",
           why);
     return;
   }
+
+  // Only now that the dispatcher is provably out is nothing reading it.
+  g_srv = NULL;
 
   // Resolve destroy by address in this object's own vtable: the slot is what
   // the instance actually implements. shutdownDispatcher is deliberately not
@@ -312,6 +324,17 @@ bool sm_env_ipmi_serve(void) {
     logf_("the sync-dispatch slot was not proven; the service would register "
           "but never serve. Refusing -- a name held by something that cannot "
           "answer is worse than no service at all.");
+    return false;
+  }
+
+  // The same rule, one symbol earlier. ipmi_syms_resolve() succeeds as long as
+  // the library opened; an individual slot may still be null. The dispatcher
+  // polls tryDispatch and will not fall back to runDispatcher, so without this
+  // symbol the thread exits on its first iteration while the registration
+  // stays. Checked before create() so there is nothing to tear down.
+  if (!g_syms.srvTryDispatch) {
+    logf_("ServerImpl::tryDispatch did not resolve; the service would register "
+          "but never serve. Refusing.");
     return false;
   }
 

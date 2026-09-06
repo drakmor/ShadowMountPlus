@@ -129,15 +129,26 @@ void ipmi_client_close(IpmiClient* c) {
          * their quit file forever. Dropping the disconnect took that from 5 of
          * 10 to 0 of 15. The session the far side keeps is not worth it; that
          * process is about to exit, which drops the session anyway. */
-        if (c->destroySlot >= 0)
+        if (c->destroySlot >= 0) {
             (void)((DestroyFn)vt[c->destroySlot])(c->handle);
-        else
-            logf_("  client: no destroy slot -- handle %p leaked", c->handle);
+        } else {
+            /* Leak the storage along with the handle. Undestroyed means the
+             * library still holds a client kid pointing into it, so freeing
+             * here would hand libSceIpmi a dangling backing buffer -- worse
+             * than one probe-sized leak. Rejecting the client in open()
+             * instead is not the answer: the probe would then skip its
+             * connect, name_is_free() would report the name free without
+             * having checked it, and create() on a held name kills us. */
+            logf_("  client: no destroy slot -- handle %p and storage leaked",
+                  c->handle);
+            c->storage = NULL;
+        }
 
         c->handle = NULL;
     }
 
-    /* Ours to free either way: storage is our malloc, not the library's. */
+    /* Ours to free once destroy() has released the kid: storage is our malloc,
+     * not the library's. NULL when it had to be leaked above. */
     free(c->storage);
     c->storage = NULL;
     c->connectSlot = c->invokeSlot = c->destroySlot = -1;

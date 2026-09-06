@@ -87,12 +87,46 @@ typedef struct ConnectRecord {
     int           createSessionSlot;
     int           createSessionRc;
     u64           session;
+    bool          noSessionSlot;
 } ConnectRecord;
 static ConnectRecord g_connect;
 
-// Session memory for createSession. Static, not malloc'd: this is used from
-// inside the connection window, where the less that happens the better.
-static unsigned char g_sessionMem[0x20000] __attribute__((aligned(16)));
+// Session memory for createSession. Static and pre-carved, not malloc'd: this
+// runs inside the connection window, where the less that happens the better.
+//
+// One buffer per live session, because sessions overlap as a matter of course.
+// Measured on 4.03 over four title launches: every title connects TWICE, about
+// two seconds apart, and the second connect lands while the first session is
+// still alive -- eight connects, high-water mark of two live at once, never
+// fewer. Sharing one buffer meant createSession placement-constructed each new
+// session over the live previous one, and all eight sessions duly reported the
+// same Session* (0x200949560): two handles, one object.
+//
+// Four slots for headroom over the observed two. No lock: the same measurement
+// showed connect, dispatch and onSessionKilled all arrive on the dispatcher
+// thread. Released in onSessionKilled, which the same run showed fires for
+// every session (8 created, 8 killed, live back to 0).
+enum { kSessionSlots = 4 };
+typedef struct SessionSlot {
+    unsigned char mem[0x20000] __attribute__((aligned(16)));
+    void*         session;  // non-NULL while this buffer backs a live session
+} SessionSlot;
+static SessionSlot g_sessionSlots[kSessionSlots];
+
+static SessionSlot* session_slot_claim(void) {
+    for (int i = 0; i < kSessionSlots; i++)
+        if (!g_sessionSlots[i].session) return &g_sessionSlots[i];
+    return NULL;
+}
+
+// Matching by pointer is sound only because each live session now has its own
+// buffer, and so its own address. It would have been ambiguous before this
+// change -- which was the symptom, not a reason to key on something else.
+static void session_slot_release(void* session) {
+    for (int i = 0; i < kSessionSlots; i++)
+        if (g_sessionSlots[i].session == session)
+            g_sessionSlots[i].session = NULL;
+}
 
 // Deliberately branch-light and I/O-free: this runs inside the connection
 // window. Two memcpys and some stores.
@@ -118,13 +152,19 @@ static void capture_connect(int slot, void* self, u64 srv, u64 cfg, u64 extra) {
     g_connect.createSessionSlot = -1;
     g_connect.createSessionRc = 0;
     g_connect.session = 0;
-    if (srv && g_syms && g_syms->srvCreateSession) {
+    // cfg is written through below, so it is required here as well. Line 106
+    // above already treats it as possibly null; a null reaching this branch
+    // would write eight bytes to 0x148 inside the connection window, where a
+    // fault kills the process.
+    SessionSlot* const slot_mem = session_slot_claim();
+    g_connect.noSessionSlot = (slot_mem == NULL);
+    if (srv && cfg && slot_mem && g_syms && g_syms->srvCreateSession) {
         // Say how big the buffer is. The framework seeds memorySize with a
         // floor of 0x10 and expects the handler to supply both the memory and
         // its size. Left at 0x10, createSession succeeded and one command
         // dispatched, then IPMIMGR killed the process (signo=0xa0020320
         // opt32=0x02010006) -- a session running off the end of 16 bytes.
-        const uint64_t have = sizeof(g_sessionMem);
+        const uint64_t have = sizeof(slot_mem->mem);
         memcpy((unsigned char*)(cfg) + 0x148, &have, 8);
         g_connect.memorySizeSet = have;
 
@@ -139,8 +179,12 @@ static void capture_connect(int slot, void* self, u64 srv, u64 cfg, u64 extra) {
             g_connect.createSessionRc =
                 ((CreateSessionFn)vt[slotIdx])(
                     (void*)(srv), &session,
-                    (void*)(cfg), g_sessionMem);
+                    (void*)(cfg), slot_mem->mem);
             g_connect.session = (u64)(session);
+            // Held only once it actually backs a session; a failed create must
+            // not strand the buffer.
+            if (g_connect.createSessionRc >= 0 && session)
+                slot_mem->session = session;
         }
     }
     g_connect.pending = true;
@@ -267,6 +311,7 @@ static int64_t slot_dispatch(int slot, void* self, u64 a1, u64 a2, u64 a3, u64 a
 
         case KIND_SESSION_KILLED:
             logf_("SESSION KILLED slot[%#04x] session=%p", slot * 8, (void*)a1);
+            session_slot_release((void*)a1);
             g_sessionDumped = false;      // next session dumps again
             return 0;
 
@@ -374,6 +419,10 @@ void handler_drain_connect_log(void) {
               ? "   <-- NOT FOUND in the Server vtable"
               : (g_connect.session ? "   <-- a session exists now"
                                    : "   <-- no session was produced"));
+    if (g_connect.noSessionSlot)
+        logf_("  no free session buffer -- all %d in use, so this connect was "
+              "refused rather than given a buffer another session is on",
+              kSessionSlots);
 }
 
 HandlerBuild handler_build(const IpmiSyms* syms) {
