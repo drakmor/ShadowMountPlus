@@ -291,7 +291,7 @@ static void log_to_file_locked(const char *fmt, va_list args) {
 }
 
 void log_debug(const char *fmt, ...) {
-  if (runtime_config()->debug_enabled == false)
+  if (runtime_config().debug_enabled == false)
     return;
 
   va_list args;
@@ -323,7 +323,7 @@ void notify_system_rich_l10n(bool allow_in_quiet_mode, sm_l10n_key_t key, ...) {
   char message[3075];
   va_list args;
 
-  if (runtime_config()->quiet_mode && !allow_in_quiet_mode)
+  if (runtime_config().quiet_mode && !allow_in_quiet_mode)
     return;
 
   va_start(args, key);
@@ -351,7 +351,7 @@ void notify_game_installed_rich(const char *title_id) {
 }
 
 void notify_system_info(const char *fmt, ...) {
-  if (runtime_config()->quiet_mode)
+  if (runtime_config().quiet_mode)
     return;
 
   va_list args;
@@ -361,7 +361,7 @@ void notify_system_info(const char *fmt, ...) {
 }
 
 void notify_system_info_l10n(sm_l10n_key_t key, ...) {
-  if (runtime_config()->quiet_mode)
+  if (runtime_config().quiet_mode)
     return;
 
   va_list args;

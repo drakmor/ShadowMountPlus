@@ -467,7 +467,9 @@ static bool path_is_managed_backport_for_title(const char *title_id,
   char root[MAX_PATH];
   int scan_path_count = get_scan_path_count();
   for (int i = 0; i < scan_path_count; i++) {
-    if (!build_backports_root_path(get_scan_path(i), root))
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path) ||
+        !build_backports_root_path(scan_path, root))
       continue;
     size_t root_len = strlen(root);
     if (strncmp(path, root, root_len) != 0)

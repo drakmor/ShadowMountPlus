@@ -120,16 +120,16 @@ static bool should_prepare_nested_backing_cache(
 }
 
 static uint32_t get_lvd_sector_size_fallback(image_fs_type_t fs_type) {
-  const runtime_config_t *cfg = runtime_config();
+  const runtime_config_t cfg = runtime_config();
   switch (fs_type) {
   case IMAGE_FS_UFS:
-    return cfg->lvd_sector_ufs;
+    return cfg.lvd_sector_ufs;
   case IMAGE_FS_PFS:
   case IMAGE_FS_PFSC_CONTAINER:
-    return cfg->lvd_sector_pfs;
+    return cfg.lvd_sector_pfs;
   case IMAGE_FS_EXFAT:
   default:
-    return cfg->lvd_sector_exfat;
+    return cfg.lvd_sector_exfat;
   }
 }
 
@@ -178,15 +178,15 @@ static uint32_t get_lvd_secondary_unit(image_fs_type_t fs_type,
 }
 
 static uint32_t get_md_sector_size(image_fs_type_t fs_type) {
-  const runtime_config_t *cfg = runtime_config();
+  const runtime_config_t cfg = runtime_config();
   uint32_t fallback = 0;
   switch (fs_type) {
   case IMAGE_FS_UFS:
-    fallback = cfg->md_sector_ufs;
+    fallback = cfg.md_sector_ufs;
     break;
   case IMAGE_FS_EXFAT:
   default:
-    fallback = cfg->md_sector_exfat;
+    fallback = cfg.md_sector_exfat;
     break;
   }
   return fallback;
@@ -1120,12 +1120,12 @@ static bool validate_mounted_image(const char *file_path, uint64_t generation,
 bool mount_image_with_mode(const char *file_path, image_fs_type_t fs_type,
                            const bool *mount_read_only_override) {
   sm_error_clear();
-  const runtime_config_t *cfg = runtime_config();
-  bool mount_read_only = cfg->mount_read_only;
+  const runtime_config_t cfg = runtime_config();
+  bool mount_read_only = cfg.mount_read_only;
   bool mount_mode_overridden = false;
   bool request_mode_overridden = mount_read_only_override != NULL;
-  bool force_mount = cfg->force_mount;
-  attach_backend_t attach_backend = select_image_backend(cfg, fs_type);
+  bool force_mount = cfg.force_mount;
+  attach_backend_t attach_backend = select_image_backend(&cfg, fs_type);
   const char *filename = get_filename_component(file_path);
   if (filename[0] != '\0')
     mount_mode_overridden =
@@ -1170,7 +1170,7 @@ bool mount_image_with_mode(const char *file_path, image_fs_type_t fs_type,
     return false;
 
   image_mount_profile_t profile =
-      get_image_mount_profile(cfg, file_path, fs_type);
+      get_image_mount_profile(&cfg, file_path, fs_type);
   uint16_t image_type =
       get_lvd_image_type(file_path, fs_type, profile.legacy);
 

@@ -49,7 +49,7 @@ static uint8_t note_pending_install_failure(const pending_install_entry_t *entry
 static void drop_queued_install_entry(pending_install_entry_t *entry);
 
 static bool install_queue_active(void) {
-  return runtime_config()->app_install_all_enabled ||
+  return runtime_config().app_install_all_enabled ||
          atomic_load_explicit(&g_tracked_install_count,
                               memory_order_acquire) > 0;
 }
@@ -192,7 +192,7 @@ bool sm_install_queue_candidate(const scan_candidate_t *candidate,
     return false;
   }
 
-  if (!runtime_config()->app_install_all_enabled)
+  if (!runtime_config().app_install_all_enabled)
     return false;
 
   bool was_queue_empty = (count_queued_installs() <= 0);

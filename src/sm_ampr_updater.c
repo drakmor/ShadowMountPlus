@@ -103,22 +103,22 @@ static bool ampr_update_busy(void) {
 }
 
 static void snapshot_update_config(ampr_update_config_t *snapshot) {
-  const runtime_config_t *cfg = runtime_config();
-  snapshot->enabled = cfg->auto_update_ampr_enabled;
+  const runtime_config_t cfg = runtime_config();
+  snapshot->enabled = cfg.auto_update_ampr_enabled;
   snapshot->generation = g_ampr_updater.config_generation;
-  (void)strlcpy(snapshot->url, cfg->ampr_update_url, sizeof(snapshot->url));
-  (void)strlcpy(snapshot->emulators_path, cfg->emulators_path,
+  (void)strlcpy(snapshot->url, cfg.ampr_update_url, sizeof(snapshot->url));
+  (void)strlcpy(snapshot->emulators_path, cfg.emulators_path,
                 sizeof(snapshot->emulators_path));
 }
 
 static bool
 update_snapshot_is_current_locked(const ampr_update_config_t *snapshot) {
-  const runtime_config_t *cfg = runtime_config();
+  const runtime_config_t cfg = runtime_config();
   return !g_ampr_updater.stop_requested && !runtime_sleep_mode_active() &&
          snapshot->generation == g_ampr_updater.config_generation &&
-         cfg->auto_update_ampr_enabled &&
-         strcmp(snapshot->url, cfg->ampr_update_url) == 0 &&
-         strcmp(snapshot->emulators_path, cfg->emulators_path) == 0;
+         cfg.auto_update_ampr_enabled &&
+         strcmp(snapshot->url, cfg.ampr_update_url) == 0 &&
+         strcmp(snapshot->emulators_path, cfg.emulators_path) == 0;
 }
 
 static bool update_snapshot_is_current(const ampr_update_config_t *snapshot) {
@@ -970,7 +970,7 @@ void sm_ampr_updater_on_sleep_change(bool active) {
     return;
   }
 
-  bool update_enabled = runtime_config()->auto_update_ampr_enabled;
+  bool update_enabled = runtime_config().auto_update_ampr_enabled;
   if (!update_enabled && g_ampr_updater.active_request_id < 0) {
     pthread_mutex_unlock(&g_ampr_updater.mutex);
     return;

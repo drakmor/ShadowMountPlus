@@ -132,8 +132,8 @@ const char *sm_l10n_language_name(int32_t language_id) {
 
 void sm_l10n_init(void) {
   int32_t sys_lang = -1;
-  const runtime_config_t *cfg = runtime_config();
-  int32_t active_lang = cfg->language_id;
+  const runtime_config_t cfg = runtime_config();
+  int32_t active_lang = cfg.language_id;
   bool auto_language = (active_lang == SM_LANGUAGE_AUTO);
 
   if (auto_language &&

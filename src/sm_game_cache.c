@@ -75,7 +75,9 @@ static bool resolve_game_cache_owning_scan_root(const char *path,
 
   size_t best_match_len = 0;
   for (int i = 0; i < get_scan_path_count(); i++) {
-    const char *scan_path = get_scan_path(i);
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
     if (!path_matches_root_or_child(match_path, scan_path))
       continue;
 
@@ -182,7 +184,7 @@ void cache_game_entry(const char *path, const char *title_id,
 }
 
 static void prune_game_cache_entries(const char *root) {
-  const bool auto_remove = runtime_config()->auto_remove_missing_games;
+  const bool auto_remove = runtime_config().auto_remove_missing_games;
 
   pthread_mutex_lock(&g_game_cache_mutex);
   for (int k = 0; k < MAX_PENDING; k++) {
@@ -320,8 +322,8 @@ static void reconcile_missing_game_cache(
 }
 
 void reconcile_missing_app_db_games(void) {
-  const runtime_config_t *cfg = runtime_config();
-  if (!cfg->auto_remove_missing_games)
+  const runtime_config_t cfg = runtime_config();
+  if (!cfg.auto_remove_missing_games)
     return;
 
   struct AppDbTitleList auto_remove_titles = {0};
@@ -332,9 +334,9 @@ void reconcile_missing_app_db_games(void) {
 
   const uint64_t now_us = monotonic_time_us();
   const uint64_t delay_us =
-      (uint64_t)cfg->auto_remove_missing_delay_seconds * 1000000ull;
+      (uint64_t)cfg.auto_remove_missing_delay_seconds * 1000000ull;
   reconcile_missing_game_cache(&auto_remove_titles, now_us,
-                               cfg->auto_remove_games_with_dlc);
+                               cfg.auto_remove_games_with_dlc);
 
   for (;;) {
     char title_id[MAX_TITLE_ID];
@@ -358,7 +360,7 @@ void reconcile_missing_app_db_games(void) {
     if (!app_db_title_list_contains(&auto_remove_titles, title_id))
       continue;
     if (title_is_protected_by_dlc(title_id,
-                                  cfg->auto_remove_games_with_dlc))
+                                  cfg.auto_remove_games_with_dlc))
       continue;
 
     int res = sceAppInstUtilAppUnInstall(title_id);

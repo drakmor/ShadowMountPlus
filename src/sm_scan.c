@@ -554,7 +554,7 @@ static bool collect_candidate_image_visit(const char *image_path,
                            image_path, &image_st, ctx->app_db->titles,
                            ctx->app_db->titles_ready,
                            note_found_indexed_title, image_path);
-  if (index_ready && !runtime_config()->persistent_image_mounts)
+  if (index_ready && !runtime_config().persistent_image_mounts)
     return true;
 
   if (index_ready) {
@@ -658,7 +658,7 @@ static void collect_scan_candidates_from_manual_path(
     bool index_ready = sm_image_index_visit_ready_titles(
         manual_path, &st, app_db->titles, app_db->titles_ready,
         note_found_indexed_title, manual_path);
-    if (index_ready && !runtime_config()->persistent_image_mounts)
+    if (index_ready && !runtime_config().persistent_image_mounts)
       return;
 
     if (index_ready) {
@@ -777,7 +777,9 @@ bool resolve_backport_path_for_title(const char *title_id,
   }
 
   for (int i = 0; i < get_scan_path_count(); i++) {
-    const char *scan_path = get_scan_path(i);
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
     if (owning_scan_path && strcmp(scan_path, owning_scan_path) == 0)
       continue;
 
@@ -860,7 +862,7 @@ bool release_scan_runtime_mounts(void) {
     runtime_mount_state_unlock();
     return false;
   }
-  bool released = runtime_config()->persistent_image_mounts ||
+  bool released = runtime_config().persistent_image_mounts ||
                   release_runtime_image_mounts();
   runtime_mount_state_unlock();
   return released;
@@ -1179,7 +1181,10 @@ int collect_scan_candidates(scan_candidate_t *candidates, int max_candidates,
   for (int i = 0; i < get_scan_path_count(); i++) {
     if (should_stop_requested() || runtime_sleep_mode_active())
       break;
-    collect_scan_candidates_from_root(get_scan_path(i), candidates,
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
+    collect_scan_candidates_from_root(scan_path, candidates,
                                       max_candidates,
                                       &candidate_count, &app_db,
                                       g_scan_workspace.discovered_param_roots,

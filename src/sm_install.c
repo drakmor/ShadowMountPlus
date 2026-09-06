@@ -403,7 +403,7 @@ void process_scan_candidates(const scan_candidate_t *candidates,
     const scan_candidate_t *c = &candidates[i];
     bool has_src_snd0 = false;
     bool use_app_install_all =
-        runtime_config()->app_install_all_enabled && !c->in_app_db;
+        runtime_config().app_install_all_enabled && !c->in_app_db;
     if (c->installed) {
       log_debug("  [ACTION] Remounting: %s", c->title_name);
     } else {

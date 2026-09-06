@@ -119,11 +119,11 @@ static uint64_t g_scanner_usb_mount_probe_due_us = 0;
 static pthread_mutex_t g_scanner_cycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static uint64_t scanner_stability_wait_us(void) {
-  return (uint64_t)runtime_config()->stability_wait_seconds * 1000000ull;
+  return (uint64_t)runtime_config().stability_wait_seconds * 1000000ull;
 }
 
 static uint64_t scanner_full_resync_interval_us(void) {
-  return (uint64_t)runtime_config()->scan_interval_us;
+  return (uint64_t)runtime_config().scan_interval_us;
 }
 
 static void schedule_config_reload(uint64_t now_us) {
@@ -172,7 +172,10 @@ static void build_scanner_usb_root_path(int slot,
 
 static bool scanner_usb_slot_has_scan_root(int slot) {
   for (int i = 0; i < get_scan_path_count(); i++) {
-    if (scanner_usb_slot_for_path(get_scan_path(i)) == slot)
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
+    if (scanner_usb_slot_for_path(scan_path) == slot)
       return true;
   }
   return false;
@@ -180,7 +183,10 @@ static bool scanner_usb_slot_has_scan_root(int slot) {
 
 static void reset_scanner_usb_scan_counts(int slot) {
   for (int i = 0; i < get_scan_path_count(); i++) {
-    if (scanner_usb_slot_for_path(get_scan_path(i)) != slot)
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
+    if (scanner_usb_slot_for_path(scan_path) != slot)
       continue;
     g_scanner_root_states[i].usb_connect_counted = false;
     g_scanner_root_states[i].usb_connect_found_games = 0;
@@ -375,7 +381,7 @@ static void clear_scanner_manual_scan_state(void) {
 static uint32_t scanner_config_topology_hash(void) {
   uint32_t hash = 2166136261u;
   int scan_path_count = get_scan_path_count();
-  uint32_t values[] = {runtime_config()->scan_depth, (uint32_t)scan_path_count};
+  uint32_t values[] = {runtime_config().scan_depth, (uint32_t)scan_path_count};
 
   for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
     for (unsigned shift = 0; shift < 32u; shift += 8u) {
@@ -384,7 +390,10 @@ static uint32_t scanner_config_topology_hash(void) {
     }
   }
   for (int i = 0; i < scan_path_count; i++) {
-    hash ^= sm_fnv1a32(get_scan_path(i));
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
+    hash ^= sm_fnv1a32(scan_path);
     hash *= 16777619u;
   }
   return hash;
@@ -759,8 +768,8 @@ static bool resolve_watch_tree_rebuild_target(
     *kind_out = subscription->kind;
     return true;
   case SCANNER_WATCH_SCAN_ROOT_PARENT:
-    (void)strlcpy(rebuild_path,
-                  get_scan_path(subscription->scan_root_index), MAX_PATH);
+    if (!get_scan_path(subscription->scan_root_index, rebuild_path))
+      return false;
     *rebuild_depth_out = 0;
     *kind_out = SCANNER_WATCH_SCAN_ROOT;
     return true;
@@ -813,7 +822,9 @@ static bool register_scan_root_parent_watch(int kq, int scan_root_index,
 }
 
 static bool rebuild_scan_root_watch_tree(int kq, int scan_root_index) {
-  const char *scan_root = get_scan_path(scan_root_index);
+  char scan_root[MAX_PATH];
+  if (!get_scan_path(scan_root_index, scan_root))
+    return false;
   if (!remove_scan_root_watch_entries(scan_root_index))
     return false;
 
@@ -854,7 +865,9 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
                                             const char *rebuild_path,
                                             uint8_t rebuild_depth,
                                             scanner_watch_kind_t rebuild_kind) {
-  const char *scan_root = get_scan_path(scan_root_index);
+  char scan_root[MAX_PATH];
+  if (!get_scan_path(scan_root_index, scan_root))
+    return false;
   if (!rebuild_path || rebuild_path[0] == '\0' ||
       rebuild_kind == SCANNER_WATCH_SCAN_ROOT ||
       strcmp(rebuild_path, scan_root) == 0) {
@@ -899,7 +912,10 @@ static bool rebuild_all_scan_root_watch_trees(int kq) {
 static bool suspend_usb_scan_root_watch_trees(void) {
   bool removed_any = false;
   for (int i = 0; i < get_scan_path_count(); i++) {
-    if (!is_usb_storage_path(get_scan_path(i)))
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
+    if (!is_usb_storage_path(scan_path))
       continue;
     while (g_scanner_root_watch_heads[i] != SCANNER_WATCH_INDEX_NONE) {
       remove_scanner_watch_entry_at(g_scanner_root_watch_heads[i]);
@@ -917,8 +933,11 @@ static void schedule_scan_roots_for_usb_slot_except(int slot,
                                                     int excluded_root_index,
                                                     uint64_t now_us) {
   for (int i = 0; i < get_scan_path_count(); i++) {
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
     if (i != excluded_root_index &&
-        scanner_usb_slot_for_path(get_scan_path(i)) == slot) {
+        scanner_usb_slot_for_path(scan_path) == slot) {
       schedule_scan_root_dirty(i, now_us, true);
     }
   }
@@ -930,7 +949,10 @@ static void schedule_scan_roots_for_usb_slot(int slot, uint64_t now_us) {
 
 static bool scanner_usb_slot_scan_incomplete(int slot) {
   for (int i = 0; i < get_scan_path_count(); i++) {
-    if (scanner_usb_slot_for_path(get_scan_path(i)) != slot)
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
+    if (scanner_usb_slot_for_path(scan_path) != slot)
       continue;
     if (g_scanner_root_states[i].dirty ||
         !g_scanner_root_states[i].usb_connect_counted) {
@@ -952,7 +974,10 @@ static void notify_scanner_usb_scan_complete(int slot) {
   build_scanner_usb_root_path(slot, usb_root);
   int game_count = 0;
   for (int i = 0; i < get_scan_path_count(); i++) {
-    if (scanner_usb_slot_for_path(get_scan_path(i)) == slot)
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
+    if (scanner_usb_slot_for_path(scan_path) == slot)
       game_count += g_scanner_root_states[i].usb_connect_found_games;
   }
 
@@ -999,7 +1024,9 @@ static void process_due_scanner_usb_mount_probes(uint64_t now_us) {
 static bool resume_usb_scan_root_watch_trees(int kq) {
   uint64_t now_us = monotonic_time_us();
   for (int i = 0; i < get_scan_path_count(); i++) {
-    const char *scan_root = get_scan_path(i);
+    char scan_root[MAX_PATH];
+    if (!get_scan_path(i, scan_root))
+      continue;
     if (!is_usb_storage_path(scan_root))
       continue;
     // Rebuild every configured USB root because the same disk can resume
@@ -1028,7 +1055,10 @@ static void schedule_scan_root_cleanup(int scan_root_index) {
 static void schedule_scan_root_dirty(int scan_root_index, uint64_t now_us,
                                      bool immediate) {
   scanner_root_state_t *state = &g_scanner_root_states[scan_root_index];
-  int usb_slot = scanner_usb_slot_for_path(get_scan_path(scan_root_index));
+  char scan_root[MAX_PATH];
+  if (!get_scan_path(scan_root_index, scan_root))
+    return;
+  int usb_slot = scanner_usb_slot_for_path(scan_root);
   if (usb_slot >= 0 &&
       (g_scanner_usb_scan_result_pending_mask &
        (uint8_t)(1u << usb_slot)) != 0) {
@@ -1059,6 +1089,7 @@ static bool scanner_event_requires_consistency_cleanup(uint32_t fflags) {
 
 static bool scanner_event_requires_watch_tree_refresh(
     const scanner_event_subscription_t *subscription, uint32_t fflags) {
+  char scan_root[MAX_PATH];
   uint32_t tree_change_flags =
       NOTE_WRITE | NOTE_EXTEND | NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE;
 
@@ -1066,9 +1097,8 @@ static bool scanner_event_requires_watch_tree_refresh(
   case SCANNER_WATCH_SCAN_ROOT:
     return (fflags & tree_change_flags) != 0;
   case SCANNER_WATCH_SCAN_SUBDIR:
-    return subscription->depth <
-               get_scan_depth_for_root(
-                   get_scan_path(subscription->scan_root_index)) &&
+    return get_scan_path(subscription->scan_root_index, scan_root) &&
+           subscription->depth < get_scan_depth_for_root(scan_root) &&
            (fflags & tree_change_flags) != 0;
   default:
     return false;
@@ -1121,9 +1151,8 @@ static void schedule_scan_root_watch_tree_rebuild(
   state->watch_tree_stale = true;
   state->watch_tree_rebuild_depth = 0;
   state->watch_tree_rebuild_kind = SCANNER_WATCH_SCAN_ROOT;
-  (void)strlcpy(state->watch_tree_rebuild_path,
-                get_scan_path(subscription->scan_root_index),
-                sizeof(state->watch_tree_rebuild_path));
+  (void)get_scan_path(subscription->scan_root_index,
+                      state->watch_tree_rebuild_path);
 }
 
 static void register_config_file_watch(int kq, uint64_t now_us) {
@@ -1327,7 +1356,9 @@ static bool run_full_scan_cycle(bool startup_sync, const char *reason,
 
 static bool run_targeted_scan_cycle_impl(int scan_root_index,
                                          bool *unstable_found_out) {
-  const char *scan_root = get_scan_path(scan_root_index);
+  char scan_root[MAX_PATH];
+  if (!get_scan_path(scan_root_index, scan_root))
+    return false;
   scan_candidate_t *candidates = g_scanner_scan_candidates;
 
   if (should_abort_scan_cycle())
@@ -1495,7 +1526,9 @@ static bool handle_scan_root_parent_event(
     int kq, const scanner_event_subscription_t *subscription,
     const char *watched_path, uint64_t now_us) {
   int scan_root_index = subscription->scan_root_index;
-  const char *scan_root = get_scan_path(scan_root_index);
+  char scan_root[MAX_PATH];
+  if (!get_scan_path(scan_root_index, scan_root))
+    return false;
   bool root_present = false;
   bool root_changed = update_scan_root_presence_state(scan_root_index, scan_root,
                                                        &root_present);
@@ -1619,7 +1652,9 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
          subscription_index < subscription_count; subscription_index++) {
       const scanner_event_subscription_t *subscription =
           &subscriptions[subscription_index];
-      const char *scan_root = get_scan_path(subscription->scan_root_index);
+      char scan_root[MAX_PATH];
+      if (!get_scan_path(subscription->scan_root_index, scan_root))
+        continue;
       int usb_slot = scanner_usb_slot_for_path(scan_root);
       if (usb_slot >= 0) {
         uint8_t slot_mask = (uint8_t)(1u << usb_slot);
@@ -1970,15 +2005,15 @@ void sm_scanner_run_loop(void) {
       g_scanner_config_reload_ready_after_us = 0;
 
       uint32_t old_scan_topology_hash = scanner_config_topology_hash();
-      runtime_config_t old_cfg = *runtime_config();
+      runtime_config_t old_cfg = runtime_config();
       bool reloaded = false;
       if (!reload_runtime_config_if_changed(&reloaded)) {
         log_debug("  [CFG] runtime config reload failed");
       } else if (reloaded) {
-        const runtime_config_t *new_cfg = runtime_config();
+        const runtime_config_t new_cfg = runtime_config();
         bool scan_topology_changed =
             old_scan_topology_hash != scanner_config_topology_hash();
-        if (!apply_runtime_config_reload_effects(kq, &old_cfg, new_cfg,
+        if (!apply_runtime_config_reload_effects(kq, &old_cfg, &new_cfg,
                                                  scan_topology_changed)) {
           close(kq);
           clear_scanner_watch_entries();
@@ -2080,7 +2115,9 @@ void sm_scanner_run_loop(void) {
         game_mount_busy ? -1 : find_pending_cleanup_scan_root();
     if (cleanup_root_index >= 0) {
       g_scanner_root_states[cleanup_root_index].cleanup_pending = false;
-      cleanup_lost_sources_for_scan_root(get_scan_path(cleanup_root_index));
+      char scan_root[MAX_PATH];
+      if (get_scan_path(cleanup_root_index, scan_root))
+        cleanup_lost_sources_for_scan_root(scan_root);
       continue;
     }
 
@@ -2145,7 +2182,9 @@ void sm_scanner_run_loop(void) {
 
       if (unstable_found)
         schedule_scan_root_dirty(dirty_root_index, monotonic_time_us(), false);
-      int usb_slot = scanner_usb_slot_for_path(get_scan_path(dirty_root_index));
+      char scan_root[MAX_PATH];
+      (void)get_scan_path(dirty_root_index, scan_root);
+      int usb_slot = scanner_usb_slot_for_path(scan_root);
       if (usb_slot >= 0)
         notify_scanner_usb_scan_complete(usb_slot);
       continue;

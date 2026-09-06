@@ -1567,7 +1567,7 @@ static void send_log_tail_response(struct MHD_Connection *connection,
 }
 
 static void handle_settings(struct MHD_Connection *connection) {
-  runtime_config_t cfg = *runtime_config();
+  runtime_config_t cfg = runtime_config();
   struct json_object *response = new_status_response(0);
   struct json_object *scan_paths = json_object_new_array();
   if (!response || !scan_paths) {
@@ -1582,8 +1582,8 @@ static void handle_settings(struct MHD_Connection *connection) {
   size_t count = 0;
   int custom_path_count = get_custom_scan_path_count();
   for (int i = 0; i < custom_path_count; ++i) {
-    const char *path = get_custom_scan_path(i);
-    if (!path)
+    char path[MAX_PATH];
+    if (!get_custom_scan_path(i, path))
       continue;
     if (!append_json_string(scan_paths, path)) {
       json_object_put(scan_paths);
@@ -1622,7 +1622,7 @@ static void handle_settings(struct MHD_Connection *connection) {
 
 static void handle_settings_update(struct MHD_Connection *connection,
                                    struct json_object *request) {
-  runtime_config_t current_cfg = *runtime_config();
+  runtime_config_t current_cfg = runtime_config();
   bool debug_enabled = false;
   bool quiet_mode = false;
   bool update_emulators = false;
@@ -1972,7 +1972,9 @@ static bool destination_is_managed(const char *destination) {
     return false;
   }
   for (int i = 0; i < get_scan_path_count(); ++i) {
-    const char *scan_path = get_scan_path(i);
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
     if (!is_under_image_mount_base(scan_path) &&
         path_matches_root_or_child(destination, scan_path)) {
       return true;
@@ -3048,7 +3050,7 @@ static void *service_thread_main(void *arg) {
 }
 
 bool sm_api_service_start(void) {
-  runtime_config_t cfg = *runtime_config();
+  runtime_config_t cfg = runtime_config();
   if (!cfg.api_enabled) {
     pthread_mutex_lock(&g_storage_job.mutex);
     g_storage_job.accepting = false;

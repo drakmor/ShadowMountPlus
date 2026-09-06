@@ -82,7 +82,7 @@ static bool fakelib_session_active(void) {
 }
 
 bool sm_fakelib_game_feature_enabled(void) {
-  return runtime_config()->backport_fakelib_enabled;
+  return runtime_config().backport_fakelib_enabled;
 }
 
 static bool mount_fakelib_overlay(const char *title_id,
@@ -268,31 +268,31 @@ static bool resolve_global_fakelib_source(const char *title_id,
                                            char source_path[MAX_PATH]) {
   source_path[0] = '\0';
 
-  const runtime_config_t *cfg = runtime_config();
-  if (!cfg->global_fakelib_enabled)
+  const runtime_config_t cfg = runtime_config();
+  if (!cfg.global_fakelib_enabled)
     return false;
   if (is_global_fakelib_excluded_for_title(title_id))
     return false;
 
   struct stat st;
-  if (stat(cfg->global_fakelib_path, &st) != 0) {
+  if (stat(cfg.global_fakelib_path, &st) != 0) {
     if (errno != ENOENT)
       log_debug("  [FAKELIB] global path unavailable for %s: %s (%s)",
-                title_id, cfg->global_fakelib_path, strerror(errno));
+                title_id, cfg.global_fakelib_path, strerror(errno));
     return false;
   }
   if (!S_ISDIR(st.st_mode)) {
     log_debug("  [FAKELIB] global path is not a directory for %s: %s",
-              title_id, cfg->global_fakelib_path);
+              title_id, cfg.global_fakelib_path);
     return false;
   }
-  if (path_overlaps_fakelib_cache(cfg->global_fakelib_path)) {
+  if (path_overlaps_fakelib_cache(cfg.global_fakelib_path)) {
     log_debug("  [FAKELIB] global path overlaps cache root for %s: %s",
-              title_id, cfg->global_fakelib_path);
+              title_id, cfg.global_fakelib_path);
     return false;
   }
 
-  (void)strlcpy(source_path, cfg->global_fakelib_path, MAX_PATH);
+  (void)strlcpy(source_path, cfg.global_fakelib_path, MAX_PATH);
   return true;
 }
 
@@ -848,16 +848,16 @@ static void init_cache_context(const char *title_id, const char *game_path,
   memset(context, 0, sizeof(*context));
   (void)strlcpy(context->game_path, game_path, sizeof(context->game_path));
 
-  const runtime_config_t *cfg = runtime_config();
-  if (cfg->update_emulators_enabled) {
-    (void)strlcpy(context->emulators_path, cfg->emulators_path,
+  const runtime_config_t cfg = runtime_config();
+  if (cfg.update_emulators_enabled) {
+    (void)strlcpy(context->emulators_path, cfg.emulators_path,
                   sizeof(context->emulators_path));
   }
 
   if (resolve_global_fakelib_source(title_id, context->global_path) &&
       strcmp(context->global_path, game_path) != 0) {
     context->flags |= FAKELIB_CACHE_HAS_GLOBAL;
-    if (!cfg->global_fakelib_game_priority)
+    if (!cfg.global_fakelib_game_priority)
       context->flags |= FAKELIB_CACHE_GLOBAL_PRIORITY;
   } else {
     context->global_path[0] = '\0';
@@ -999,8 +999,8 @@ static bool rebuild_fakelib_cache(
 static void prepare_title_cache(const char *title_id, const char *game_path) {
   if (!is_supported_game_title_id(title_id))
     return;
-  const runtime_config_t *cfg = runtime_config();
-  if (!cfg->backport_fakelib_enabled)
+  const runtime_config_t cfg = runtime_config();
+  if (!cfg.backport_fakelib_enabled)
     return;
 
   char game_source_path[MAX_PATH];

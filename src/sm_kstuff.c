@@ -229,10 +229,10 @@ static bool resolve_title_pause_source(const char *title_id,
 static uint32_t get_configured_pause_delay_seconds(const char *title_id,
                                                    bool image_backed,
                                                    bool *override_applied_out) {
-  const runtime_config_t *cfg = runtime_config();
+  const runtime_config_t cfg = runtime_config();
   uint32_t delay_seconds =
-      image_backed ? cfg->kstuff_pause_delay_image_seconds
-                   : cfg->kstuff_pause_delay_direct_seconds;
+      image_backed ? cfg.kstuff_pause_delay_image_seconds
+                   : cfg.kstuff_pause_delay_direct_seconds;
   uint32_t override_delay_seconds = 0;
   if (get_kstuff_pause_delay_override_for_title(title_id,
                                                 &override_delay_seconds)) {
@@ -456,10 +456,10 @@ static void finish_tracked_game_clear(const char *reason) {
 }
 
 static void apply_kstuff_config_reload(void) {
-  if (!runtime_config()->kstuff_crash_detection_enabled)
+  if (!runtime_config().kstuff_crash_detection_enabled)
     sm_mdbg_game_shutdown();
 
-  if (!runtime_config()->kstuff_game_auto_toggle) {
+  if (!runtime_config().kstuff_game_auto_toggle) {
     sm_kstuff_game_shutdown();
     return;
   }
@@ -771,7 +771,7 @@ bool sm_kstuff_set_enabled(bool enabled, bool notify_user) {
 }
 
 bool sm_kstuff_game_feature_enabled(void) {
-  return runtime_config()->kstuff_game_auto_toggle && g_kstuff.probe_available;
+  return runtime_config().kstuff_game_auto_toggle && g_kstuff.probe_available;
 }
 
 void sm_kstuff_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id,
@@ -968,8 +968,8 @@ void sm_kstuff_init(void) {
 
   log_debug("  [KSTUFF] runtime control ready (image_delay=%u "
             "direct_delay=%u)",
-            runtime_config()->kstuff_pause_delay_image_seconds,
-            runtime_config()->kstuff_pause_delay_direct_seconds);
+            runtime_config().kstuff_pause_delay_image_seconds,
+            runtime_config().kstuff_pause_delay_direct_seconds);
 }
 
 void sm_kstuff_shutdown(void) {

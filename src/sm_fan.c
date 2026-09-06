@@ -59,7 +59,7 @@ static int apply_fan_target(uint8_t target_c,
 void sm_fan_apply_game_target(const char *title_id) {
   static bool target_notification_sent = false;
 
-  uint32_t target_c = runtime_config()->fan_target_temperature_c;
+  uint32_t target_c = runtime_config().fan_target_temperature_c;
   if (target_c == FAN_TARGET_TEMPERATURE_SYSTEM)
     return;
 

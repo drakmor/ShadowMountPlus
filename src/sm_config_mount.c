@@ -15,8 +15,6 @@
 #include "sm_path_utils.h"
 #include "sm_paths.h"
 
-#include <stdatomic.h>
-
 static const char *const k_default_scan_paths[] = SM_DEFAULT_SCAN_PATHS_INITIALIZER;
 
 typedef struct {
@@ -61,13 +59,12 @@ typedef enum {
   CONFIG_LOAD_ERROR,
 } config_load_status_t;
 
-#define RUNTIME_CONFIG_ACTIVE_SLOT_COUNT 2
-#define RUNTIME_CONFIG_PARSE_SLOT RUNTIME_CONFIG_ACTIVE_SLOT_COUNT
-
-static runtime_config_state_t
-    g_runtime_state_slots[RUNTIME_CONFIG_ACTIVE_SLOT_COUNT + 1];
-static _Atomic int g_runtime_state_active_index = 0;
-static atomic_bool g_runtime_cfg_ready = false;
+static runtime_config_state_t g_runtime_state;
+static runtime_config_state_t g_runtime_parse_state;
+static pthread_once_t g_runtime_init_once = PTHREAD_ONCE_INIT;
+// Never hold the state mutex across I/O or logging: those can read config.
+static pthread_mutex_t g_runtime_state_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_runtime_load_mutex = PTHREAD_MUTEX_INITIALIZER;
 static config_file_stamp_t g_config_file_stamp;
 static pthread_mutex_t g_autotune_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_config_file_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -180,11 +177,6 @@ static bool parse_ini_line(char *line, char **key_out, char **value_out) {
   *key_out = key;
   *value_out = value;
   return true;
-}
-
-static const runtime_config_state_t *active_runtime_state(void) {
-  return &g_runtime_state_slots[atomic_load_explicit(&g_runtime_state_active_index,
-                                                     memory_order_acquire)];
 }
 
 static attach_backend_t default_exfat_backend(void) {
@@ -339,75 +331,68 @@ static bool config_file_stamp_equals(const config_file_stamp_t *a,
          a->ctime_nsec == b->ctime_nsec;
 }
 
-static void apply_reloadable_runtime_fields(runtime_config_state_t *dst,
-                                            const runtime_config_state_t *src) {
-  dst->cfg = src->cfg;
-  dst->scan_path_count = src->scan_path_count;
-  dst->custom_scan_path_count = src->custom_scan_path_count;
-  memcpy(dst->scan_path_storage, src->scan_path_storage,
-         sizeof(dst->scan_path_storage));
-  memcpy(dst->image_mode_rules, src->image_mode_rules,
-         sizeof(dst->image_mode_rules));
-  memcpy(dst->kstuff_no_pause_title_ids, src->kstuff_no_pause_title_ids,
-         sizeof(dst->kstuff_no_pause_title_ids));
-  dst->kstuff_no_pause_title_count = src->kstuff_no_pause_title_count;
-  memcpy(dst->kstuff_delay_rules, src->kstuff_delay_rules,
-         sizeof(dst->kstuff_delay_rules));
-}
-
 static bool runtime_config_states_equal(const runtime_config_state_t *a,
                                         const runtime_config_state_t *b) {
   return memcmp(a, b, sizeof(*a)) == 0;
 }
 
-static void activate_runtime_config_state(int slot_index) {
-  atomic_store_explicit(&g_runtime_state_active_index, slot_index,
-                        memory_order_release);
-  atomic_store_explicit(&g_runtime_cfg_ready, true, memory_order_release);
-}
-
-void ensure_runtime_config_ready(void) {
-  if (atomic_load_explicit(&g_runtime_cfg_ready, memory_order_acquire))
-    return;
-
-  init_runtime_config_defaults(&g_runtime_state_slots[0]);
-  activate_runtime_config_state(0);
+static void init_runtime_config(void) {
+  init_runtime_config_defaults(&g_runtime_state);
   g_config_file_stamp = read_config_file_stamp();
 }
 
-const runtime_config_t *runtime_config(void) {
+void ensure_runtime_config_ready(void) {
+  (void)pthread_once(&g_runtime_init_once, init_runtime_config);
+}
+
+runtime_config_t runtime_config(void) {
   ensure_runtime_config_ready();
-  return &active_runtime_state()->cfg;
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  runtime_config_t cfg = g_runtime_state.cfg;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return cfg;
 }
 
 int get_scan_path_count(void) {
   ensure_runtime_config_ready();
-  return active_runtime_state()->scan_path_count;
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  int count = g_runtime_state.scan_path_count;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return count;
 }
 
-const char *get_scan_path(int index) {
+bool get_scan_path(int index, char path_out[MAX_PATH]) {
   ensure_runtime_config_ready();
-  const runtime_config_state_t *state = active_runtime_state();
-  if (index < 0 || index >= state->scan_path_count)
-    return NULL;
-  return state->scan_path_storage[index];
+  path_out[0] = '\0';
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  bool valid = index >= 0 && index < g_runtime_state.scan_path_count;
+  if (valid)
+    (void)strlcpy(path_out, g_runtime_state.scan_path_storage[index], MAX_PATH);
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return valid;
 }
 
 int get_custom_scan_path_count(void) {
   ensure_runtime_config_ready();
-  return active_runtime_state()->custom_scan_path_count;
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  int count = g_runtime_state.custom_scan_path_count;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return count;
 }
 
-const char *get_custom_scan_path(int index) {
+bool get_custom_scan_path(int index, char path_out[MAX_PATH]) {
   ensure_runtime_config_ready();
-  const runtime_config_state_t *state = active_runtime_state();
-  if (index < 0 || index >= state->custom_scan_path_count)
-    return NULL;
-  return state->scan_path_storage[index];
+  path_out[0] = '\0';
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  bool valid = index >= 0 && index < g_runtime_state.custom_scan_path_count;
+  if (valid)
+    (void)strlcpy(path_out, g_runtime_state.scan_path_storage[index], MAX_PATH);
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return valid;
 }
 
 uint32_t get_scan_depth_for_root(const char *scan_path) {
-  uint32_t scan_depth = runtime_config()->scan_depth;
+  uint32_t scan_depth = runtime_config().scan_depth;
   if (scan_depth < MIN_SCAN_DEPTH)
     scan_depth = MIN_SCAN_DEPTH;
   if (is_pfsc_image_mount_base_or_child(scan_path))
@@ -420,11 +405,12 @@ bool get_image_mode_override(const char *filename, bool *mount_read_only_out) {
   if (!filename || !mount_read_only_out)
     return false;
 
-  const runtime_config_state_t *state = active_runtime_state();
   char normalized[MAX_PATH];
   if (!normalize_image_filename_value(filename, normalized))
     return false;
 
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  const runtime_config_state_t *state = &g_runtime_state;
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
     if (!state->image_mode_rules[k].valid)
       continue;
@@ -433,9 +419,11 @@ bool get_image_mode_override(const char *filename, bool *mount_read_only_out) {
     if (strcasecmp(state->image_mode_rules[k].filename, normalized) != 0)
       continue;
     *mount_read_only_out = state->image_mode_rules[k].mount_read_only;
+    pthread_mutex_unlock(&g_runtime_state_mutex);
     return true;
   }
 
+  pthread_mutex_unlock(&g_runtime_state_mutex);
   return false;
 }
 
@@ -453,11 +441,12 @@ bool get_image_sector_size_override(const char *filename,
     return true;
   }
 
-  const runtime_config_state_t *state = active_runtime_state();
   char normalized[MAX_PATH];
   if (!normalize_image_filename_value(filename, normalized))
     return false;
 
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  const runtime_config_state_t *state = &g_runtime_state;
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
     if (!state->image_mode_rules[k].valid)
       continue;
@@ -466,25 +455,31 @@ bool get_image_sector_size_override(const char *filename,
     if (strcasecmp(state->image_mode_rules[k].filename, normalized) != 0)
       continue;
     *sector_size_out = state->image_mode_rules[k].sector_size;
+    pthread_mutex_unlock(&g_runtime_state_mutex);
     return true;
   }
 
+  pthread_mutex_unlock(&g_runtime_state_mutex);
   return false;
 }
 
 bool is_kstuff_pause_disabled_for_title(const char *title_id) {
   ensure_runtime_config_ready();
-  const runtime_config_state_t *state = active_runtime_state();
 
   char normalized[MAX_TITLE_ID];
   if (!normalize_title_id_value(title_id, normalized))
     return false;
 
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  const runtime_config_state_t *state = &g_runtime_state;
   for (int i = 0; i < state->kstuff_no_pause_title_count; ++i) {
-    if (strcmp(state->kstuff_no_pause_title_ids[i], normalized) == 0)
+    if (strcmp(state->kstuff_no_pause_title_ids[i], normalized) == 0) {
+      pthread_mutex_unlock(&g_runtime_state_mutex);
       return true;
+    }
   }
 
+  pthread_mutex_unlock(&g_runtime_state_mutex);
   return false;
 }
 
@@ -495,12 +490,16 @@ bool is_global_fakelib_excluded_for_title(const char *title_id) {
   if (!normalize_title_id_value(title_id, normalized))
     return false;
 
-  const runtime_config_t *cfg = runtime_config();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  const runtime_config_t *cfg = &g_runtime_state.cfg;
   for (uint32_t i = 0; i < cfg->global_fakelib_exclude_title_count; ++i) {
-    if (strcmp(cfg->global_fakelib_exclude_title_ids[i], normalized) == 0)
+    if (strcmp(cfg->global_fakelib_exclude_title_ids[i], normalized) == 0) {
+      pthread_mutex_unlock(&g_runtime_state_mutex);
       return true;
+    }
   }
 
+  pthread_mutex_unlock(&g_runtime_state_mutex);
   return false;
 }
 
@@ -510,20 +509,23 @@ bool get_kstuff_pause_delay_override_for_title(const char *title_id,
   if (!delay_seconds_out)
     return false;
 
-  const runtime_config_state_t *state = active_runtime_state();
   char normalized[MAX_TITLE_ID];
   if (!normalize_title_id_value(title_id, normalized))
     return false;
 
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  const runtime_config_state_t *state = &g_runtime_state;
   for (int i = 0; i < MAX_KSTUFF_TITLE_RULES; ++i) {
     if (!state->kstuff_delay_rules[i].valid)
       continue;
     if (strcmp(state->kstuff_delay_rules[i].title_id, normalized) != 0)
       continue;
     *delay_seconds_out = state->kstuff_delay_rules[i].delay_seconds;
+    pthread_mutex_unlock(&g_runtime_state_mutex);
     return true;
   }
 
+  pthread_mutex_unlock(&g_runtime_state_mutex);
   return false;
 }
 
@@ -1817,10 +1819,15 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 }
 
 bool load_runtime_config(void) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_load_mutex);
   bool loaded =
-      load_runtime_config_state(&g_runtime_state_slots[0]) == CONFIG_LOAD_OK;
-  activate_runtime_config_state(0);
+      load_runtime_config_state(&g_runtime_parse_state) == CONFIG_LOAD_OK;
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  memcpy(&g_runtime_state, &g_runtime_parse_state, sizeof(g_runtime_state));
+  pthread_mutex_unlock(&g_runtime_state_mutex);
   g_config_file_stamp = read_config_file_stamp();
+  pthread_mutex_unlock(&g_runtime_load_mutex);
   return loaded;
 }
 
@@ -1829,30 +1836,30 @@ bool reload_runtime_config_if_changed(bool *reloaded_out) {
   if (reloaded_out)
     *reloaded_out = false;
 
+  pthread_mutex_lock(&g_runtime_load_mutex);
   config_file_stamp_t new_stamp = read_config_file_stamp();
-  if (config_file_stamp_equals(&new_stamp, &g_config_file_stamp))
+  if (config_file_stamp_equals(&new_stamp, &g_config_file_stamp)) {
+    pthread_mutex_unlock(&g_runtime_load_mutex);
     return true;
+  }
 
-  const runtime_config_state_t *current = active_runtime_state();
-  runtime_config_state_t *parsed = &g_runtime_state_slots[RUNTIME_CONFIG_PARSE_SLOT];
+  runtime_config_state_t *parsed = &g_runtime_parse_state;
   config_load_status_t status = load_runtime_config_state(parsed);
-  if (status == CONFIG_LOAD_ERROR)
+  if (status == CONFIG_LOAD_ERROR) {
+    pthread_mutex_unlock(&g_runtime_load_mutex);
     return false;
+  }
 
-  int current_slot = atomic_load_explicit(&g_runtime_state_active_index,
-                                          memory_order_acquire);
-  int candidate_slot = (current_slot == 0) ? 1 : 0;
-  runtime_config_state_t *candidate = &g_runtime_state_slots[candidate_slot];
-  memcpy(candidate, current, sizeof(*candidate));
-  apply_reloadable_runtime_fields(candidate, parsed);
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  bool changed = !runtime_config_states_equal(&g_runtime_state, parsed);
+  if (changed)
+    memcpy(&g_runtime_state, parsed, sizeof(g_runtime_state));
+  pthread_mutex_unlock(&g_runtime_state_mutex);
 
   g_config_file_stamp = new_stamp;
-  if (runtime_config_states_equal(candidate, current))
-    return true;
-
-  activate_runtime_config_state(candidate_slot);
+  pthread_mutex_unlock(&g_runtime_load_mutex);
   if (reloaded_out)
-    *reloaded_out = true;
+    *reloaded_out = changed;
   return true;
 }
 

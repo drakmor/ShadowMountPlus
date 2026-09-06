@@ -391,7 +391,9 @@ static bool wait_for_existing_instance_exit(pid_t target_pid) {
 
 static void log_non_empty_scan_paths(void) {
   for (int i = 0; i < get_scan_path_count(); i++) {
-    const char *scan_path = get_scan_path(i);
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
     DIR *d = opendir(scan_path);
     if (!d)
       continue;
@@ -498,7 +500,7 @@ static void cleanup_kstuff_noautomount_file(void) {
 }
 
 static void stop_conflicting_backpork(void) {
-  if (!runtime_config()->backport_fakelib_enabled)
+  if (!runtime_config().backport_fakelib_enabled)
     return;
 
   const char *names[] = {BACKPORK_PROCESS_NAME, BACKPORK_PROCESS_NAME_ALT};
@@ -610,23 +612,23 @@ int main(void) {
     log_debug("  [MOUNT] remount_system_ex failed: %s", strerror(errno));
   }
 
-  const runtime_config_t *startup_cfg = runtime_config();
-  if (startup_cfg->api_enabled) {
+  const runtime_config_t startup_cfg = runtime_config();
+  if (startup_cfg.api_enabled) {
     char web_address[MAX_API_BIND_ADDRESS];
-    resolve_web_interface_address(startup_cfg->api_bind_address, web_address,
+    resolve_web_interface_address(startup_cfg.api_bind_address, web_address,
                                   sizeof(web_address));
     notify_system_l10n(SM_L10N_STARTUP_WEB, SHADOWMOUNT_VERSION,
-                       web_address, startup_cfg->api_port);
+                       web_address, startup_cfg.api_port);
   } else {
     notify_system_l10n(SM_L10N_STARTUP, SHADOWMOUNT_VERSION);
   }
   log_non_empty_scan_paths();
 
-  if (runtime_config()->legacy_recursive_scan_forced) {
+  if (runtime_config().legacy_recursive_scan_forced) {
     notify_system_info_l10n(SM_L10N_RECURSIVE_SCAN_DEPRECATED);
-  } else if (runtime_config()->scan_depth > 1u) {
+  } else if (runtime_config().scan_depth > 1u) {
     notify_system_info_l10n(SM_L10N_SCAN_DEPTH_ENABLED,
-                            runtime_config()->scan_depth);
+                            runtime_config().scan_depth);
   }
 
   cleanup_mount_dirs();

@@ -137,8 +137,8 @@ static void start_log_monitoring(void);
 static void handle_crash_candidate(uint64_t flags, uint64_t now_us);
 
 static bool sm_mdbg_enabled(void) {
-  return runtime_config()->kstuff_crash_detection_enabled &&
-         runtime_config()->kstuff_game_auto_toggle;
+  return runtime_config().kstuff_crash_detection_enabled &&
+         runtime_config().kstuff_game_auto_toggle;
 }
 
 #if !MDBG_SKIP_PRIVILEGE_ELEVATION

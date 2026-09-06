@@ -32,7 +32,9 @@ static void classify_scan_tree_entry(const char *full_path, unsigned char d_type
 static bool is_distinct_configured_scan_root(const char *current_scan_root,
                                              const char *path) {
   for (int i = 0; i < get_scan_path_count(); i++) {
-    const char *scan_path = get_scan_path(i);
+    char scan_path[MAX_PATH];
+    if (!get_scan_path(i, scan_path))
+      continue;
     if (strcmp(scan_path, path) != 0)
       continue;
     if (strcmp(current_scan_root, path) == 0)
