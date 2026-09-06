@@ -372,25 +372,6 @@ static void clear_scanner_manual_scan_state(void) {
   g_scanner_manual_probe_due_us = 0;
 }
 
-static bool fakelib_runtime_config_changed(const runtime_config_t *old_cfg,
-                                           const runtime_config_t *new_cfg) {
-  return old_cfg->backport_fakelib_enabled !=
-             new_cfg->backport_fakelib_enabled ||
-         old_cfg->global_fakelib_enabled != new_cfg->global_fakelib_enabled ||
-         old_cfg->global_fakelib_game_priority !=
-             new_cfg->global_fakelib_game_priority ||
-         old_cfg->update_emulators_enabled !=
-             new_cfg->update_emulators_enabled ||
-         strcmp(old_cfg->emulators_path, new_cfg->emulators_path) != 0 ||
-         strcmp(old_cfg->global_fakelib_path,
-                new_cfg->global_fakelib_path) != 0 ||
-         old_cfg->global_fakelib_exclude_title_count !=
-             new_cfg->global_fakelib_exclude_title_count ||
-         memcmp(old_cfg->global_fakelib_exclude_title_ids,
-                new_cfg->global_fakelib_exclude_title_ids,
-                sizeof(old_cfg->global_fakelib_exclude_title_ids)) != 0;
-}
-
 static uint32_t scanner_config_topology_hash(void) {
   uint32_t hash = 2166136261u;
   int scan_path_count = get_scan_path_count();
@@ -1238,9 +1219,8 @@ static bool apply_runtime_config_reload_effects(int kq,
 
   sm_ampr_updater_on_config_reload(old_cfg, new_cfg);
 
-  if (old_cfg->backport_fakelib_enabled &&
-      fakelib_runtime_config_changed(old_cfg, new_cfg))
-    sm_fakelib_game_shutdown();
+  // The lifecycle watcher owns the running game's fakelib overlay. Keep it
+  // until exit; the next launch/cache preparation reads the new settings.
 
   sm_kstuff_on_config_reload();
 
