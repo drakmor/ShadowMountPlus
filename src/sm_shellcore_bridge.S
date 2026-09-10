@@ -20,14 +20,34 @@
     .global sm_shellcore_bridge_install_all_trampoline
     .global sm_shellcore_bridge_install_title_dir
     .global sm_shellcore_bridge_install_armed
-    .global sm_shellcore_bridge_install_title_id
-    .global sm_shellcore_bridge_install_dir
+    .global sm_shellcore_bridge_install_title_id_0
+    .global sm_shellcore_bridge_install_title_id_1
+    .global sm_shellcore_bridge_install_dir_0
+    .global sm_shellcore_bridge_install_dir_1
     .global sm_shellcore_bridge_socket
     .global sm_shellcore_bridge_setsockopt
     .global sm_shellcore_bridge_connect
     .global sm_shellcore_bridge_read
     .global sm_shellcore_bridge_write
     .global sm_shellcore_bridge_close
+
+/*
+ * SceShellCore text is execute-only. The patched address must therefore be
+ * fetched as part of a movabs instruction, never loaded from a data slot.
+ */
+    .macro bridge_call_import slot
+    .byte 0x49, 0xbb               /* movabsq $address, %r11 */
+\slot:
+    .quad 0
+    call *%r11
+    .endm
+
+    .macro bridge_load_qword slot, stack_offset
+    .byte 0x48, 0xb8               /* movabsq $value, %rax */
+\slot:
+    .quad 0
+    movq %rax, \stack_offset(%rsp)
+    .endm
 
 sm_shellcore_bridge_blob_start:
 sm_shellcore_bridge_launch_hook:
@@ -135,7 +155,8 @@ sm_shellcore_bridge_exchange:
     movq %rsp, %rbp
     pushq %rbx
     pushq %r12
-    subq $80, %rsp
+    pushq %r13
+    subq $104, %rsp
 
     /* Build the fixed-size request. */
     pxor %xmm0, %xmm0
@@ -163,7 +184,7 @@ sm_shellcore_bridge_exchange:
     movl $1, %edi
     movl $1, %esi
     xorl %edx, %edx
-    call *sm_shellcore_bridge_socket(%rip)
+    bridge_call_import sm_shellcore_bridge_socket
     testl %eax, %eax
     js 8f
     movl %eax, %ebx
@@ -183,7 +204,10 @@ sm_shellcore_bridge_exchange:
     movl $SM_SHELLCORE_BRIDGE_SO_SNDTIMEO, %edx
     leaq -96(%rbp), %rcx
     movl $SM_SHELLCORE_BRIDGE_TIMEVAL_SIZE, %r8d
-    call *sm_shellcore_bridge_setsockopt(%rip)
+    .byte 0x49, 0xbd               /* movabsq $address, %r13 */
+sm_shellcore_bridge_setsockopt:
+    .quad 0
+    call *%r13
     testl %eax, %eax
     jne 7f
     movl %ebx, %edi
@@ -191,15 +215,25 @@ sm_shellcore_bridge_exchange:
     movl $SM_SHELLCORE_BRIDGE_SO_RCVTIMEO, %edx
     leaq -96(%rbp), %rcx
     movl $SM_SHELLCORE_BRIDGE_TIMEVAL_SIZE, %r8d
-    call *sm_shellcore_bridge_setsockopt(%rip)
+    call *%r13
     testl %eax, %eax
     jne 7f
 
+    /* Build { 31, AF_UNIX, "/system_tmp/shadowmount.sock" } on the stack. */
+    movabsq $(0x65747379732f0100 | SM_SHELLCORE_BRIDGE_SOCKADDR_SIZE), %rax
+    movq %rax, -128(%rbp)
+    movabsq $0x68732f706d745f6d, %rax
+    movq %rax, -120(%rbp)
+    movabsq $0x6e756f6d776f6461, %rax
+    movq %rax, -112(%rbp)
+    movabsq $0x00006b636f732e74, %rax
+    movq %rax, -104(%rbp)
+
     /* connect(fd, &sockaddr, sockaddr.sun_len) */
     movl %ebx, %edi
-    leaq sm_shellcore_bridge_sockaddr(%rip), %rsi
-    movzbl sm_shellcore_bridge_sockaddr(%rip), %edx
-    call *sm_shellcore_bridge_connect(%rip)
+    leaq -128(%rbp), %rsi
+    movl $SM_SHELLCORE_BRIDGE_SOCKADDR_SIZE, %edx
+    bridge_call_import sm_shellcore_bridge_connect
     testl %eax, %eax
     jne 7f
 
@@ -207,7 +241,7 @@ sm_shellcore_bridge_exchange:
     movl %ebx, %edi
     leaq -64(%rbp), %rsi
     movl $SM_SHELLCORE_REQUEST_SIZE, %edx
-    call *sm_shellcore_bridge_write(%rip)
+    bridge_call_import sm_shellcore_bridge_write
     cmpq $SM_SHELLCORE_REQUEST_SIZE, %rax
     jne 7f
 
@@ -215,7 +249,7 @@ sm_shellcore_bridge_exchange:
     movl %ebx, %edi
     leaq -68(%rbp), %rsi
     movl $SM_SHELLCORE_RESPONSE_SIZE, %edx
-    call *sm_shellcore_bridge_read(%rip)
+    bridge_call_import sm_shellcore_bridge_read
     cmpq $SM_SHELLCORE_RESPONSE_SIZE, %rax
     jne 7f
     movl -68(%rbp), %r12d
@@ -224,13 +258,14 @@ sm_shellcore_bridge_exchange:
     movl $5, %r12d
 5:
     movl %ebx, %edi
-    call *sm_shellcore_bridge_close(%rip)
+    bridge_call_import sm_shellcore_bridge_close
     movl %r12d, %eax
     jmp 9f
 8:
     movl $5, %eax
 9:
-    addq $80, %rsp
+    addq $104, %rsp
+    popq %r13
     popq %r12
     popq %rbx
     popq %rbp
@@ -250,23 +285,6 @@ sm_shellcore_bridge_launch_trampoline:
 sm_shellcore_bridge_spawn_trampoline:
     .fill SM_SHELLCORE_BRIDGE_TRAMPOLINE_SIZE, 1, 0x90
 
-    .p2align 3
-sm_shellcore_bridge_socket:
-    .quad 0
-sm_shellcore_bridge_setsockopt:
-    .quad 0
-sm_shellcore_bridge_connect:
-    .quad 0
-sm_shellcore_bridge_read:
-    .quad 0
-sm_shellcore_bridge_write:
-    .quad 0
-sm_shellcore_bridge_close:
-    .quad 0
-sm_shellcore_bridge_sockaddr:
-    .byte sm_shellcore_bridge_sockaddr_end - sm_shellcore_bridge_sockaddr, 1
-    .asciz SM_SHELLCORE_SOCKET_PATH
-sm_shellcore_bridge_sockaddr_end:
     /*
      * Firmware before 12.00 copies only this compact base. Keep the optional
      * install compatibility bridge after it so the 11.60 tail cave still fits.
@@ -281,14 +299,28 @@ sm_shellcore_bridge_base_end:
  * AppInstallAll call follows its original trampoline unchanged.
  */
 sm_shellcore_bridge_install_all_hook:
-    cmpb $0, sm_shellcore_bridge_install_armed(%rip)
+    .byte 0xb0                    /* movb $armed, %al */
+sm_shellcore_bridge_install_armed:
+    .byte 0
+    testb %al, %al
     je 1f
-    movb $0, sm_shellcore_bridge_install_armed(%rip)
-    leaq sm_shellcore_bridge_install_title_id(%rip), %rdi
-    leaq sm_shellcore_bridge_install_dir(%rip), %rsi
+
+    /* Materialize both patched strings in readable stack memory. */
+    subq $40, %rsp
+    bridge_load_qword sm_shellcore_bridge_install_title_id_0, 0
+    bridge_load_qword sm_shellcore_bridge_install_title_id_1, 8
+    bridge_load_qword sm_shellcore_bridge_install_dir_0, 16
+    bridge_load_qword sm_shellcore_bridge_install_dir_1, 24
+    leaq 0(%rsp), %rdi
+    leaq 16(%rsp), %rsi
     movl $1, %edx
     xorl %ecx, %ecx
-    jmp *sm_shellcore_bridge_install_title_dir(%rip)
+    .byte 0x49, 0xbb             /* movabsq $address, %r11 */
+sm_shellcore_bridge_install_title_dir:
+    .quad 0
+    call *%r11
+    addq $40, %rsp
+    ret
 1:
     jmp .Linstall_all_trampoline
 
@@ -298,13 +330,5 @@ sm_shellcore_bridge_install_all_trampoline:
     .fill SM_SHELLCORE_BRIDGE_TRAMPOLINE_SIZE, 1, 0x90
 
     .p2align 3
-sm_shellcore_bridge_install_title_dir:
-    .quad 0
-sm_shellcore_bridge_install_armed:
-    .byte 0
-sm_shellcore_bridge_install_title_id:
-    .zero SM_SHELLCORE_REQUEST_TITLE_ID_SIZE
-sm_shellcore_bridge_install_dir:
-    .zero SM_SHELLCORE_BRIDGE_INSTALL_DIR_SIZE
 sm_shellcore_bridge_blob_end:
     .section .note.GNU-stack,"",@progbits

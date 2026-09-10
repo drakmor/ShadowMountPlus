@@ -23,8 +23,11 @@ static const uint8_t k_expected_function_prologue[] = {0x55, 0x48, 0x89, 0xe5};
 
 _Static_assert(MAX_TITLE_ID == SM_SHELLCORE_REQUEST_TITLE_ID_SIZE,
                "ShellCore bridge title id size mismatch");
-_Static_assert(MAX_PATH == SM_SHELLCORE_BRIDGE_INSTALL_DIR_SIZE,
-               "ShellCore bridge install dir size mismatch");
+_Static_assert(SM_SHELLCORE_BRIDGE_INSTALL_STRING_SIZE % sizeof(uint64_t) == 0,
+               "ShellCore bridge install string alignment mismatch");
+_Static_assert(sizeof(SM_SHELLCORE_SOCKET_PATH) + 2 ==
+                   SM_SHELLCORE_BRIDGE_SOCKADDR_SIZE,
+               "ShellCore bridge socket path encoding mismatch");
 _Static_assert(TRAMPOLINE_SIZE ==
                    MAX_HOOK_PROLOGUE_SIZE +
                        SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE,
@@ -55,8 +58,10 @@ extern const uint8_t sm_shellcore_bridge_spawn_trampoline[];
 extern const uint8_t sm_shellcore_bridge_install_all_trampoline[];
 extern const uint8_t sm_shellcore_bridge_install_title_dir[];
 extern const uint8_t sm_shellcore_bridge_install_armed[];
-extern const uint8_t sm_shellcore_bridge_install_title_id[];
-extern const uint8_t sm_shellcore_bridge_install_dir[];
+extern const uint8_t sm_shellcore_bridge_install_title_id_0[];
+extern const uint8_t sm_shellcore_bridge_install_title_id_1[];
+extern const uint8_t sm_shellcore_bridge_install_dir_0[];
+extern const uint8_t sm_shellcore_bridge_install_dir_1[];
 extern const uint8_t sm_shellcore_bridge_socket[];
 extern const uint8_t sm_shellcore_bridge_setsockopt[];
 extern const uint8_t sm_shellcore_bridge_connect[];
@@ -76,6 +81,16 @@ static const shellcore_import_t k_bridge_imports[] = {
     {sm_shellcore_bridge_read, "read"},
     {sm_shellcore_bridge_write, "write"},
     {sm_shellcore_bridge_close, "close"},
+};
+
+static const uint8_t *const k_install_title_slots[] = {
+    sm_shellcore_bridge_install_title_id_0,
+    sm_shellcore_bridge_install_title_id_1,
+};
+
+static const uint8_t *const k_install_dir_slots[] = {
+    sm_shellcore_bridge_install_dir_0,
+    sm_shellcore_bridge_install_dir_1,
 };
 
 static pid_t find_shellcore_pid(void);
@@ -108,6 +123,21 @@ static pthread_mutex_t g_install_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uintptr_t remote_bridge_symbol(const uint8_t *symbol) {
   return g_hooks.bridge_address +
          (uintptr_t)(symbol - sm_shellcore_bridge_blob_start);
+}
+
+static bool write_remote_bridge_chunks(
+    pid_t pid, const uint8_t *const *slots, size_t slot_count,
+    const uint8_t *bytes, size_t size) {
+  if (!slots || !bytes || size != slot_count * sizeof(uint64_t))
+    return false;
+  for (size_t i = 0; i < slot_count; ++i) {
+    if (!sm_remote_process_write(pid, remote_bridge_symbol(slots[i]),
+                                 bytes + i * sizeof(uint64_t),
+                                 sizeof(uint64_t))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 static void build_absolute_jump(uint8_t jump[ABSOLUTE_JUMP_SIZE],
@@ -828,10 +858,13 @@ bool sm_shellcore_install_title_dir(const char *title_id,
   if (!title_id || !install_dir || !result_out)
     return false;
 
-  size_t title_len = strnlen(title_id, MAX_TITLE_ID);
-  size_t dir_len = strnlen(install_dir, MAX_PATH);
-  if (title_len == 0 || title_len >= MAX_TITLE_ID || dir_len == 0 ||
-      dir_len >= MAX_PATH) {
+  size_t title_len =
+      strnlen(title_id, SM_SHELLCORE_BRIDGE_INSTALL_STRING_SIZE);
+  size_t dir_len =
+      strnlen(install_dir, SM_SHELLCORE_BRIDGE_INSTALL_STRING_SIZE);
+  if (title_len == 0 ||
+      title_len >= SM_SHELLCORE_BRIDGE_INSTALL_STRING_SIZE || dir_len == 0 ||
+      dir_len >= SM_SHELLCORE_BRIDGE_INSTALL_STRING_SIZE) {
     return false;
   }
 
@@ -865,19 +898,20 @@ bool sm_shellcore_install_title_dir(const char *title_id,
     return false;
   }
 
-  char remote_title[MAX_TITLE_ID] = {0};
-  char remote_dir[MAX_PATH] = {0};
+  uint8_t remote_title[SM_SHELLCORE_BRIDGE_INSTALL_STRING_SIZE] = {0};
+  uint8_t remote_dir[SM_SHELLCORE_BRIDGE_INSTALL_STRING_SIZE] = {0};
   memcpy(remote_title, title_id, title_len);
   memcpy(remote_dir, install_dir, dir_len);
 
   uint8_t armed = 1;
   bool written =
-      sm_remote_process_write(pid,
-                              remote_bridge_symbol(
-                                  sm_shellcore_bridge_install_title_id),
-                              remote_title, sizeof(remote_title)) &&
-      sm_remote_process_write(
-          pid, remote_bridge_symbol(sm_shellcore_bridge_install_dir),
+      write_remote_bridge_chunks(
+          pid, k_install_title_slots,
+          sizeof(k_install_title_slots) / sizeof(k_install_title_slots[0]),
+          remote_title, sizeof(remote_title)) &&
+      write_remote_bridge_chunks(
+          pid, k_install_dir_slots,
+          sizeof(k_install_dir_slots) / sizeof(k_install_dir_slots[0]),
           remote_dir, sizeof(remote_dir)) &&
       sm_remote_process_write(
           pid, remote_bridge_symbol(sm_shellcore_bridge_install_armed),
@@ -892,24 +926,24 @@ bool sm_shellcore_install_title_dir(const char *title_id,
   }
 
   int result = sceAppInstUtilAppInstallAll(NULL);
-  uint8_t remaining = 1;
-  bool read_back = sm_remote_process_read(
-      pid, remote_bridge_symbol(sm_shellcore_bridge_install_armed), &remaining,
-      sizeof(remaining));
-  bool consumed = read_back && remaining == 0;
-  if (!consumed) {
-    armed = 0;
-    (void)sm_remote_process_write(
-        pid, remote_bridge_symbol(sm_shellcore_bridge_install_armed), &armed,
-        sizeof(armed));
+  armed = 0;
+  bool disarmed = sm_remote_process_write(
+      pid, remote_bridge_symbol(sm_shellcore_bridge_install_armed), &armed,
+      sizeof(armed));
+  if (!disarmed) {
+    bool isolated = restore_remote_bytes(pid, install_target,
+                                         g_hooks.hooks[2].original,
+                                         g_hooks.hooks[2].original_size);
+    g_hooks.status = isolated ? SHELLCORE_HOOKS_STALE
+                              : SHELLCORE_HOOKS_ROLLBACK_PENDING;
+    log_debug("  [SHELLCORE] failed to disarm AppInstallAll bridge: %s "
+              "hook_restored=%d",
+              title_id, isolated ? 1 : 0);
   }
   pthread_mutex_unlock(&g_install_mutex);
 
-  if (!consumed) {
-    log_debug("  [SHELLCORE] AppInstallAll trigger was not consumed: %s",
-              title_id);
+  if (!disarmed)
     return false;
-  }
   log_debug("  [SHELLCORE] AppInstallAll bridge consumed: %s result=0x%08x",
             title_id, (uint32_t)result);
   *result_out = result;
