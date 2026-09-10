@@ -39,6 +39,9 @@ typedef struct {
   bool restore_on_empty;
   bool sleep_pause_restore;
   bool current_app_focus_valid;
+  bool mount_hooks_restore_needed;
+  bool mount_hooks_control_unavailable;
+  pid_t mount_hooks_game_pid;
   uint32_t current_app_focus_id;
   uint64_t restore_retry_us;
   kstuff_game_entry_t game;
@@ -56,6 +59,94 @@ static uint32_t get_pause_delay_seconds_for_title(const char *title_id,
                                                   uint32_t *autopause_delay_out,
                                                   bool *autopause_delay_valid_out);
 static void restore_kstuff_if_needed(const char *reason);
+static void restore_game_mount_hooks_if_idle(const char *reason);
+static void shutdown_kstuff_game_automation(const char *reason);
+
+static int control_runtime_syscall_hooks(uint64_t command, uint64_t mask,
+                                         uint64_t *enabled_mask_out) {
+  register uint64_t r10 __asm__("r10") = 0;
+  register uint64_t r8 __asm__("r8") = 0;
+  register uint64_t r9 __asm__("r9") = 0;
+  uint64_t result;
+  unsigned char is_error;
+
+  __asm__ __volatile__("syscall"
+                       : "=a"(result), "=@ccc"(is_error), "+r"(r10),
+                         "+r"(r8), "+r"(r9)
+                       : "a"(SM_KSTUFF_KEKCALL_RUNTIME_HOOK_CONTROL),
+                         "D"(command), "S"(mask), "d"(UINT64_C(0))
+                       : "rcx", "r11", "memory");
+
+  if (is_error)
+    return (int)result;
+  if (enabled_mask_out)
+    *enabled_mask_out = result;
+  return 0;
+}
+
+static bool set_game_mount_hooks_paused(bool pause, const char *reason) {
+  if (g_kstuff.mount_hooks_control_unavailable)
+    return false;
+
+  if (!sm_kstuff_is_loaded()) {
+    log_debug("  [KSTUFF] cannot %s nmount/unmount interception: kstuff is "
+              "not currently callable",
+              pause ? "pause" : "resume");
+    return false;
+  }
+
+  uint64_t enabled_mask = 0;
+  int rc = control_runtime_syscall_hooks(
+      pause ? SM_KSTUFF_RUNTIME_HOOK_DISABLE
+            : SM_KSTUFF_RUNTIME_HOOK_ENABLE,
+      SM_KSTUFF_RUNTIME_HOOK_MOUNT_UNMOUNT, &enabled_mask);
+  if (rc != 0) {
+    if (rc == ENOSYS) {
+      g_kstuff.mount_hooks_control_unavailable = true;
+      log_debug("  [KSTUFF] nmount/unmount runtime control is unavailable; "
+                "update ps5-kstuff");
+    } else {
+      log_debug("  [KSTUFF] failed to %s nmount/unmount interception: %s",
+                pause ? "pause" : "resume", strerror(rc));
+    }
+    return false;
+  }
+
+  bool desired_state =
+      pause ? (enabled_mask & SM_KSTUFF_RUNTIME_HOOK_MOUNT_UNMOUNT) == 0
+            : (enabled_mask & SM_KSTUFF_RUNTIME_HOOK_MOUNT_UNMOUNT) ==
+                  SM_KSTUFF_RUNTIME_HOOK_MOUNT_UNMOUNT;
+  if (!desired_state) {
+    log_debug("  [KSTUFF] nmount/unmount %s returned unexpected status "
+              "0x%llX",
+              pause ? "pause" : "resume",
+              (unsigned long long)enabled_mask);
+    return false;
+  }
+
+  log_debug("  [KSTUFF] nmount/unmount interception %s (%s)",
+            pause ? "paused" : "resumed", reason ? reason : "game state");
+  return true;
+}
+
+static void note_game_for_mount_hooks(pid_t pid, const char *reason) {
+  if (pid <= 0)
+    return;
+  g_kstuff.mount_hooks_game_pid = pid;
+  if (!g_kstuff.mount_hooks_restore_needed &&
+      set_game_mount_hooks_paused(true, reason)) {
+    g_kstuff.mount_hooks_restore_needed = true;
+  }
+}
+
+static void restore_game_mount_hooks_if_idle(const char *reason) {
+  if (g_kstuff.mount_hooks_game_pid > 0 ||
+      !g_kstuff.mount_hooks_restore_needed) {
+    return;
+  }
+  if (set_game_mount_hooks_paused(false, reason))
+    g_kstuff.mount_hooks_restore_needed = false;
+}
 
 bool sm_kstuff_is_loaded(void) {
   register uint64_t r10 __asm__("r10") = 0;
@@ -460,7 +551,7 @@ static void apply_kstuff_config_reload(void) {
     sm_mdbg_game_shutdown();
 
   if (!runtime_config().kstuff_game_auto_toggle) {
-    sm_kstuff_game_shutdown();
+    shutdown_kstuff_game_automation("config reload");
     return;
   }
 
@@ -568,6 +659,7 @@ static void restore_kstuff_if_needed(const char *reason) {
               reason ? reason : "no reason",
               g_kstuff.game.active ? ", pending delay for another tracked game"
                                    : "");
+    restore_game_mount_hooks_if_idle(reason);
   } else {
     log_debug("  [KSTUFF] failed to auto-resume (%s)",
               reason ? reason : "no reason");
@@ -776,11 +868,14 @@ bool sm_kstuff_game_feature_enabled(void) {
 
 void sm_kstuff_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id,
                             uint64_t exec_time_us) {
-  if (!sm_kstuff_game_feature_enabled())
+  if (!sm_kstuff_game_feature_enabled()) {
+    note_game_for_mount_hooks(pid, "game launch");
     return;
+  }
 
   if (g_kstuff.game.active) {
     if (g_kstuff.game.pid == pid) {
+      note_game_for_mount_hooks(pid, "game launch");
       log_debug("  [KSTUFF] already tracking pid=%ld for %s", (long)pid,
                 title_id);
       return;
@@ -795,6 +890,10 @@ void sm_kstuff_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id,
     if (restore_needed)
       finish_tracked_game_clear("tracked game handoff");
   }
+
+  // A previous tracked title may have disabled the entire sysentvec. Restore
+  // that state first, then apply the narrower nmount/unmount pause.
+  note_game_for_mount_hooks(pid, "game launch");
 
   if (is_kstuff_pause_disabled_for_title(title_id)) {
     log_debug("  [KSTUFF] auto-pause disabled by config for %s pid=%ld "
@@ -836,6 +935,8 @@ bool sm_kstuff_game_handoff(pid_t old_pid, pid_t new_pid,
       title_id[0] == '\0') {
     return false;
   }
+  note_game_for_mount_hooks(new_pid, "game process handoff");
+
   if (!g_kstuff.game.active || g_kstuff.game.pid != old_pid ||
       strcmp(g_kstuff.game.title_id, title_id) != 0) {
     // Config may have enabled tracking while the old process was pending, or
@@ -864,16 +965,22 @@ void sm_kstuff_note_app_focus(uint32_t app_id) {
 }
 
 void sm_kstuff_game_on_exit(pid_t pid) {
-  if (!g_kstuff.game.active || g_kstuff.game.pid != pid)
-    return;
+  bool mount_hooks_game_exited = g_kstuff.mount_hooks_game_pid == pid;
 
-  bool restore_needed = tracked_game_requires_restore();
-  sm_mdbg_game_on_exit(pid);
-  log_debug("  [KSTUFF] game stopped: %s pid=%ld",
-            g_kstuff.game.title_id, (long)pid);
-  memset(&g_kstuff.game, 0, sizeof(g_kstuff.game));
-  if (restore_needed)
-    finish_tracked_game_clear("tracked game exit");
+  if (g_kstuff.game.active && g_kstuff.game.pid == pid) {
+    bool restore_needed = tracked_game_requires_restore();
+    sm_mdbg_game_on_exit(pid);
+    log_debug("  [KSTUFF] game stopped: %s pid=%ld",
+              g_kstuff.game.title_id, (long)pid);
+    memset(&g_kstuff.game, 0, sizeof(g_kstuff.game));
+    if (restore_needed)
+      finish_tracked_game_clear("tracked game exit");
+  }
+
+  if (mount_hooks_game_exited) {
+    g_kstuff.mount_hooks_game_pid = 0;
+    restore_game_mount_hooks_if_idle("game exit");
+  }
 }
 
 void sm_kstuff_game_poll(bool process_active) {
@@ -891,7 +998,7 @@ void sm_kstuff_game_poll(bool process_active) {
   maybe_apply_kstuff_pause_for_slot(&g_kstuff.game);
 }
 
-void sm_kstuff_game_shutdown(void) {
+static void shutdown_kstuff_game_automation(const char *reason) {
   bool restore_needed = tracked_game_requires_restore();
   if (restore_needed && !g_kstuff.sleep_pause_restore &&
       runtime_sleep_mode_active() && should_stop_requested()) {
@@ -906,8 +1013,14 @@ void sm_kstuff_game_shutdown(void) {
   memset(&g_kstuff.game, 0, sizeof(g_kstuff.game));
   if (restore_needed) {
     mark_restore_needed();
-    restore_kstuff_if_needed("watcher shutdown");
+    restore_kstuff_if_needed(reason);
   }
+}
+
+void sm_kstuff_game_shutdown(void) {
+  shutdown_kstuff_game_automation("watcher shutdown");
+  g_kstuff.mount_hooks_game_pid = 0;
+  restore_game_mount_hooks_if_idle("watcher shutdown");
 }
 
 void sm_kstuff_sleep_enter(void) {
