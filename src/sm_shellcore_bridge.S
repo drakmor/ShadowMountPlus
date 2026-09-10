@@ -7,16 +7,10 @@
     .global sm_shellcore_bridge_base_end
     .global sm_shellcore_bridge_blob_end
     .global sm_shellcore_bridge_launch_hook
-    .global sm_shellcore_bridge_spawn_hook
-    .global sm_shellcore_bridge_spawn_title_inline_1
-    .global sm_shellcore_bridge_spawn_title_capacity_1
-    .global sm_shellcore_bridge_spawn_title_pointer_1
-    .global sm_shellcore_bridge_spawn_title_inline_2
-    .global sm_shellcore_bridge_spawn_title_capacity_2
-    .global sm_shellcore_bridge_spawn_title_pointer_2
+    .global sm_shellcore_bridge_sandbox_hook
+    .global sm_shellcore_bridge_sandbox_original
     .global sm_shellcore_bridge_install_all_hook
     .global sm_shellcore_bridge_launch_trampoline
-    .global sm_shellcore_bridge_spawn_trampoline
     .global sm_shellcore_bridge_install_all_trampoline
     .global sm_shellcore_bridge_install_title_dir
     .global sm_shellcore_bridge_install_armed
@@ -50,6 +44,8 @@
     .endm
 
 sm_shellcore_bridge_blob_start:
+    /* Bridge ABI v2 marker; also prevents recovery as an older bridge. */
+    .byte 0x66, 0x90
 sm_shellcore_bridge_launch_hook:
     pushq %rbx
     pushq %r12
@@ -89,10 +85,7 @@ sm_shellcore_bridge_launch_hook:
     ret
 
     .p2align 4
-sm_shellcore_bridge_spawn_hook:
-    pushq %rbx
-    pushq %r12
-    movq %rdi, %r12
+sm_shellcore_bridge_sandbox_hook:
     pushq %rdi
     pushq %rsi
     pushq %rdx
@@ -100,23 +93,9 @@ sm_shellcore_bridge_spawn_hook:
     pushq %r8
     pushq %r9
     subq $8, %rsp
-sm_shellcore_bridge_spawn_title_inline_1:
-    leaq 0x40(%r12), %rsi
-sm_shellcore_bridge_spawn_title_capacity_1:
-    cmpq $0x10, 0x58(%r12)
-    jb .Lspawn_ready_title
-sm_shellcore_bridge_spawn_title_pointer_1:
-    movq 0x40(%r12), %rsi
-.Lspawn_ready_title:
     movl $SM_SHELLCORE_REQUEST_SANDBOX_READY_VALUE, %edi
-    /* Avoid a socket round trip for ShellCore/system applications. */
-    cmpl $0x41535050, (%rsi) /* "PPSA" */
-    je .Lspawn_ready_exchange
-    cmpl $0x41535543, (%rsi) /* "CUSA" */
-    jne .Lspawn_ready_done
-.Lspawn_ready_exchange:
+    xorl %esi, %esi
     call sm_shellcore_bridge_exchange
-.Lspawn_ready_done:
     addq $8, %rsp
     popq %r9
     popq %r8
@@ -124,29 +103,10 @@ sm_shellcore_bridge_spawn_title_pointer_1:
     popq %rdx
     popq %rsi
     popq %rdi
-    subq $8, %rsp
-    call .Lspawn_trampoline
-    addq $8, %rsp
-    movq %rax, %rbx
-    testl %eax, %eax
-    jz .Lspawn_return
-sm_shellcore_bridge_spawn_title_inline_2:
-    leaq 0x40(%r12), %rsi
-sm_shellcore_bridge_spawn_title_capacity_2:
-    cmpq $0x10, 0x58(%r12)
-    jb .Lspawn_failure_title
-sm_shellcore_bridge_spawn_title_pointer_2:
-    movq 0x40(%r12), %rsi
-.Lspawn_failure_title:
-    movl $SM_SHELLCORE_REQUEST_LAUNCH_FAILED_VALUE, %edi
-    subq $8, %rsp
-    call sm_shellcore_bridge_exchange
-    addq $8, %rsp
-.Lspawn_return:
-    movq %rbx, %rax
-    popq %r12
-    popq %rbx
-    ret
+    .byte 0x49, 0xbb               /* movabsq $original, %r11 */
+sm_shellcore_bridge_sandbox_original:
+    .quad 0
+    jmp *%r11
 
     .p2align 4
 /* int exchange(uint16_t operation, const char *title_id) */
@@ -280,11 +240,6 @@ sm_shellcore_bridge_setsockopt:
 .Llaunch_trampoline:
 sm_shellcore_bridge_launch_trampoline:
     .fill SM_SHELLCORE_BRIDGE_TRAMPOLINE_SIZE, 1, 0x90
-    .p2align 4
-.Lspawn_trampoline:
-sm_shellcore_bridge_spawn_trampoline:
-    .fill SM_SHELLCORE_BRIDGE_TRAMPOLINE_SIZE, 1, 0x90
-
     /*
      * Firmware before 12.00 copies only this compact base. Keep the optional
      * install compatibility bridge after it so the 11.60 tail cave still fits.

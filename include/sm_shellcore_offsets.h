@@ -6,7 +6,7 @@
 
 typedef enum {
   SM_SHELLCORE_TARGET_LAUNCH_APP = 0,
-  SM_SHELLCORE_TARGET_SPAWN_APP,
+  SM_SHELLCORE_TARGET_SANDBOX_READY,
   SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR,
   SM_SHELLCORE_TARGET_INSTALL_ALL,
   SM_SHELLCORE_TARGET_COUNT
@@ -23,7 +23,7 @@ typedef struct {
   uintptr_t bridge_cave_offset;
   size_t bridge_cave_size;
   size_t bridge_cave_reserved;
-  uint8_t spawn_title_id_offset;
+  uintptr_t sandbox_call_target_offset;
   sm_shellcore_target_offset_t targets[SM_SHELLCORE_TARGET_COUNT];
 } sm_shellcore_firmware_offsets_t;
 

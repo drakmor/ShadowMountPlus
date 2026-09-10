@@ -45,16 +45,10 @@ extern const uint8_t sm_shellcore_bridge_blob_start[];
 extern const uint8_t sm_shellcore_bridge_base_end[];
 extern const uint8_t sm_shellcore_bridge_blob_end[];
 extern const uint8_t sm_shellcore_bridge_launch_hook[];
-extern const uint8_t sm_shellcore_bridge_spawn_hook[];
-extern const uint8_t sm_shellcore_bridge_spawn_title_inline_1[];
-extern const uint8_t sm_shellcore_bridge_spawn_title_capacity_1[];
-extern const uint8_t sm_shellcore_bridge_spawn_title_pointer_1[];
-extern const uint8_t sm_shellcore_bridge_spawn_title_inline_2[];
-extern const uint8_t sm_shellcore_bridge_spawn_title_capacity_2[];
-extern const uint8_t sm_shellcore_bridge_spawn_title_pointer_2[];
+extern const uint8_t sm_shellcore_bridge_sandbox_hook[];
+extern const uint8_t sm_shellcore_bridge_sandbox_original[];
 extern const uint8_t sm_shellcore_bridge_install_all_hook[];
 extern const uint8_t sm_shellcore_bridge_launch_trampoline[];
-extern const uint8_t sm_shellcore_bridge_spawn_trampoline[];
 extern const uint8_t sm_shellcore_bridge_install_all_trampoline[];
 extern const uint8_t sm_shellcore_bridge_install_title_dir[];
 extern const uint8_t sm_shellcore_bridge_install_armed[];
@@ -163,6 +157,15 @@ static bool build_relative_jump(
   return true;
 }
 
+static bool build_relative_call(
+    uint8_t call[SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE], uintptr_t source,
+    uintptr_t destination) {
+  if (!build_relative_jump(call, source, destination))
+    return false;
+  call[0] = 0xe8;
+  return true;
+}
+
 static bool build_hook_patch(uint8_t patch[MAX_HOOK_PROLOGUE_SIZE],
                              uintptr_t destination, size_t patch_size) {
   if (patch_size < ABSOLUTE_JUMP_SIZE ||
@@ -184,6 +187,18 @@ static bool patch_remote_jump(pid_t pid, uintptr_t source,
   uint8_t verify[MAX_HOOK_PROLOGUE_SIZE];
   return sm_remote_process_read(pid, source, verify, patch_size) &&
          memcmp(verify, patch, patch_size) == 0;
+}
+
+static bool patch_remote_call(pid_t pid, uintptr_t source,
+                              uintptr_t destination) {
+  uint8_t patch[SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE];
+  uint8_t verify[SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE];
+  if (!build_relative_call(patch, source, destination) ||
+      !sm_remote_process_write(pid, source, patch, sizeof(patch))) {
+    return false;
+  }
+  return sm_remote_process_read(pid, source, verify, sizeof(verify)) &&
+         memcmp(verify, patch, sizeof(patch)) == 0;
 }
 
 static bool verify_remote_bytes(pid_t pid, uintptr_t address,
@@ -268,6 +283,24 @@ static bool parse_relative_jump(const uint8_t *jump, uintptr_t source,
   return true;
 }
 
+static bool parse_relative_call(const uint8_t *call, uintptr_t source,
+                                uintptr_t *destination_out) {
+  if (!call || call[0] != 0xe8)
+    return false;
+  int32_t displacement = 0;
+  memcpy(&displacement, call + 1, sizeof(displacement));
+  *destination_out = source + SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE +
+                     (intptr_t)displacement;
+  return true;
+}
+
+static bool remote_call_matches(pid_t pid, uintptr_t source,
+                                uintptr_t destination) {
+  uint8_t patch[SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE];
+  return build_relative_call(patch, source, destination) &&
+         verify_remote_bytes(pid, source, patch, sizeof(patch));
+}
+
 /*
  * A forced payload replacement can bypass our shutdown path while leaving
  * ShellCore alive. Recover only a bridge with this exact code signature and
@@ -279,12 +312,12 @@ static bool recover_stale_bridge(
     size_t hook_count, uintptr_t bridge_address, size_t bridge_size) {
   static const uint8_t *const hook_symbols[SHELLCORE_MAX_HOOK_COUNT] = {
       sm_shellcore_bridge_launch_hook,
-      sm_shellcore_bridge_spawn_hook,
+      sm_shellcore_bridge_sandbox_hook,
       sm_shellcore_bridge_install_all_hook,
   };
   static const uint8_t *const trampoline_symbols[SHELLCORE_MAX_HOOK_COUNT] = {
       sm_shellcore_bridge_launch_trampoline,
-      sm_shellcore_bridge_spawn_trampoline,
+      NULL,
       sm_shellcore_bridge_install_all_trampoline,
   };
   uint8_t originals[SHELLCORE_MAX_HOOK_COUNT][MAX_HOOK_PROLOGUE_SIZE] = {{0}};
@@ -297,19 +330,36 @@ static bool recover_stale_bridge(
     uintptr_t target_address = remote->targets[target];
     uint8_t patch_size = remote->offsets->targets[target].patch_size;
     uint8_t patch[MAX_HOOK_PROLOGUE_SIZE];
-    if (patch_size < ABSOLUTE_JUMP_SIZE ||
-        patch_size > MAX_HOOK_PROLOGUE_SIZE ||
+    if (patch_size == 0 || patch_size > MAX_HOOK_PROLOGUE_SIZE ||
         !sm_remote_process_read(pid, target_address, patch, patch_size)) {
       return false;
     }
+    size_t hook_offset =
+        (size_t)(hook_symbols[i] - sm_shellcore_bridge_blob_start);
+    if (target == SM_SHELLCORE_TARGET_SANDBOX_READY) {
+      uintptr_t destination = 0;
+      uintptr_t original_target =
+          remote->image_base + remote->offsets->sandbox_call_target_offset;
+      if (patch_size != SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE ||
+          !parse_relative_call(patch, target_address, &destination)) {
+        return false;
+      }
+      if (destination == original_target)
+        continue;
+      if (destination != bridge_address + hook_offset)
+        return false;
+      stale[i] = true;
+      ++stale_count;
+      continue;
+    }
+    if (patch_size < ABSOLUTE_JUMP_SIZE)
+      return false;
     if (memcmp(patch, k_expected_function_prologue,
                sizeof(k_expected_function_prologue)) == 0) {
       continue;
     }
 
     uintptr_t destination = 0;
-    size_t hook_offset =
-        (size_t)(hook_symbols[i] - sm_shellcore_bridge_blob_start);
     if (!parse_absolute_jump(patch, patch_size, &destination) ||
         destination != bridge_address + hook_offset) {
       return false;
@@ -330,6 +380,17 @@ static bool recover_stale_bridge(
     sm_shellcore_target_t target = hooks[i].target;
     uintptr_t target_address = remote->targets[target];
     uint8_t patch_size = remote->offsets->targets[target].patch_size;
+    if (target == SM_SHELLCORE_TARGET_SANDBOX_READY) {
+      uintptr_t original_target =
+          remote->image_base + remote->offsets->sandbox_call_target_offset;
+      if (patch_size != SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE ||
+          !build_relative_call(originals[i], target_address,
+                               original_target)) {
+        return false;
+      }
+      original_sizes[i] = patch_size;
+      continue;
+    }
     size_t trampoline_offset =
         (size_t)(trampoline_symbols[i] - sm_shellcore_bridge_blob_start);
     uint8_t trampoline[TRAMPOLINE_SIZE];
@@ -425,51 +486,6 @@ static bool set_bridge_pointer(uint8_t *bridge, size_t blob_size,
   return true;
 }
 
-static bool set_bridge_u8(uint8_t *bridge, size_t blob_size,
-                          const uint8_t *local_symbol, size_t instruction_size,
-                          size_t operand_offset, uint8_t expected,
-                          uint8_t value) {
-  size_t offset = 0;
-  if (operand_offset >= instruction_size ||
-      !bridge_symbol_offset(local_symbol, instruction_size, blob_size,
-                            &offset) ||
-      bridge[offset + operand_offset] != expected) {
-    return false;
-  }
-  bridge[offset + operand_offset] = value;
-  return true;
-}
-
-static bool set_spawn_title_id_offset(uint8_t *bridge, size_t blob_size,
-                                      uint8_t title_offset) {
-  static const uint8_t *const inline_symbols[] = {
-      sm_shellcore_bridge_spawn_title_inline_1,
-      sm_shellcore_bridge_spawn_title_inline_2,
-  };
-  static const uint8_t *const capacity_symbols[] = {
-      sm_shellcore_bridge_spawn_title_capacity_1,
-      sm_shellcore_bridge_spawn_title_capacity_2,
-  };
-  static const uint8_t *const pointer_symbols[] = {
-      sm_shellcore_bridge_spawn_title_pointer_1,
-      sm_shellcore_bridge_spawn_title_pointer_2,
-  };
-  if (title_offset > UINT8_MAX - 0x18u)
-    return false;
-  for (size_t i = 0; i < sizeof(inline_symbols) / sizeof(inline_symbols[0]);
-       ++i) {
-    if (!set_bridge_u8(bridge, blob_size, inline_symbols[i], 5u, 4u, 0x40u,
-                       title_offset) ||
-        !set_bridge_u8(bridge, blob_size, capacity_symbols[i], 6u, 4u, 0x58u,
-                       (uint8_t)(title_offset + 0x18u)) ||
-        !set_bridge_u8(bridge, blob_size, pointer_symbols[i], 5u, 4u, 0x40u,
-                       title_offset)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 static bool resolve_bridge_imports(pid_t pid, uint8_t *bridge,
                                    size_t blob_size) {
   uint32_t handle = UINT32_MAX;
@@ -551,7 +567,7 @@ static bool install_hooks_for_pid(pid_t pid) {
                                 ? SHELLCORE_MAX_HOOK_COUNT
                                 : SHELLCORE_BASE_HOOK_COUNT;
   hooks.hooks[0].target = SM_SHELLCORE_TARGET_LAUNCH_APP;
-  hooks.hooks[1].target = SM_SHELLCORE_TARGET_SPAWN_APP;
+  hooks.hooks[1].target = SM_SHELLCORE_TARGET_SANDBOX_READY;
   hooks.hooks[2].target = SM_SHELLCORE_TARGET_INSTALL_ALL;
 
   if (hooks.remote.offsets->bridge_cave_offset >
@@ -576,12 +592,30 @@ static bool install_hooks_for_pid(pid_t pid) {
     uintptr_t target_address = hooks.remote.targets[hook->target];
     uint8_t patch_size =
         hooks.remote.offsets->targets[hook->target].patch_size;
-    if (patch_size < ABSOLUTE_JUMP_SIZE ||
-        patch_size > MAX_HOOK_PROLOGUE_SIZE ||
+    if (patch_size == 0 || patch_size > MAX_HOOK_PROLOGUE_SIZE ||
         !sm_remote_process_read(pid, target_address, hook->original,
                                 patch_size)) {
       goto done;
     }
+    if (hook->target == SM_SHELLCORE_TARGET_SANDBOX_READY) {
+      uintptr_t original_target =
+          hooks.remote.image_base +
+          hooks.remote.offsets->sandbox_call_target_offset;
+      uintptr_t decoded_target = 0;
+      if (patch_size != SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE ||
+          !parse_relative_call(hook->original, target_address,
+                               &decoded_target) ||
+          decoded_target != original_target) {
+        log_debug("  [SHELLCORE] unexpected call target: %s at 0x%lx",
+                  sm_shellcore_target_name(hook->target),
+                  (unsigned long)target_address);
+        goto done;
+      }
+      hook->original_size = patch_size;
+      continue;
+    }
+    if (patch_size < ABSOLUTE_JUMP_SIZE)
+      goto done;
     if (memcmp(hook->original, k_expected_function_prologue,
                sizeof(k_expected_function_prologue)) != 0) {
       log_debug("  [SHELLCORE] unexpected prologue: %s at 0x%lx",
@@ -612,8 +646,8 @@ static bool install_hooks_for_pid(pid_t pid) {
   }
   shellcore_hook_record_t *launch_hook_record = &hooks.hooks[0];
   uintptr_t launch_target = hooks.remote.targets[launch_hook_record->target];
-  shellcore_hook_record_t *spawn_hook_record = &hooks.hooks[1];
-  uintptr_t spawn_target = hooks.remote.targets[spawn_hook_record->target];
+  shellcore_hook_record_t *sandbox_hook_record = &hooks.hooks[1];
+  uintptr_t sandbox_target = hooks.remote.targets[sandbox_hook_record->target];
   shellcore_hook_record_t *install_hook_record = &hooks.hooks[2];
   uintptr_t install_target = hooks.remote.targets[install_hook_record->target];
   if (!write_embedded_trampoline(
@@ -623,11 +657,12 @@ static bool install_hooks_for_pid(pid_t pid) {
           launch_target + launch_hook_record->original_size)) {
     goto done;
   }
-  if (!write_embedded_trampoline(
-          bridge, blob_size, sm_shellcore_bridge_spawn_trampoline,
-          spawn_hook_record->original, spawn_hook_record->original_size,
-          bridge_address,
-          spawn_target + spawn_hook_record->original_size)) {
+  uintptr_t sandbox_original_target =
+      hooks.remote.image_base +
+      hooks.remote.offsets->sandbox_call_target_offset;
+  if (!set_bridge_pointer(bridge, blob_size,
+                          sm_shellcore_bridge_sandbox_original,
+                          sandbox_original_target)) {
     goto done;
   }
   if (install_hook_enabled) {
@@ -646,13 +681,6 @@ static bool install_hooks_for_pid(pid_t pid) {
   }
   if (!resolve_bridge_imports(pid, bridge, blob_size))
     goto done;
-  if (!set_spawn_title_id_offset(
-          bridge, blob_size,
-          hooks.remote.offsets->spawn_title_id_offset)) {
-    log_debug("  [SHELLCORE] invalid spawn title layout for fw=%s",
-              hooks.remote.offsets->name);
-    goto done;
-  }
 
   if (!sm_remote_process_write(pid, bridge_address, bridge, blob_size) ||
       !verify_remote_bytes(pid, bridge_address, bridge, blob_size)) {
@@ -674,12 +702,11 @@ static bool install_hooks_for_pid(pid_t pid) {
                          launch_hook_record->original_size)) {
     goto done;
   }
-  uintptr_t spawn_hook =
-      bridge_address + (uintptr_t)(sm_shellcore_bridge_spawn_hook -
+  uintptr_t sandbox_hook =
+      bridge_address + (uintptr_t)(sm_shellcore_bridge_sandbox_hook -
                                    sm_shellcore_bridge_blob_start);
   patched_count = SHELLCORE_BASE_HOOK_COUNT;
-  if (!patch_remote_jump(pid, spawn_target, spawn_hook,
-                         spawn_hook_record->original_size)) {
+  if (!patch_remote_call(pid, sandbox_target, sandbox_hook)) {
     goto done;
   }
   if (install_hook_enabled) {
@@ -718,7 +745,7 @@ done:
         (uintptr_t)(sm_shellcore_bridge_launch_trampoline -
                     sm_shellcore_bridge_blob_start);
     log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld cave=0x%lx+0x%zx "
-              "reserved=0x%zx launch=1 spawn=1 trampoline=0x%lx install=%d",
+              "reserved=0x%zx launch=1 sandbox=1 trampoline=0x%lx install=%d",
               hooks.remote.offsets->name, (long)pid,
               (unsigned long)bridge_address, blob_size,
               hooks.remote.offsets->bridge_cave_reserved,
@@ -799,7 +826,7 @@ void sm_shellcore_hooks_stop(void) {
   bool found_installed_hook = false;
   static const uint8_t *const hook_symbols[SHELLCORE_MAX_HOOK_COUNT] = {
       sm_shellcore_bridge_launch_hook,
-      sm_shellcore_bridge_spawn_hook,
+      sm_shellcore_bridge_sandbox_hook,
       sm_shellcore_bridge_install_all_hook,
   };
   for (size_t i = 0; i < g_hooks.hook_count; ++i) {
@@ -817,8 +844,12 @@ void sm_shellcore_hooks_stop(void) {
     uintptr_t hook_address =
         g_hooks.bridge_address +
         (uintptr_t)(hook_symbol - sm_shellcore_bridge_blob_start);
-    if (remote_hook_matches(pid, target_address, hook_address,
-                            hook->original_size)) {
+    bool hook_matches =
+        hook->target == SM_SHELLCORE_TARGET_SANDBOX_READY
+            ? remote_call_matches(pid, target_address, hook_address)
+            : remote_hook_matches(pid, target_address, hook_address,
+                                  hook->original_size);
+    if (hook_matches) {
       found_installed_hook = true;
       if (!restore_remote_bytes(pid, target_address, hook->original,
                                 hook->original_size)) {

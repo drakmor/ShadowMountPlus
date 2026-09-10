@@ -48,15 +48,15 @@ def firmware_files(root: Path) -> list[tuple[int, int, Path]]:
 
 def generate(root: Path) -> str:
     records: list[str] = []
-    for major, minor, path in firmware_files(root):
+    files = firmware_files(root)
+    if not files:
+        raise ValueError(f"{root}: no SceShellCore firmware files found")
+    for major, minor, path in files:
         firmware_name = f"{major}.{minor:02d}"
         shellcore = ShellCore(path)
         targets = shellcore.locate_targets()
         cave_offset, cave_size, cave_reserved = shellcore.bridge_cave()
         firmware = firmware_key(firmware_name)
-        title_offset = shellcore.spawn_title_id_offset(
-            firmware, targets["spawn_app"]
-        )
         records.append(
             "  {\n"
             f"    .firmware = 0x{firmware:04x}u,\n"
@@ -64,12 +64,13 @@ def generate(root: Path) -> str:
             f"    .bridge_cave_offset = 0x{cave_offset:x}u,\n"
             f"    .bridge_cave_size = 0x{cave_size:x}u,\n"
             f"    .bridge_cave_reserved = 0x{cave_reserved:x}u,\n"
-            f"    .spawn_title_id_offset = 0x{title_offset:x}u,\n"
+            f"    .sandbox_call_target_offset = "
+            f"0x{targets['sandbox_ready_target']:x}u,\n"
             "    .targets = {"
             + ", ".join(
                 "{.offset = "
                 f"0x{targets[name]:x}u, .patch_size = "
-                f"{shellcore.patch_size(targets[name])}u}}"
+                f"{5 if name == 'sandbox_ready' else shellcore.patch_size(targets[name])}u}}"
                 for name in TARGET_NAMES
             )
             + "},\n  }"

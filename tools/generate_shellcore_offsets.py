@@ -10,25 +10,28 @@ reproduced from unpacked firmware files.
 from __future__ import annotations
 
 import argparse
+import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
 
 from capstone import CS_ARCH_X86, CS_MODE_64, Cs
-from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG, X86_REG_RDI
+from capstone.x86 import X86_OP_IMM
 
 PROLOGUE = b"\x55\x48\x89\xe5"
 TARGET_NAMES = (
     "launch_app",
-    "spawn_app",
+    "sandbox_ready",
     "install_title_dir",
     "install_all",
 )
 PAGE_SIZE = 0x4000
 KSTUFF_CAVE_RESERVE = 0x300
 KSTUFF_MIN_CAVE_SIZE = 0x670
-SPAWN_TITLE_ID_OFFSET_FW_11 = 0x30
-SPAWN_TITLE_ID_OFFSET_LEGACY = 0x40
+RIP_REFERENCE = re.compile(
+    rb"(?=([\x48\x4c][\x8d\x8b][\x05\x0d\x15\x1d\x25\x2d\x35\x3d].{4}))",
+    re.DOTALL,
+)
 
 
 @dataclass
@@ -100,13 +103,8 @@ class ShellCore:
                 segment.file_offset : segment.file_offset + segment.file_size
             ]
             references: list[tuple[int, int]] = []
-            for index in range(len(code) - 7):
-                if code[index] not in (0x48, 0x4C):
-                    continue
-                if code[index + 1] not in (0x8D, 0x8B):
-                    continue
-                if code[index + 2] & 0xC7 != 0x05:
-                    continue
+            for match in RIP_REFERENCE.finditer(code):
+                index = match.start()
                 displacement = struct.unpack_from("<i", code, index + 3)[0]
                 instruction_address = segment.virtual_address + index
                 references.append(
@@ -145,15 +143,38 @@ class ShellCore:
             raise ValueError(f"launchApp xrefs: {launch_xrefs!r}")
         launch = self.preceding_prologue(launch_xrefs[0])
 
-        spawn_strings = self.string_addresses(
+        sandbox_strings = self.string_addresses(
             b"sceApplicationSpawn2(appId, outPid, path, root, argv", True
         )
-        spawn_xrefs = self.rip_xrefs(spawn_strings)
-        spawn_functions = sorted(
-            {self.preceding_prologue(xref) for xref in spawn_xrefs}
-        )
-        if len(spawn_functions) != 1:
-            raise ValueError(f"spawnApp xrefs: {spawn_xrefs!r}")
+        sandbox_xrefs = self.rip_xrefs(sandbox_strings)
+        if len(sandbox_xrefs) != 1:
+            raise ValueError(f"sceApplicationSpawn2 xrefs: {sandbox_xrefs!r}")
+        decoder = Cs(CS_ARCH_X86, CS_MODE_64)
+        decoder.detail = True
+        sandbox_xref = sandbox_xrefs[0]
+        sandbox_xref_file = self.virtual_to_file(sandbox_xref)
+        calls = [
+            (instruction.address, instruction.operands[0].imm, instruction.size)
+            for instruction in decoder.disasm(
+                self.data[sandbox_xref_file : sandbox_xref_file + 0xA0],
+                sandbox_xref,
+            )
+            if instruction.mnemonic == "call"
+            and instruction.operands
+            and instruction.operands[0].type == X86_OP_IMM
+        ]
+        if len(calls) < 2:
+            raise ValueError(
+                f"sceApplicationSpawn2 call after 0x{sandbox_xref:x} not found"
+            )
+        # The first call writes the optional trace line. The next direct call
+        # is sceApplicationSpawn2, after ShellCore has finished the sandbox.
+        sandbox_ready, sandbox_ready_target, sandbox_call_size = calls[1]
+        if sandbox_call_size != 5:
+            raise ValueError(
+                f"sceApplicationSpawn2 call at 0x{sandbox_ready:x} "
+                f"has size {sandbox_call_size}"
+            )
 
         install_strings = self.string_addresses(b"AppInstallTitleDirMain", False)
         install_groups: dict[int, int] = {}
@@ -185,7 +206,8 @@ class ShellCore:
 
         return {
             "launch_app": launch,
-            "spawn_app": spawn_functions[0],
+            "sandbox_ready": sandbox_ready,
+            "sandbox_ready_target": sandbox_ready_target,
             "install_title_dir": best[0],
             "install_all": app_install_all,
         }
@@ -199,52 +221,6 @@ class ShellCore:
         cave_size = cave_end - cave_start
         reserved = KSTUFF_CAVE_RESERVE if cave_size >= KSTUFF_MIN_CAVE_SIZE else 0
         return cave_start + reserved, cave_size - reserved, reserved
-
-    def spawn_title_id_offset(self, firmware: int, spawn_address: int) -> int:
-        # The launch-parameter object gained one std::string in FW 11.00,
-        # shifting titleId from +0x40 to +0x30 in the reorganized layout.
-        title_offset = (
-            SPAWN_TITLE_ID_OFFSET_FW_11
-            if firmware >= 0x1100
-            else SPAWN_TITLE_ID_OFFSET_LEGACY
-        )
-        decoder = Cs(CS_ARCH_X86, CS_MODE_64)
-        decoder.detail = True
-        file_offset = self.virtual_to_file(spawn_address)
-        instructions = list(
-            decoder.disasm(
-                self.data[file_offset : file_offset + 0x400], spawn_address
-            )
-        )
-        object_register = None
-        for instruction in instructions[:32]:
-            operands = instruction.operands
-            if (
-                instruction.mnemonic == "mov"
-                and len(operands) == 2
-                and operands[0].type == X86_OP_REG
-                and operands[1].type == X86_OP_REG
-                and operands[1].reg == X86_REG_RDI
-            ):
-                object_register = operands[0].reg
-                break
-        capacity_offset = title_offset + 0x18
-        layout_found = object_register is not None and any(
-            instruction.mnemonic == "cmp"
-            and len(instruction.operands) == 2
-            and instruction.operands[0].type == X86_OP_MEM
-            and instruction.operands[0].mem.base == object_register
-            and instruction.operands[0].mem.disp == capacity_offset
-            and instruction.operands[1].type == X86_OP_IMM
-            and instruction.operands[1].imm == 0x10
-            for instruction in instructions
-        )
-        if not layout_found:
-            raise ValueError(
-                f"{self.path}: spawn titleId layout +0x{title_offset:x} "
-                "not confirmed"
-            )
-        return title_offset
 
     def patch_size(self, address: int, minimum: int = 12) -> int:
         offset = self.virtual_to_file(address)
@@ -276,15 +252,14 @@ def generate(root: Path) -> str:
         ),
         key=lambda path: tuple(int(part) for part in path.name.split(".")),
     )
+    if not firmware_dirs:
+        raise ValueError(f"{root}: no firmware directories found")
     records: list[str] = []
     for firmware_dir in firmware_dirs:
         shellcore = ShellCore(firmware_dir / "system/vsh/SceShellCore.elf")
         targets = shellcore.locate_targets()
         cave_offset, cave_size, cave_reserved = shellcore.bridge_cave()
         firmware = firmware_key(firmware_dir.name)
-        title_offset = shellcore.spawn_title_id_offset(
-            firmware, targets["spawn_app"]
-        )
         records.append(
             "  {\n"
             f"    .firmware = 0x{firmware:04x}u,\n"
@@ -292,12 +267,13 @@ def generate(root: Path) -> str:
             f"    .bridge_cave_offset = 0x{cave_offset:x}u,\n"
             f"    .bridge_cave_size = 0x{cave_size:x}u,\n"
             f"    .bridge_cave_reserved = 0x{cave_reserved:x}u,\n"
-            f"    .spawn_title_id_offset = 0x{title_offset:x}u,\n"
+            f"    .sandbox_call_target_offset = "
+            f"0x{targets['sandbox_ready_target']:x}u,\n"
             "    .targets = {"
             + ", ".join(
                 "{.offset = "
                 f"0x{targets[name]:x}u, .patch_size = "
-                f"{shellcore.patch_size(targets[name])}u}}"
+                f"{5 if name == 'sandbox_ready' else shellcore.patch_size(targets[name])}u}}"
                 for name in TARGET_NAMES
             )
             + "},\n  }"

@@ -7,7 +7,7 @@ import argparse
 from pathlib import Path
 
 from capstone import CS_ARCH_X86, CS_GRP_CALL, CS_GRP_JUMP, CS_MODE_64, Cs
-from capstone.x86 import X86_OP_MEM, X86_REG_RIP
+from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_REG_RIP
 
 from generate_shellcore_offsets import ShellCore, firmware_key
 from generate_shellcore_offsets_from_files import firmware_files
@@ -19,7 +19,7 @@ def verify_firmware(path: Path, firmware: int) -> None:
     decoder = Cs(CS_ARCH_X86, CS_MODE_64)
     decoder.detail = True
 
-    names = ["launch_app", "spawn_app"]
+    names = ["launch_app"]
     # AppInstallAll is hooked after the public TitleDir RPC disappeared.
     if firmware >= 0x1200:
         names.append("install_all")
@@ -44,6 +44,27 @@ def verify_firmware(path: Path, firmware: int) -> None:
                         f"{path}: {name}: RIP-relative operand at "
                         f"0x{instruction.address:x}"
                     )
+
+    sandbox_address = targets["sandbox_ready"]
+    sandbox_offset = shellcore.virtual_to_file(sandbox_address)
+    sandbox_instruction = next(
+        decoder.disasm(shellcore.data[sandbox_offset : sandbox_offset + 5],
+                       sandbox_address),
+        None,
+    )
+    if (
+        sandbox_instruction is None
+        or sandbox_instruction.mnemonic != "call"
+        or sandbox_instruction.size != 5
+        or not sandbox_instruction.operands
+        or sandbox_instruction.operands[0].type != X86_OP_IMM
+        or sandbox_instruction.operands[0].imm
+        != targets["sandbox_ready_target"]
+    ):
+        raise ValueError(
+            f"{path}: invalid sceApplicationSpawn2 call at "
+            f"0x{sandbox_address:x}"
+        )
 
 
 def main() -> int:

@@ -189,6 +189,10 @@ bool sm_shellcore_remote_resolve(pid_t pid, sm_shellcore_remote_t *remote_out) {
     }
     remote_out->targets[target] = image_base + firmware->targets[target].offset;
   }
+  if (firmware->sandbox_call_target_offset > UINTPTR_MAX - image_base) {
+    log_debug("  [SHELLCORE] sandbox call target offset overflow");
+    return false;
+  }
 
   remote_out->pid = pid;
   remote_out->image_base = image_base;

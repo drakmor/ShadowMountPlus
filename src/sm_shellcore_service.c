@@ -38,6 +38,7 @@ typedef struct {
   uint32_t app_id;
   pid_t pid;
   bool game_exited;
+  bool sandbox_ready_handled;
 } shellcore_mount_owner_t;
 
 typedef struct {
@@ -53,6 +54,8 @@ typedef struct {
   shellcore_mount_owner_t outgoing;
   bool prepare_in_progress;
   bool launch_pending;
+  char pending_launch_title_id[MAX_TITLE_ID];
+  bool pending_sandbox_ready_handled;
   bool external_mutation_in_progress;
   char releasing_title_id[MAX_TITLE_ID];
 } shellcore_service_state_t;
@@ -478,6 +481,16 @@ bool sm_shellcore_ensure_title_runtime(const char *title_id) {
 }
 
 static int handle_launch_request(const char *title_id) {
+  pthread_mutex_lock(&g_service.mutex);
+  if (is_supported_game_title_id(title_id)) {
+    (void)strlcpy(g_service.pending_launch_title_id, title_id,
+                  sizeof(g_service.pending_launch_title_id));
+    g_service.pending_sandbox_ready_handled = false;
+    if (mount_owner_matches(&g_service.prepared, title_id))
+      g_service.prepared.sandbox_ready_handled = false;
+  }
+  pthread_mutex_unlock(&g_service.mutex);
+
   char source_path[MAX_PATH];
   if (!read_mount_link(title_id, source_path, sizeof(source_path)))
     sm_fakelib_prepare_title_cache(title_id, NULL);
@@ -639,6 +652,10 @@ void sm_shellcore_service_bind_prepared_app(const char *title_id,
     g_service.prepared.game_exited = false;
     g_service.prepare_in_progress = false;
     g_service.launch_pending = false;
+  }
+  if (strcmp(g_service.pending_launch_title_id, title_id) == 0) {
+    g_service.pending_launch_title_id[0] = '\0';
+    g_service.pending_sandbox_ready_handled = false;
   }
   pthread_mutex_unlock(&g_service.mutex);
 }
@@ -811,6 +828,10 @@ static int handle_launch_failed_request(const char *title_id) {
   sm_fakelib_game_on_launch_failed(title_id);
 
   pthread_mutex_lock(&g_service.mutex);
+  if (strcmp(g_service.pending_launch_title_id, title_id) == 0) {
+    g_service.pending_launch_title_id[0] = '\0';
+    g_service.pending_sandbox_ready_handled = false;
+  }
   bool prepared = mount_owner_matches(&g_service.prepared, title_id);
   bool switch_pending = prepared && g_service.outgoing.title_id[0] != '\0';
   pthread_mutex_unlock(&g_service.mutex);
@@ -844,14 +865,55 @@ static bool shellcore_client_active(int fd) {
 static int handle_sandbox_ready_request(const char *title_id) {
   if (runtime_sleep_mode_active())
     return EBUSY;
-  if (!title_id || !is_supported_game_title_id(title_id))
+
+  char effective_title_id[MAX_TITLE_ID] = {0};
+  bool already_handled = false;
+  bool pending_launch = false;
+  pthread_mutex_lock(&g_service.mutex);
+  if (title_id && is_supported_game_title_id(title_id)) {
+    (void)strlcpy(effective_title_id, title_id,
+                  sizeof(effective_title_id));
+  } else if (is_supported_game_title_id(
+                 g_service.pending_launch_title_id)) {
+    (void)strlcpy(effective_title_id,
+                  g_service.pending_launch_title_id,
+                  sizeof(effective_title_id));
+  } else if (is_supported_game_title_id(g_service.prepared.title_id)) {
+    (void)strlcpy(effective_title_id, g_service.prepared.title_id,
+                  sizeof(effective_title_id));
+  }
+  pending_launch =
+      effective_title_id[0] != '\0' &&
+      strcmp(g_service.pending_launch_title_id, effective_title_id) == 0;
+  shellcore_mount_owner_t *owner =
+      find_mount_owner_locked(effective_title_id);
+  if (pending_launch)
+    already_handled = g_service.pending_sandbox_ready_handled;
+  else if (owner)
+    already_handled = owner->sandbox_ready_handled;
+  pthread_mutex_unlock(&g_service.mutex);
+
+  if (effective_title_id[0] == '\0' || already_handled)
     return 0;
-  if (sm_fakelib_game_on_sandbox_ready(title_id))
+
+  if (sm_fakelib_game_on_sandbox_ready(effective_title_id)) {
+    pthread_mutex_lock(&g_service.mutex);
+    if (strcmp(g_service.pending_launch_title_id,
+               effective_title_id) == 0) {
+      g_service.pending_sandbox_ready_handled = true;
+    }
+    owner = find_mount_owner_locked(effective_title_id);
+    if (owner)
+      owner->sandbox_ready_handled = true;
+    pthread_mutex_unlock(&g_service.mutex);
+    log_debug("  [SHELLCORE] sandbox ready handled: %s",
+              effective_title_id);
     return 0;
+  }
 
   int status = errno != 0 ? errno : EIO;
   log_debug("  [SHELLCORE] sandbox fakelib unavailable: %s status=%d (%s)",
-            title_id, status, strerror(status));
+            effective_title_id, status, strerror(status));
   return status;
 }
 
@@ -1029,6 +1091,8 @@ bool sm_shellcore_service_start(void) {
   clear_mount_owner(&g_service.outgoing);
   g_service.prepare_in_progress = false;
   g_service.launch_pending = false;
+  g_service.pending_launch_title_id[0] = '\0';
+  g_service.pending_sandbox_ready_handled = false;
   g_service.external_mutation_in_progress = false;
   g_service.releasing_title_id[0] = '\0';
   int rc = pthread_create(&g_service.thread, NULL, service_thread_main, NULL);
@@ -1068,6 +1132,8 @@ void sm_shellcore_service_stop(void) {
   clear_mount_owner(&g_service.outgoing);
   g_service.prepare_in_progress = false;
   g_service.launch_pending = false;
+  g_service.pending_launch_title_id[0] = '\0';
+  g_service.pending_sandbox_ready_handled = false;
   g_service.external_mutation_in_progress = false;
   g_service.releasing_title_id[0] = '\0';
   pthread_mutex_unlock(&g_service.mutex);
