@@ -31,9 +31,12 @@ typedef struct {
 
 typedef struct {
   pid_t pid;
+  char title_id[MAX_TITLE_ID];
   char mount_path[MAX_PATH];
   fakelib_layer_t layers[1];
   size_t layer_count;
+  size_t emulator_file_count;
+  bool notify_pending;
 } fakelib_session_t;
 
 typedef struct {
@@ -1136,32 +1139,8 @@ static bool cleanup_fakelib_mount(void) {
   return true;
 }
 
-void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
-                             bool notify_user) {
-  pthread_mutex_lock(&g_fakelib_mutex);
-  if (!sm_fakelib_game_feature_enabled()) {
-    pthread_mutex_unlock(&g_fakelib_mutex);
-    return;
-  }
-
-  if (fakelib_session_active() && g_fakelib_mount.pid == pid) {
-    log_debug("  [FAKELIB] already tracking pid=%ld for %s", (long)pid,
-              title_id);
-    pthread_mutex_unlock(&g_fakelib_mutex);
-    return;
-  }
-
-  if (fakelib_session_active() && g_fakelib_mount.pid != pid) {
-    log_debug("  [FAKELIB] handoff active mount pid=%ld -> pid=%ld (%s)",
-              (long)g_fakelib_mount.pid, (long)pid, title_id);
-    if (!cleanup_fakelib_mount()) {
-      log_debug("  [FAKELIB] handoff cleanup failed for pid=%ld, skipping %s",
-                (long)g_fakelib_mount.pid, title_id);
-      pthread_mutex_unlock(&g_fakelib_mutex);
-      return;
-    }
-  }
-
+static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
+                                          bool notify_user) {
   char game_source_path[MAX_PATH] = {0};
   char global_source_path[MAX_PATH] = {0};
   char mount_path[MAX_PATH] = {0};
@@ -1172,10 +1151,6 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
   bool has_global = allows_composition &&
                     resolve_global_fakelib_source(title_id,
                                                   global_source_path);
-  if (!has_global && !has_game) {
-    pthread_mutex_unlock(&g_fakelib_mutex);
-    return;
-  }
 
   bool needs_combined_cache =
       has_global && has_game &&
@@ -1201,16 +1176,51 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
               title_id);
   }
 
+  bool has_source = has_game || has_global;
+  if (has_source && !resolve_sandbox_mount_path(title_id, mount_path)) {
+    errno = ENOENT;
+    return false;
+  }
+
+  if (fakelib_session_active() &&
+      strcmp(g_fakelib_mount.title_id, title_id) == 0 && has_source &&
+      strcmp(g_fakelib_mount.mount_path, mount_path) == 0) {
+    if (pid > 0) {
+      g_fakelib_mount.pid = pid;
+      bool notify = notify_user && g_fakelib_mount.notify_pending;
+      g_fakelib_mount.notify_pending = false;
+      if (notify) {
+        notify_system_info_l10n(
+            g_fakelib_mount.emulator_file_count > 0
+                ? SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED
+                : SM_L10N_GAME_BACKPORTED,
+            title_id);
+      }
+    }
+    return true;
+  }
+
+  if (fakelib_session_active()) {
+    log_debug("  [FAKELIB] handoff active mount pid=%ld -> pid=%ld (%s)",
+              (long)g_fakelib_mount.pid, (long)pid, title_id);
+    if (!cleanup_fakelib_mount()) {
+      log_debug("  [FAKELIB] handoff cleanup failed for pid=%ld, skipping %s",
+                (long)g_fakelib_mount.pid, title_id);
+      return false;
+    }
+  }
+
+  if (!has_source)
+    return true;
+
   memset(&g_fakelib_mount, 0, sizeof(g_fakelib_mount));
   g_fakelib_mount.pid = pid;
-
-  if (!resolve_sandbox_mount_path(title_id, mount_path)) {
-    memset(&g_fakelib_mount, 0, sizeof(g_fakelib_mount));
-    pthread_mutex_unlock(&g_fakelib_mutex);
-    return;
-  }
+  (void)strlcpy(g_fakelib_mount.title_id, title_id,
+                sizeof(g_fakelib_mount.title_id));
   (void)strlcpy(g_fakelib_mount.mount_path, mount_path,
                 sizeof(g_fakelib_mount.mount_path));
+  g_fakelib_mount.emulator_file_count = emulator_file_count;
+  g_fakelib_mount.notify_pending = has_game && pid <= 0;
 
   const char *source_path = has_game ? game_source_path : global_source_path;
   const char *label = !allows_composition
@@ -1218,8 +1228,7 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
                           : (has_game ? "game" : "global");
   if (!track_fakelib_overlay(title_id, source_path, mount_path, label)) {
     (void)cleanup_fakelib_mount();
-    pthread_mutex_unlock(&g_fakelib_mutex);
-    return;
+    return false;
   }
 
   if (has_game && notify_user) {
@@ -1228,6 +1237,52 @@ void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
                                 : SM_L10N_GAME_BACKPORTED,
                             title_id);
   }
+  return true;
+}
+
+bool sm_fakelib_game_on_sandbox_ready(const char *title_id) {
+  if (!title_id || !is_supported_game_title_id(title_id))
+    return true;
+
+  pthread_mutex_lock(&g_fakelib_mutex);
+  bool ready = !sm_fakelib_game_feature_enabled() ||
+               mount_fakelib_for_game_locked(0, title_id, false);
+  pthread_mutex_unlock(&g_fakelib_mutex);
+  return ready;
+}
+
+void sm_fakelib_game_on_launch_failed(const char *title_id) {
+  if (!title_id)
+    return;
+
+  pthread_mutex_lock(&g_fakelib_mutex);
+  if (fakelib_session_active() && g_fakelib_mount.pid <= 0 &&
+      strcmp(g_fakelib_mount.title_id, title_id) == 0) {
+    (void)cleanup_fakelib_mount();
+  }
+  pthread_mutex_unlock(&g_fakelib_mutex);
+}
+
+void sm_fakelib_game_on_exec(pid_t pid, const char *title_id,
+                             bool notify_user) {
+  pthread_mutex_lock(&g_fakelib_mutex);
+  if (!sm_fakelib_game_feature_enabled()) {
+    if (fakelib_session_active() && g_fakelib_mount.pid <= 0 && title_id &&
+        strcmp(g_fakelib_mount.title_id, title_id) == 0) {
+      (void)cleanup_fakelib_mount();
+    }
+    pthread_mutex_unlock(&g_fakelib_mutex);
+    return;
+  }
+
+  if (fakelib_session_active() && g_fakelib_mount.pid == pid) {
+    log_debug("  [FAKELIB] already tracking pid=%ld for %s", (long)pid,
+              title_id);
+    pthread_mutex_unlock(&g_fakelib_mutex);
+    return;
+  }
+
+  (void)mount_fakelib_for_game_locked(pid, title_id, notify_user);
   pthread_mutex_unlock(&g_fakelib_mutex);
 }
 

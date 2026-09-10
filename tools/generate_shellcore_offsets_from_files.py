@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate SceShellCore lifecycle offsets from a flat ELF directory.
 
-Input files must be named ``SceShellCoreXXX.elf`` or ``SceShellCoreXXXX.elf``.
+Input files must be named ``SceShellCoreXXX.elf``, ``SceShellCoreXXXX.elf`` or
+use an equivalent build suffix such as ``SceShellCore701_00.elf``.
 The last two digits are the minor firmware version; the preceding digits are
 the major version.  For example, ``SceShellCore1140.elf`` is firmware 11.40.
 """
@@ -15,11 +16,11 @@ from pathlib import Path
 from generate_shellcore_offsets import ShellCore, TARGET_NAMES, firmware_key
 
 
-SHELLCORE_NAME = re.compile(r"^SceShellCore(\d{3,4})\.elf$")
+SHELLCORE_NAME = re.compile(r"^SceShellCore(\d{3,4})(?:_\d{2})?\.elf$")
 
 
 def firmware_files(root: Path) -> list[tuple[int, int, Path]]:
-    result: list[tuple[int, int, Path]] = []
+    by_version: dict[tuple[int, int], Path] = {}
     for path in root.iterdir():
         if not path.is_file():
             continue
@@ -27,8 +28,22 @@ def firmware_files(root: Path) -> list[tuple[int, int, Path]]:
         if match is None:
             continue
         version = match.group(1)
-        result.append((int(version[:-2]), int(version[-2:]), path))
-    return sorted(result, key=lambda item: (item[0], item[1]))
+        key = (int(version[:-2]), int(version[-2:]))
+        previous = by_version.get(key)
+        if previous is not None:
+            if previous.read_bytes() != path.read_bytes():
+                raise ValueError(
+                    f"different SceShellCore builds for {key[0]}.{key[1]:02d}: "
+                    f"{previous.name}, {path.name}"
+                )
+            if "_" in previous.stem and "_" not in path.stem:
+                by_version[key] = path
+            continue
+        by_version[key] = path
+    return [
+        (major, minor, by_version[(major, minor)])
+        for major, minor in sorted(by_version)
+    ]
 
 
 def generate(root: Path) -> str:
@@ -37,10 +52,19 @@ def generate(root: Path) -> str:
         firmware_name = f"{major}.{minor:02d}"
         shellcore = ShellCore(path)
         targets = shellcore.locate_targets()
+        cave_offset, cave_size, cave_reserved = shellcore.bridge_cave()
+        firmware = firmware_key(firmware_name)
+        title_offset = shellcore.spawn_title_id_offset(
+            firmware, targets["spawn_app"]
+        )
         records.append(
             "  {\n"
-            f"    .firmware = 0x{firmware_key(firmware_name):04x}u,\n"
+            f"    .firmware = 0x{firmware:04x}u,\n"
             f"    .name = \"{firmware_name}\",\n"
+            f"    .bridge_cave_offset = 0x{cave_offset:x}u,\n"
+            f"    .bridge_cave_size = 0x{cave_size:x}u,\n"
+            f"    .bridge_cave_reserved = 0x{cave_reserved:x}u,\n"
+            f"    .spawn_title_id_offset = 0x{title_offset:x}u,\n"
             "    .targets = {"
             + ", ".join(
                 "{.offset = "

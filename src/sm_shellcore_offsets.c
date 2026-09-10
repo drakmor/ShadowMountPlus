@@ -21,6 +21,8 @@ const char *sm_shellcore_target_name(sm_shellcore_target_t target) {
   switch (target) {
   case SM_SHELLCORE_TARGET_LAUNCH_APP:
     return "launchApp";
+  case SM_SHELLCORE_TARGET_SPAWN_APP:
+    return "spawnApp";
   case SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR:
     return "AppInstallTitleDirMain";
   case SM_SHELLCORE_TARGET_INSTALL_ALL:

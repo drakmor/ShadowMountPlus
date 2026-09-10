@@ -478,6 +478,10 @@ bool sm_shellcore_ensure_title_runtime(const char *title_id) {
 }
 
 static int handle_launch_request(const char *title_id) {
+  char source_path[MAX_PATH];
+  if (!read_mount_link(title_id, source_path, sizeof(source_path)))
+    sm_fakelib_prepare_title_cache(title_id, NULL);
+
   int status = mount_managed_title_runtime(title_id, false, true, NULL);
   if (status != 0) {
     // The launch hook also observes stock games and ShellCore system apps.
@@ -804,6 +808,8 @@ static int handle_launch_failed_request(const char *title_id) {
   if (!title_id || title_id[0] == '\0')
     return 0;
 
+  sm_fakelib_game_on_launch_failed(title_id);
+
   pthread_mutex_lock(&g_service.mutex);
   bool prepared = mount_owner_matches(&g_service.prepared, title_id);
   bool switch_pending = prepared && g_service.outgoing.title_id[0] != '\0';
@@ -835,6 +841,20 @@ static bool shellcore_client_active(int fd) {
   return active;
 }
 
+static int handle_sandbox_ready_request(const char *title_id) {
+  if (runtime_sleep_mode_active())
+    return EBUSY;
+  if (!title_id || !is_supported_game_title_id(title_id))
+    return 0;
+  if (sm_fakelib_game_on_sandbox_ready(title_id))
+    return 0;
+
+  int status = errno != 0 ? errno : EIO;
+  log_debug("  [SHELLCORE] sandbox fakelib unavailable: %s status=%d (%s)",
+            title_id, status, strerror(status));
+  return status;
+}
+
 static void handle_client(int fd) {
   if (!shellcore_client_active(fd))
     return;
@@ -848,7 +868,8 @@ static void handle_client(int fd) {
   if (request.magic != SM_SHELLCORE_PROTOCOL_MAGIC ||
       request.version != SM_SHELLCORE_PROTOCOL_VERSION ||
       ((request.operation == SM_SHELLCORE_REQUEST_LAUNCH ||
-        request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED) &&
+        request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED ||
+        request.operation == SM_SHELLCORE_REQUEST_SANDBOX_READY) &&
        strnlen(request.title_id, sizeof(request.title_id)) ==
            sizeof(request.title_id))) {
     response.status = EPROTO;
@@ -856,6 +877,8 @@ static void handle_client(int fd) {
     response.status = handle_launch_request(request.title_id);
   } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED) {
     response.status = handle_launch_failed_request(request.title_id);
+  } else if (request.operation == SM_SHELLCORE_REQUEST_SANDBOX_READY) {
+    response.status = handle_sandbox_ready_request(request.title_id);
   } else {
     response.status = ENOTSUP;
   }

@@ -1,10 +1,12 @@
 #ifndef SM_SHELLCORE_OFFSETS_H
 #define SM_SHELLCORE_OFFSETS_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef enum {
   SM_SHELLCORE_TARGET_LAUNCH_APP = 0,
+  SM_SHELLCORE_TARGET_SPAWN_APP,
   SM_SHELLCORE_TARGET_INSTALL_TITLE_DIR,
   SM_SHELLCORE_TARGET_INSTALL_ALL,
   SM_SHELLCORE_TARGET_COUNT
@@ -18,6 +20,10 @@ typedef struct {
 typedef struct {
   uint16_t firmware;
   const char *name;
+  uintptr_t bridge_cave_offset;
+  size_t bridge_cave_size;
+  size_t bridge_cave_reserved;
+  uint8_t spawn_title_id_offset;
   sm_shellcore_target_offset_t targets[SM_SHELLCORE_TARGET_COUNT];
 } sm_shellcore_firmware_offsets_t;
 

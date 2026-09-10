@@ -1,8 +1,6 @@
 #include "sm_platform.h"
 
-#include <machine/reg.h>
 #include <ps5/mdbg.h>
-#include <sys/mman.h>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 
@@ -12,8 +10,6 @@
 #define X86_PAGE_FRAME 0x000ffffffffff000ull
 #define X86_PAGE_VALID 0x001ull
 #define X86_PAGE_LARGE 0x080ull
-#define REMOTE_SYSCALL_MAX_STEPS 256u
-#define GETPID_SYSCALL_OFFSET 0xau
 #define SCE_AUTHID_DEBUGGER 0x4800000000010003ull
 
 static int privileged_ptrace(int request, pid_t pid, void *address, int data) {
@@ -38,14 +34,6 @@ static int privileged_ptrace(int request, pid_t pid, void *address, int data) {
   return restored ? result : -1;
 }
 
-static bool remote_get_registers(pid_t pid, struct reg *registers) {
-  return privileged_ptrace(PT_GETREGS, pid, registers, 0) == 0;
-}
-
-static bool remote_set_registers(pid_t pid, struct reg *registers) {
-  return privileged_ptrace(PT_SETREGS, pid, registers, 0) == 0;
-}
-
 static bool wait_for_remote_stop(pid_t pid) {
   int status = 0;
   pid_t result;
@@ -53,63 +41,6 @@ static bool wait_for_remote_stop(pid_t pid) {
     result = waitpid(pid, &status, 0);
   } while (result < 0 && errno == EINTR);
   return result == pid && WIFSTOPPED(status);
-}
-
-static bool remote_single_step(pid_t pid) {
-  return privileged_ptrace(PT_STEP, pid, (void *)1, 0) == 0 &&
-         wait_for_remote_stop(pid);
-}
-
-static bool remote_syscall(pid_t pid, int number, const uint64_t args[6],
-                           uint64_t *result_out) {
-  uint32_t handle = UINT32_MAX;
-  if (kernel_dynlib_handle(pid, "libkernel_sys.sprx", &handle) != 0)
-    return false;
-  uintptr_t getpid_address =
-      (uintptr_t)kernel_dynlib_dlsym(pid, handle, "getpid");
-  if (!getpid_address || getpid_address > UINTPTR_MAX - GETPID_SYSCALL_OFFSET)
-    return false;
-  static const uint8_t k_syscall_instruction[] = {0x0f, 0x05};
-  uint8_t instruction[sizeof(k_syscall_instruction)];
-  uintptr_t syscall_address = getpid_address + GETPID_SYSCALL_OFFSET;
-  if (!sm_remote_process_read(pid, syscall_address, instruction,
-                              sizeof(instruction)) ||
-      memcmp(instruction, k_syscall_instruction, sizeof(instruction)) != 0) {
-    return false;
-  }
-
-  struct reg saved;
-  if (!remote_get_registers(pid, &saved))
-    return false;
-
-  struct reg call = saved;
-  call.r_rip = (int64_t)syscall_address;
-  call.r_rax = (int64_t)number;
-  call.r_rdi = (int64_t)args[0];
-  call.r_rsi = (int64_t)args[1];
-  call.r_rdx = (int64_t)args[2];
-  call.r_r10 = (int64_t)args[3];
-  call.r_r8 = (int64_t)args[4];
-  call.r_r9 = (int64_t)args[5];
-  if (!remote_set_registers(pid, &call))
-    return false;
-
-  bool returned = false;
-  for (unsigned int step = 0; step < REMOTE_SYSCALL_MAX_STEPS; ++step) {
-    if (!remote_single_step(pid) || !remote_get_registers(pid, &call))
-      break;
-    if (call.r_rsp > saved.r_rsp) {
-      returned = true;
-      break;
-    }
-  }
-
-  bool syscall_failed = ((uint64_t)call.r_rflags & 1u) != 0;
-  bool restored = remote_set_registers(pid, &saved);
-  if (!returned || syscall_failed || !restored)
-    return false;
-  *result_out = (uint64_t)call.r_rax;
-  return true;
 }
 
 bool sm_remote_process_attach(pid_t pid) {
@@ -123,50 +54,6 @@ bool sm_remote_process_attach(pid_t pid) {
 
 bool sm_remote_process_detach(pid_t pid) {
   return pid > 0 && privileged_ptrace(PT_DETACH, pid, NULL, 0) == 0;
-}
-
-uintptr_t sm_remote_process_map(pid_t pid, size_t size) {
-  if (size == 0)
-    return 0;
-  const uint64_t args[6] = {
-      0, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, UINT64_MAX, 0};
-  uint64_t result = UINT64_MAX;
-  if (!remote_syscall(pid, SYS_mmap, args, &result) || result == UINT64_MAX)
-    return 0;
-  return (uintptr_t)result;
-}
-
-bool sm_remote_process_protect(pid_t pid, uintptr_t address, size_t size,
-                               int protection) {
-  if (!address || size == 0)
-    return false;
-  const uint64_t args[6] = {address, size, (uint64_t)protection, 0, 0, 0};
-  uint64_t result = UINT64_MAX;
-  return remote_syscall(pid, SYS_mprotect, args, &result) && result == 0;
-}
-
-bool sm_remote_process_lock(pid_t pid, uintptr_t address, size_t size) {
-  if (!address || size == 0)
-    return false;
-  const uint64_t args[6] = {address, size, 0, 0, 0, 0};
-  uint64_t result = UINT64_MAX;
-  return remote_syscall(pid, SYS_mlock, args, &result) && result == 0;
-}
-
-bool sm_remote_process_unlock(pid_t pid, uintptr_t address, size_t size) {
-  if (!address || size == 0)
-    return false;
-  const uint64_t args[6] = {address, size, 0, 0, 0, 0};
-  uint64_t result = UINT64_MAX;
-  return remote_syscall(pid, SYS_munlock, args, &result) && result == 0;
-}
-
-bool sm_remote_process_unmap(pid_t pid, uintptr_t address, size_t size) {
-  if (!address || size == 0)
-    return false;
-  const uint64_t args[6] = {address, size, 0, 0, 0, 0};
-  uint64_t result = UINT64_MAX;
-  return remote_syscall(pid, SYS_munmap, args, &result) && result == 0;
 }
 
 static uintptr_t resolve_vmspace_pmap(uintptr_t vmspace) {
@@ -232,19 +119,6 @@ bool sm_remote_process_read(pid_t pid, uintptr_t address, void *buffer,
   return mdbg_copyout(pid, (intptr_t)address, buffer, size) == 0;
 }
 
-bool sm_remote_process_write_attached(pid_t pid, uintptr_t address,
-                                      const void *buffer, size_t size) {
-  if (!buffer || size == 0 || address > UINTPTR_MAX - (size - 1u))
-    return false;
-  struct ptrace_io_desc io = {
-      .piod_op = PIOD_WRITE_D,
-      .piod_offs = (void *)address,
-      .piod_addr = (void *)buffer,
-      .piod_len = size,
-  };
-  return privileged_ptrace(PT_IO, pid, &io, 0) == 0 && io.piod_len == size;
-}
-
 bool sm_remote_process_write(pid_t pid, uintptr_t address, const void *buffer,
                              size_t size) {
   if (!buffer || size == 0 || address > UINTPTR_MAX - (size - 1u))
@@ -252,13 +126,13 @@ bool sm_remote_process_write(pid_t pid, uintptr_t address, const void *buffer,
   if ((kernel_get_fw_version() >> 16) <= 0x0820u)
     return mdbg_copyin(pid, buffer, (intptr_t)address, size) == 0;
 
-  void *probe = malloc(size);
-  if (!probe)
+  uint8_t probe = 0;
+  if (!sm_remote_process_read(pid, address, &probe, sizeof(probe)) ||
+      (size > 1u &&
+       !sm_remote_process_read(pid, address + size - 1u, &probe,
+                               sizeof(probe)))) {
     return false;
-  bool readable = sm_remote_process_read(pid, address, probe, size);
-  free(probe);
-  if (!readable)
-    return false;
+  }
 
   uint64_t cr3 = 0;
   uint64_t dmap = 0;

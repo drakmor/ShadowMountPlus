@@ -15,13 +15,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from capstone import CS_ARCH_X86, CS_MODE_64, Cs
+from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG, X86_REG_RDI
 
 PROLOGUE = b"\x55\x48\x89\xe5"
 TARGET_NAMES = (
     "launch_app",
+    "spawn_app",
     "install_title_dir",
     "install_all",
 )
+PAGE_SIZE = 0x4000
+KSTUFF_CAVE_RESERVE = 0x300
+KSTUFF_MIN_CAVE_SIZE = 0x670
+SPAWN_TITLE_ID_OFFSET_FW_11 = 0x30
+SPAWN_TITLE_ID_OFFSET_LEGACY = 0x40
 
 
 @dataclass
@@ -29,6 +36,7 @@ class LoadSegment:
     file_offset: int
     virtual_address: int
     file_size: int
+    memory_size: int
     flags: int
 
 
@@ -44,10 +52,10 @@ class ShellCore:
             values = struct.unpack_from(
                 "<IIQQQQQQ", self.data, phoff + index * phentsize
             )
-            p_type, flags, offset, address, _, file_size, _, _ = values
+            p_type, flags, offset, address, _, file_size, memory_size, _ = values
             if p_type != 1:
                 continue
-            segment = LoadSegment(offset, address, file_size, flags)
+            segment = LoadSegment(offset, address, file_size, memory_size, flags)
             self.loads.append(segment)
             if flags & 1:
                 self.executable = segment
@@ -137,6 +145,16 @@ class ShellCore:
             raise ValueError(f"launchApp xrefs: {launch_xrefs!r}")
         launch = self.preceding_prologue(launch_xrefs[0])
 
+        spawn_strings = self.string_addresses(
+            b"sceApplicationSpawn2(appId, outPid, path, root, argv", True
+        )
+        spawn_xrefs = self.rip_xrefs(spawn_strings)
+        spawn_functions = sorted(
+            {self.preceding_prologue(xref) for xref in spawn_xrefs}
+        )
+        if len(spawn_functions) != 1:
+            raise ValueError(f"spawnApp xrefs: {spawn_xrefs!r}")
+
         install_strings = self.string_addresses(b"AppInstallTitleDirMain", False)
         install_groups: dict[int, int] = {}
         for xref in self.rip_xrefs(install_strings, slop=8):
@@ -167,15 +185,74 @@ class ShellCore:
 
         return {
             "launch_app": launch,
+            "spawn_app": spawn_functions[0],
             "install_title_dir": best[0],
             "install_all": app_install_all,
         }
+
+    def bridge_cave(self) -> tuple[int, int, int]:
+        segment = self.executable
+        assert segment is not None
+        segment_end = segment.virtual_address + segment.memory_size
+        cave_start = (segment_end + 0xF) & ~0xF
+        cave_end = (segment_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1)
+        cave_size = cave_end - cave_start
+        reserved = KSTUFF_CAVE_RESERVE if cave_size >= KSTUFF_MIN_CAVE_SIZE else 0
+        return cave_start + reserved, cave_size - reserved, reserved
+
+    def spawn_title_id_offset(self, firmware: int, spawn_address: int) -> int:
+        # The launch-parameter object gained one std::string in FW 11.00,
+        # shifting titleId from +0x40 to +0x30 in the reorganized layout.
+        title_offset = (
+            SPAWN_TITLE_ID_OFFSET_FW_11
+            if firmware >= 0x1100
+            else SPAWN_TITLE_ID_OFFSET_LEGACY
+        )
+        decoder = Cs(CS_ARCH_X86, CS_MODE_64)
+        decoder.detail = True
+        file_offset = self.virtual_to_file(spawn_address)
+        instructions = list(
+            decoder.disasm(
+                self.data[file_offset : file_offset + 0x400], spawn_address
+            )
+        )
+        object_register = None
+        for instruction in instructions[:32]:
+            operands = instruction.operands
+            if (
+                instruction.mnemonic == "mov"
+                and len(operands) == 2
+                and operands[0].type == X86_OP_REG
+                and operands[1].type == X86_OP_REG
+                and operands[1].reg == X86_REG_RDI
+            ):
+                object_register = operands[0].reg
+                break
+        capacity_offset = title_offset + 0x18
+        layout_found = object_register is not None and any(
+            instruction.mnemonic == "cmp"
+            and len(instruction.operands) == 2
+            and instruction.operands[0].type == X86_OP_MEM
+            and instruction.operands[0].mem.base == object_register
+            and instruction.operands[0].mem.disp == capacity_offset
+            and instruction.operands[1].type == X86_OP_IMM
+            and instruction.operands[1].imm == 0x10
+            for instruction in instructions
+        )
+        if not layout_found:
+            raise ValueError(
+                f"{self.path}: spawn titleId layout +0x{title_offset:x} "
+                "not confirmed"
+            )
+        return title_offset
 
     def patch_size(self, address: int, minimum: int = 12) -> int:
         offset = self.virtual_to_file(address)
         decoder = Cs(CS_ARCH_X86, CS_MODE_64)
         size = 0
-        for instruction in decoder.disasm(self.data[offset : offset + 64], address):
+        for instruction in decoder.disasm(
+            self.data[offset : offset + 64], address
+        ):
             size += instruction.size
             if size >= minimum:
                 return size
@@ -192,17 +269,30 @@ def firmware_key(name: str) -> int:
 
 def generate(root: Path) -> str:
     firmware_dirs = sorted(
-        (path for path in root.iterdir() if (path / "system/vsh/SceShellCore.elf").is_file()),
+        (
+            path
+            for path in root.iterdir()
+            if (path / "system/vsh/SceShellCore.elf").is_file()
+        ),
         key=lambda path: tuple(int(part) for part in path.name.split(".")),
     )
     records: list[str] = []
     for firmware_dir in firmware_dirs:
         shellcore = ShellCore(firmware_dir / "system/vsh/SceShellCore.elf")
         targets = shellcore.locate_targets()
+        cave_offset, cave_size, cave_reserved = shellcore.bridge_cave()
+        firmware = firmware_key(firmware_dir.name)
+        title_offset = shellcore.spawn_title_id_offset(
+            firmware, targets["spawn_app"]
+        )
         records.append(
             "  {\n"
-            f"    .firmware = 0x{firmware_key(firmware_dir.name):04x}u,\n"
+            f"    .firmware = 0x{firmware:04x}u,\n"
             f"    .name = \"{firmware_dir.name}\",\n"
+            f"    .bridge_cave_offset = 0x{cave_offset:x}u,\n"
+            f"    .bridge_cave_size = 0x{cave_size:x}u,\n"
+            f"    .bridge_cave_reserved = 0x{cave_reserved:x}u,\n"
+            f"    .spawn_title_id_offset = 0x{title_offset:x}u,\n"
             "    .targets = {"
             + ", ".join(
                 "{.offset = "
