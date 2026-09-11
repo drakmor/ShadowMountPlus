@@ -639,9 +639,8 @@ static bool install_hooks_for_pid(pid_t pid) {
 
   if (!bridge_cave_is_available(pid, bridge_address, blob_size)) {
     log_debug("  [SHELLCORE] bridge cave is occupied: address=0x%lx "
-              "size=0x%zx reserved=0x%zx",
-              (unsigned long)bridge_address, blob_size,
-              hooks.remote.offsets->bridge_cave_reserved);
+              "size=0x%zx",
+              (unsigned long)bridge_address, blob_size);
     goto done;
   }
   shellcore_hook_record_t *launch_hook_record = &hooks.hooks[0];
@@ -745,10 +744,9 @@ done:
         (uintptr_t)(sm_shellcore_bridge_launch_trampoline -
                     sm_shellcore_bridge_blob_start);
     log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld cave=0x%lx+0x%zx "
-              "reserved=0x%zx launch=1 sandbox=1 trampoline=0x%lx install=%d",
+              "launch=1 sandbox=1 trampoline=0x%lx install=%d",
               hooks.remote.offsets->name, (long)pid,
               (unsigned long)bridge_address, blob_size,
-              hooks.remote.offsets->bridge_cave_reserved,
               (unsigned long)launch_trampoline,
               install_hook_enabled ? 1 : 0);
   } else if (cleanup_pending) {

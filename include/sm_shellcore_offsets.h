@@ -22,7 +22,6 @@ typedef struct {
   const char *name;
   uintptr_t bridge_cave_offset;
   size_t bridge_cave_size;
-  size_t bridge_cave_reserved;
   uintptr_t sandbox_call_target_offset;
   sm_shellcore_target_offset_t targets[SM_SHELLCORE_TARGET_COUNT];
 } sm_shellcore_firmware_offsets_t;

@@ -11,7 +11,6 @@ from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_REG_RIP
 
 from generate_shellcore_offsets import (
     ShellCore,
-    UNSUPPORTED_BRIDGE_FIRMWARES,
     firmware_key,
 )
 from generate_shellcore_offsets_from_files import firmware_files, generate
@@ -93,12 +92,7 @@ def main() -> int:
     if not firmware_inputs:
         raise ValueError(f"no SceShellCore firmware files under {args.root}")
 
-    supported_inputs = [
-        item
-        for item in firmware_inputs
-        if item[0] not in UNSUPPORTED_BRIDGE_FIRMWARES
-    ]
-    for firmware, path in supported_inputs:
+    for firmware, path in firmware_inputs:
         verify_firmware(path, firmware)
 
     checked_in_offsets = (
@@ -114,14 +108,8 @@ def main() -> int:
             )
 
     print(
-        f"verified {len(supported_inputs)} supported firmware trampoline layouts"
+        f"verified {len(firmware_inputs)} firmware trampoline layouts"
         + (" and checked-in offset coverage" if not firmware_dirs else "")
-        + (
-            f"; skipped {len(firmware_inputs) - len(supported_inputs)} "
-            "known unsupported firmware"
-            if len(supported_inputs) != len(firmware_inputs)
-            else ""
-        )
     )
     return 0
 
