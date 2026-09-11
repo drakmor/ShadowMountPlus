@@ -350,17 +350,34 @@ static bool resolve_kstuff_sysentvec_addrs(intptr_t *ps5_out, intptr_t *ps4_out)
   case 0x1100000:
   case 0x1110000:
   case 0x1120000:
+    *ps5_out = KERNEL_ADDRESS_DATA_BASE + 0x1c2a5c8;
+    *ps4_out = KERNEL_ADDRESS_DATA_BASE + 0x1c2a720;
+    return true;
+
   case 0x1130000:
   case 0x1140000:
+    *ps5_out = KERNEL_ADDRESS_DATA_BASE + 0x1c2a628;
+    *ps4_out = KERNEL_ADDRESS_DATA_BASE + 0x1c2a780;
+    return true;
+
   case 0x2000000:
+    *ps5_out = KERNEL_ADDRESS_DATA_BASE + 0x1c50298;
+    *ps4_out = KERNEL_ADDRESS_DATA_BASE + 0x1c50410;
+    return true;
+
   case 0x2200000:
   case 0x2250000:
   case 0x2260000:
+    *ps5_out = KERNEL_ADDRESS_DATA_BASE + 0x1c502d8;
+    *ps4_out = KERNEL_ADDRESS_DATA_BASE + 0x1c50450;
+    return true;
+
   case 0x2300000:
   case 0x2500000:
   case 0x2700000:
-    // Older jailbreak chains usually rely on Byepervisor instead of kstuff.
-    return false;
+    *ps5_out = KERNEL_ADDRESS_DATA_BASE + 0x1c50458;
+    *ps4_out = KERNEL_ADDRESS_DATA_BASE + 0x1c505d0;
+    return true;
 
   case 0x3000000:
   case 0x3100000:

@@ -45,15 +45,6 @@
     .targets = {{.offset = 0x3469b0u, .patch_size = 12u}, {.offset = 0x37944cu, .patch_size = 5u}, {.offset = 0x1adc30u, .patch_size = 12u}, {.offset = 0xa06660u, .patch_size = 14u}},
   },
   {
-    .firmware = 0x0200u,
-    .name = "2.00",
-    .bridge_cave_offset = 0x12a3cf0u,
-    .bridge_cave_size = 0x310u,
-    .bridge_cave_reserved = 0x0u,
-    .sandbox_call_target_offset = 0x129e350u,
-    .targets = {{.offset = 0x3a4660u, .patch_size = 12u}, {.offset = 0x3db891u, .patch_size = 5u}, {.offset = 0x1df8f0u, .patch_size = 12u}, {.offset = 0xaf3740u, .patch_size = 14u}},
-  },
-  {
     .firmware = 0x0220u,
     .name = "2.20",
     .bridge_cave_offset = 0x12a4460u,

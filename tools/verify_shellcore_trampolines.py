@@ -9,8 +9,12 @@ from pathlib import Path
 from capstone import CS_ARCH_X86, CS_GRP_CALL, CS_GRP_JUMP, CS_MODE_64, Cs
 from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_REG_RIP
 
-from generate_shellcore_offsets import ShellCore, firmware_key
-from generate_shellcore_offsets_from_files import firmware_files
+from generate_shellcore_offsets import (
+    ShellCore,
+    UNSUPPORTED_BRIDGE_FIRMWARES,
+    firmware_key,
+)
+from generate_shellcore_offsets_from_files import firmware_files, generate
 
 
 def verify_firmware(path: Path, firmware: int) -> None:
@@ -89,9 +93,36 @@ def main() -> int:
     if not firmware_inputs:
         raise ValueError(f"no SceShellCore firmware files under {args.root}")
 
-    for firmware, path in firmware_inputs:
+    supported_inputs = [
+        item
+        for item in firmware_inputs
+        if item[0] not in UNSUPPORTED_BRIDGE_FIRMWARES
+    ]
+    for firmware, path in supported_inputs:
         verify_firmware(path, firmware)
-    print(f"verified {len(firmware_inputs)} firmware trampoline layouts")
+
+    checked_in_offsets = (
+        Path(__file__).resolve().parents[1] / "src/sm_shellcore_offsets.inc"
+    )
+    if not firmware_dirs:
+        expected = generate(args.root)
+        actual = checked_in_offsets.read_text(encoding="utf-8")
+        if actual != expected:
+            raise ValueError(
+                f"{checked_in_offsets}: generated offsets are stale for "
+                f"{args.root}"
+            )
+
+    print(
+        f"verified {len(supported_inputs)} supported firmware trampoline layouts"
+        + (" and checked-in offset coverage" if not firmware_dirs else "")
+        + (
+            f"; skipped {len(firmware_inputs) - len(supported_inputs)} "
+            "known unsupported firmware"
+            if len(supported_inputs) != len(firmware_inputs)
+            else ""
+        )
+    )
     return 0
 
 
