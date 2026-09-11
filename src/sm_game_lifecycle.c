@@ -763,9 +763,13 @@ static void handle_game_exit(pid_t pid) {
     // Match the 1.6 fakelib lifetime: release the overlay as soon as this PID
     // exits. The nullfs mount otherwise holds common/lib inside the old sandbox
     // busy and can prevent that sandbox from being removed during ExitSpawn.
-    // ShellCore/KStuff ownership remains pending and may still be handed to a
-    // replacement PID of the same title/app.
+    // ShellCore and application-level KStuff ownership remain pending and may
+    // still be handed to a replacement PID of the same title/app. Mount hooks,
+    // however, belong to the process lifetime: resume them now so ShellCore's
+    // exit cleanup is intercepted even if the sandbox cannot be removed. A
+    // replacement NOTE_EXEC pauses them again in sm_kstuff_game_handoff().
     sm_fakelib_game_on_exit(pid);
+    sm_kstuff_game_process_on_exit(pid);
 
     log_debug("  [GAME] process exited, awaiting same-app handoff: %s "
               "pid=%ld app_id=0x%08X",

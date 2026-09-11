@@ -964,9 +964,15 @@ void sm_kstuff_note_app_focus(uint32_t app_id) {
   atomic_store(&g_pending_app_focus_valid, true);
 }
 
-void sm_kstuff_game_on_exit(pid_t pid) {
-  bool mount_hooks_game_exited = g_kstuff.mount_hooks_game_pid == pid;
+void sm_kstuff_game_process_on_exit(pid_t pid) {
+  if (g_kstuff.mount_hooks_game_pid != pid)
+    return;
 
+  g_kstuff.mount_hooks_game_pid = 0;
+  restore_game_mount_hooks_if_idle("game process exit");
+}
+
+void sm_kstuff_game_on_exit(pid_t pid) {
   if (g_kstuff.game.active && g_kstuff.game.pid == pid) {
     bool restore_needed = tracked_game_requires_restore();
     sm_mdbg_game_on_exit(pid);
@@ -977,10 +983,7 @@ void sm_kstuff_game_on_exit(pid_t pid) {
       finish_tracked_game_clear("tracked game exit");
   }
 
-  if (mount_hooks_game_exited) {
-    g_kstuff.mount_hooks_game_pid = 0;
-    restore_game_mount_hooks_if_idle("game exit");
-  }
+  sm_kstuff_game_process_on_exit(pid);
 }
 
 void sm_kstuff_game_poll(bool process_active) {

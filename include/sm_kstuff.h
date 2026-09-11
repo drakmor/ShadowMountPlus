@@ -40,6 +40,9 @@ void sm_kstuff_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id,
 // Preserve kstuff state across an ExitSpawn/LoadExec process replacement.
 bool sm_kstuff_game_handoff(pid_t old_pid, pid_t new_pid,
                             const char *title_id, uint32_t app_id);
+// Resume mount syscall hooks as soon as the tracked process exits. The broader
+// per-application state remains available for a possible ExitSpawn handoff.
+void sm_kstuff_game_process_on_exit(pid_t pid);
 // Publish an AppFocus change for processing on the lifecycle/kstuff thread.
 void sm_kstuff_note_app_focus(uint32_t app_id);
 // Return the next wake deadline in monotonic microseconds, or 0 when idle.
