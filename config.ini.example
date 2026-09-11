@@ -114,9 +114,11 @@
 # The old legacy_gddr5_cache key remains accepted for compatibility.
 # nested_pfs_index_cache=0
 
-# Sandbox fakelib backport watcher:
-# 1/true/yes/on  -> mount app0/fakelib2 when present, otherwise app0/fakelib, into common/lib
-# 0/false/no/off -> disable fakelib watcher
+# Sandbox fakelib support:
+# 1/true/yes/on  -> mount fakelib2 when present, otherwise fakelib, into common/lib
+# Installed PKGs use only their own app0/fakelib2 or app0/fakelib; external
+# backport directories are not overlaid on app0 and are not used as sources.
+# 0/false/no/off -> disable fakelib overlays
 # Default: 1
 # backport_fakelib=1
 

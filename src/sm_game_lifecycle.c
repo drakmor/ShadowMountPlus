@@ -300,11 +300,10 @@ static bool try_game_process_handoff(int kq, pid_t pid, const char *title_id,
     return false;
   }
 
-  // Keep the ShellCore runtime across ExitSpawn/LoadExec, but deliberately
-  // restart the per-process fakelib overlay. Holding the old nullfs overlay
-  // can keep the old title sandbox busy and prevent ShellCore from removing
-  // it. sm_fakelib_game_on_exec() also handles the NOTE_EXEC-before-NOTE_EXIT
-  // race by cleaning any mount still owned by old_pid before mounting for pid.
+  // Keep the ShellCore runtime across ExitSpawn/LoadExec. If NOTE_EXEC arrives
+  // first, the replacement process can reuse the fakelib overlay in the same
+  // sandbox; if NOTE_EXIT arrived first, handle_game_exit() already removed it
+  // and sm_fakelib_game_on_exec() mounts it again for the replacement process.
   uint32_t effective_app_id = app_id != 0 ? app_id : old_app_id;
   sm_shellcore_service_bind_prepared_app(title_id, effective_app_id, pid);
   sm_fakelib_game_on_exec(pid, title_id, false);
@@ -761,8 +760,8 @@ static void handle_game_exit(pid_t pid) {
     publish_active_game_pid(0);
 
     // Match the 1.6 fakelib lifetime: release the overlay as soon as this PID
-    // exits. The nullfs mount otherwise holds common/lib inside the old sandbox
-    // busy and can prevent that sandbox from being removed during ExitSpawn.
+    // exits. Keeping common/lib covered can leave the old sandbox busy and
+    // prevent it from being removed during ExitSpawn.
     // ShellCore and application-level KStuff ownership remain pending and may
     // still be handed to a replacement PID of the same title/app. Mount hooks,
     // however, belong to the process lifetime: resume them now so ShellCore's

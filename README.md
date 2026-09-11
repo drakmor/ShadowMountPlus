@@ -11,7 +11,7 @@
 **ShadowMountPlus** is a fully automated, background "Auto-Mounter" payload for Jailbroken PlayStation 5 consoles. It streamlines the game mounting process by eliminating the need for manual configuration or external tools (such as DumpRunner or Itemzflow). ShadowMountPlus automatically detects, mounts, and installs game dumps from both **internal and external storage**.
 
 
-**Compatibility:** Supports all Jailbroken PS5 firmwares running **[Kstuff-lite v1.07+](https://github.com/EchoStretch/kstuff-lite)**.
+**Compatibility:** Supports Jailbroken PS5 firmwares running **[Kstuff-lite v1.07+](https://github.com/EchoStretch/kstuff-lite)**. Firmware 2.00 is excluded because its SceShellCore executable cave overlaps the kstuff PPR bridge.
 
 
 ## 💜 Support Development
@@ -183,8 +183,9 @@ Backport overlay behavior:
   - `<scanpath>/backports/<TITLE_ID>/`
 - The `backports` folder is ignored during normal game scanning.
 - A backport is applied automatically to the matching mounted game from any configured scan path.
+- For an installed PKG, the full backport directory is not overlaid on package `app0`, and external `backports/<TITLE_ID>` sources are ignored. Only the package's own `app0/fakelib2` or `app0/fakelib` is mounted into `common/lib` through the pre-spawn hook.
 - If multiple scan paths provide the same title backport, the game's own scan path wins; otherwise scan path order is used.
-- ShadowMount+ checks the selected backport for `fakelib2` and then `fakelib`; if neither exists, it uses only `fakelib` from the original game source. The selected directory is mounted into the running game's sandbox `common/lib`. A backport `fakelib2` is always mounted directly and exclusively: neither emulator updates nor the global fakelib can replace or supplement it.
+- ShadowMount+ checks the selected backport for `fakelib2` and then `fakelib`; if neither exists, it checks the original game source in the same order. The selected directory is mounted into the running game's sandbox `common/lib`. A selected `fakelib2` is always mounted directly and exclusively: neither emulator updates nor the global fakelib can replace or supplement it.
 - If `update_emulators=1`, matching files from `emulators_path` replace files in the selected game fakelib, except when `fakelib2` is selected. The cache is refreshed when its sources change and expires after seven days without a game launch.
 - With `auto_update_ampr=1`, ShadowMount+ checks for AMPR updates 30 seconds after startup and every four hours. It downloads a missing or newer emulator and displays a notification after a successful update.
 - The backport notification adds `Emulators updated` when emulator files are updated for the launched game.
