@@ -7,14 +7,6 @@
 
 #define SM_KSTUFF_KEKCALL_CHECK UINT64_C(0xffffffff00000027)
 #define SM_KSTUFF_KEKCALL_REMOTE_SYSCALL UINT64_C(0x500000027)
-#define SM_KSTUFF_KEKCALL_RUNTIME_HOOK_CONTROL UINT64_C(0x800000027)
-
-#define SM_KSTUFF_RUNTIME_HOOK_ENABLE UINT64_C(1)
-#define SM_KSTUFF_RUNTIME_HOOK_DISABLE UINT64_C(2)
-#define SM_KSTUFF_RUNTIME_HOOK_NMOUNT (UINT64_C(1) << 0)
-#define SM_KSTUFF_RUNTIME_HOOK_UNMOUNT (UINT64_C(1) << 1)
-#define SM_KSTUFF_RUNTIME_HOOK_MOUNT_UNMOUNT                                  \
-  (SM_KSTUFF_RUNTIME_HOOK_NMOUNT | SM_KSTUFF_RUNTIME_HOOK_UNMOUNT)
 
 // Resolve firmware-specific kstuff sysentvec addresses and initialize state.
 void sm_kstuff_init(void);
@@ -40,9 +32,6 @@ void sm_kstuff_game_on_exec(pid_t pid, const char *title_id, uint32_t app_id,
 // Preserve kstuff state across an ExitSpawn/LoadExec process replacement.
 bool sm_kstuff_game_handoff(pid_t old_pid, pid_t new_pid,
                             const char *title_id, uint32_t app_id);
-// Resume mount syscall hooks as soon as the tracked process exits. The broader
-// per-application state remains available for a possible ExitSpawn handoff.
-void sm_kstuff_game_process_on_exit(pid_t pid);
 // Publish an AppFocus change for processing on the lifecycle/kstuff thread.
 void sm_kstuff_note_app_focus(uint32_t app_id);
 // Return the next wake deadline in monotonic microseconds, or 0 when idle.
