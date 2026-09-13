@@ -98,7 +98,12 @@ static void *dispatcher_thread(void *arg) {
   // before it destroys anything, so this reference cannot outlive its object.
   void *const srv = g_srv;
 
-  g_disp_alive = true;
+  // g_disp_alive is deliberately NOT raised here. The creator sets it before
+  // pthread_create, because teardown reads the flag as "the dispatcher is
+  // provably out" and this thread is detached -- there is nothing else to join
+  // on. Raising it here left a window between pthread_create and this line in
+  // which a teardown would sail past its wait, destroy the server and free
+  // g_work_buf, and this thread would then poll with both dangling.
   if (!tryDispatch) {
     logf_("no tryDispatch symbol; refusing to fall back to runDispatcher -- an "
           "unkillable process is worse than an unserved one");
@@ -389,10 +394,19 @@ bool sm_env_ipmi_serve(void) {
   memset(g_work_buf, 0, g_work_size);
 
   g_disp_stop = false;
+  // Publish liveness before the thread exists, not from inside it. Teardown
+  // treats a clear flag as proof the dispatcher is out, so a flag the thread
+  // raises itself is false for as long as it takes to be scheduled -- and in
+  // that window teardown would destroy the server and free g_work_buf out from
+  // under a thread that had not started polling yet.
+  g_disp_alive = true;
   pthread_t th;
   if (pthread_create(&th, NULL, dispatcher_thread, NULL) != 0) {
     logf_("could not start the dispatcher thread -- unregistering rather than "
           "holding a name nothing will answer");
+    // Nothing will ever clear it: teardown must not wait out its full two
+    // seconds and then refuse to destroy.
+    g_disp_alive = false;
     server_teardown("dispatcher thread would not start");
     return false;
   }

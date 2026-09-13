@@ -135,7 +135,7 @@ static bool run_probe(uint32_t *caps_out) {
 }
 
 bool sm_kstuff_probe_caps(uint32_t *caps) {
-  // Only a positive answer is cached.
+  // Only a complete answer is cached.
   //
   // ShellCore is patched once at kstuff load and never un-patched, so a
   // positive can never go stale. A zero is different: it may only mean kstuff
@@ -149,11 +149,17 @@ bool sm_kstuff_probe_caps(uint32_t *caps) {
   // reads caps=0x0, and the next probe 11s later reads caps=0x3. Load order no
   // longer matters.
   //
+  // A partial reading is cached no more than a zero is. patch_shellcore()
+  // writes the sysdir and trophy entries one after the other, so a probe that
+  // lands between them sees one bit and would otherwise latch it for the boot
+  // -- the same failure as caps=0, one bit over.
+  //
   // Deliberately not time-throttled: the callers are our own startup and the
   // one query a title makes during module init, so a retry costs one
   // find_pid_by_name plus two small copyouts, and only until the answer turns
-  // positive.
-  if (!g_caps_probed || !g_caps_valid || g_caps == 0) {
+  // complete.
+  const uint32_t kCapsAll = SM_KSTUFF_CAP_SYSDIRPATH | SM_KSTUFF_CAP_TROPHY;
+  if (!g_caps_probed || !g_caps_valid || g_caps != kCapsAll) {
     uint32_t probed = 0;
     if (run_probe(&probed)) {
       g_caps = probed;

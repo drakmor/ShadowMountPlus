@@ -81,7 +81,12 @@ typedef struct ConnectRecord {
     unsigned      calls;
     int           slot;
     u64           srv, cfg, extra;
-    unsigned char cfgHead[0x40];
+    // 0x48, not 0x40: numMsgQueue sits at +0x40 and the drain reads it. At
+    // 0x40 that read left the array and picked up memorySize below instead,
+    // so every drained connect logged the low half of memorySize as
+    // numMsgQueue. The firmware Config runs to at least 0x150 (memorySize
+    // lives at +0x148), so copying 0x48 stays inside it.
+    unsigned char cfgHead[0x48];
     uint64_t      memorySize;
     uint64_t      memorySizeSet;
     int           createSessionSlot;
@@ -276,17 +281,48 @@ static int64_t slot_dispatch(int slot, void* self, u64 a1, u64 a2, u64 a3, u64 a
             return rc;
         }
 
-        case KIND_SYNC_RAW:
-            // Not implemented on purpose: the descriptor form is what our client
-            // sends and what a real sandboxed title has been served on, and
-            // nothing has ever arrived here. A dispatch that did would mean the
-            // wire shape is not what we measured, which is worth seeing in a log
-            // and is not worth answering blind.
+        case KIND_SYNC_RAW: {
+            // No command is served in this form: the descriptor form is what our
+            // client sends and what a real sandboxed title has been served on,
+            // and nothing has ever arrived here. A dispatch that did would mean
+            // the wire shape is not what we measured, so it stays loud in the
+            // log -- but it is still answered, because refusing by return value
+            // is not refusing at all.
+            IpmiSession* session = (IpmiSession*)(a1);
             logf_("SYNC-RAW slot[%#04x] session=%p method=%#x a3=%#lx a4=%#lx "
                   "a5=%#lx a6=%#lx -- not implemented, refusing",
                   slot * 8, (void*)a1, (unsigned)a2, (unsigned long)a3,
                   (unsigned long)a4, (unsigned long)a5, (unsigned long)a6);
+
+            // Answer it. Returning does not, exactly as on the DataInfo slot:
+            // in 4.03 libSceIpmi the only callers of the reply primitive are
+            // the two respondToSyncMethodRequest overloads, so nothing replies
+            // on our behalf and an unanswered request gets the server killed
+            // (_ipmimgrRaiseException signo=0xa0020320 opt32=0x02010006). The
+            // raw overload is a thin wrapper that packs (buf, len) into a
+            // one-entry BufferInfo and calls that same primitive, so a null
+            // buffer of length 0 is a complete reply -- and with no out entry
+            // there is no `written` length to get wrong.
+            int respondRc = 0;
+            int respondSlot = -1;
+            if (session && g_syms && g_syms->sessRespondSyncRaw) {
+                respondSlot = ipmi_vtable_slot_of(session,
+                                                  g_syms->sessRespondSyncRaw, 24);
+                if (respondSlot >= 0) {
+                    void* const* svt = *(void* const* const*)(session);
+                    typedef int (*RespondRawFn)(void* self, int result,
+                                                const void* buf, size_t len);
+                    respondRc = ((RespondRawFn)svt[respondSlot])(
+                        session, SM_ENV_IPMI_ENOTSUP, NULL, 0);
+                }
+            }
+            logf_("  -> refused, respondToSyncMethodRequest(raw) slot=%d "
+                  "rc=%#010x%s",
+                  respondSlot, (unsigned)respondRc,
+                  respondSlot < 0 ? "   <-- NOT FOUND: the request is unanswered "
+                                    "and the kernel will kill us" : "");
             return SM_ENV_IPMI_ENOTSUP;
+        }
 
         case KIND_ASYNC_DATAINFO: {
             const IpmiDataInfo* in = (const IpmiDataInfo*)(a4);

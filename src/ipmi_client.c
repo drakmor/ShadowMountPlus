@@ -129,18 +129,26 @@ void ipmi_client_close(IpmiClient* c) {
          * their quit file forever. Dropping the disconnect took that from 5 of
          * 10 to 0 of 15. The session the far side keeps is not worth it; that
          * process is about to exit, which drops the session anyway. */
-        if (c->destroySlot >= 0) {
-            (void)((DestroyFn)vt[c->destroySlot])(c->handle);
-        } else {
+        const int destroyRc =
+            c->destroySlot >= 0
+                ? ((DestroyFn)vt[c->destroySlot])(c->handle)
+                : -1;
+        if (c->destroySlot < 0 || destroyRc < 0) {
             /* Leak the storage along with the handle. Undestroyed means the
              * library still holds a client kid pointing into it, so freeing
              * here would hand libSceIpmi a dangling backing buffer -- worse
-             * than one probe-sized leak. Rejecting the client in open()
-             * instead is not the answer: the probe would then skip its
-             * connect, name_is_free() would report the name free without
-             * having checked it, and create() on a held name kills us. */
-            logf_("  client: no destroy slot -- handle %p and storage leaked",
-                  c->handle);
+             * than one probe-sized leak. A destroy() that returned an error
+             * leaves exactly that state, so it takes the same path as a
+             * missing slot. Rejecting the client in open() instead is not the
+             * answer: the probe would then skip its connect, name_is_free()
+             * would report the name free without having checked it, and
+             * create() on a held name kills us. */
+            if (c->destroySlot < 0)
+                logf_("  client: no destroy slot -- handle %p and storage "
+                      "leaked", c->handle);
+            else
+                logf_("  client: destroy() rc=%#010x -- handle %p and storage "
+                      "leaked", (unsigned)destroyRc, c->handle);
             c->storage = NULL;
         }
 
