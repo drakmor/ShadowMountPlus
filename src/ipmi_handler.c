@@ -62,8 +62,8 @@ static SlotKind g_kind[kMaxSlots];
 
 // The connect slot. It and the disconnect callback beside it are both unnamed
 // and share one address, but take different arguments, and capture_connect
-// writes through its cfg pointer -- so only connect may run it. Taken as the
-// first unnamed slot, which is where connect has landed on every measured boot.
+// writes through its cfg pointer -- so only connect may run it. Identified by
+// position between named neighbours; see the claim loop in handler_build.
 static int g_connectSlot = -1;
 
 // The handler object itself. EventHandler is an interface and should carry no
@@ -566,16 +566,30 @@ HandlerBuild handler_build(const IpmiSyms* syms) {
     }
     for (int i = slots; i < kMaxSlots; i++) g_kind[i] = KIND_UNKNOWN;
 
-    // Claim the connect slot, and only that one. Derived, never hardcoded.
-    for (int i = 0; i < slots; i++) {
-        if (g_kind[i] == KIND_UNKNOWN) { g_connectSlot = i; break; }
+    // Claim the connect slot, and only that one. Anchored on BOTH sides, not
+    // taken as the first unnamed slot: a symbol that fails to resolve leaves
+    // its OWN slot unnamed, and first-unnamed would then hand connect to
+    // whatever that was -- a destructor, say -- whose arguments capture_connect
+    // would write through. Nothing is claimed unless the run of two unnamed
+    // slots sits exactly between the async dispatch and onSessionKilled.
+    for (int i = 0; i + 3 < slots; i++) {
+        if (g_kind[i]     == KIND_ASYNC_DATAINFO &&
+            g_kind[i + 1] == KIND_UNKNOWN &&
+            g_kind[i + 2] == KIND_UNKNOWN &&
+            g_kind[i + 3] == KIND_SESSION_KILLED) {
+            g_connectSlot = i + 1;
+            break;
+        }
     }
     if (g_connectSlot < 0) {
-        logf_("  note: every slot was named, so no slot is taken as connect -- "
-              "connections will be accepted without a session being created");
+        logf_("  the connect slot could not be identified: no unnamed pair sits "
+              "between the async dispatch and onSessionKilled. Connections will "
+              "be ACCEPTED but get no session, so every client sees 0x8002000d. "
+              "Nothing is captured, which is the safe half of the failure.");
     } else {
-        logf_("  connect slot taken as [%#04x]; any other unnamed slot returns "
-              "0 without being read", g_connectSlot * 8);
+        logf_("  connect slot taken as [%#04x], anchored between the async "
+              "dispatch and onSessionKilled; every other unnamed slot returns 0 "
+              "without being read", g_connectSlot * 8);
     }
 
     const unsigned wanted = M_SYNC_DI | M_SYNC_RAW | M_ASYNC_DI | M_ASYNC_RAW |
