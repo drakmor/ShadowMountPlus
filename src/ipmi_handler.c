@@ -201,27 +201,38 @@ static void capture_connect(int slot, void* self, u64 srv, u64 cfg, u64 extra) {
     g_connect.pending = true;
 }
 
-// Refuse an async request on the wire. The RAW form deliberately: it takes the
-// ticket alone, so the reply cannot be routed wrong, where the descriptor form
-// takes (methodId, ticket) at the reverse offsets. Silence would be survivable
-// here -- unlike a sync slot -- so this is honesty, not a rescue from a kill.
+// Refuse an async request on the wire, with the DESCRIPTOR form.
+//
+// The raw form cannot do this job: it has no methodId field and hardcodes that
+// field to zero, so a client waiting on its own method id never matches the
+// reply and blocks in tryGetResult forever. Measured -- a probe hung there
+// while the server logged rc=0.
+//
+// The pair is (methodId, ticket), the reverse of the dispatch order. Also
+// measured: tryGetResult answers EINVAL when handed (ticket, methodId) and
+// EAGAIN when handed (methodId, ticket), so only the latter is a shape the
+// kernel accepts. One zero-length descriptor, because a refusal carries no data
+// and count=1 is the shape already known to be accepted.
 static void respond_async_refusal(IpmiSession* session, uint32_t ticket,
-                                  const char* what) {
-    if (!session || !g_syms || !g_syms->sessRespondAsyncRaw) return;
+                                  uint32_t methodId, const char* what) {
+    if (!session || !g_syms || !g_syms->sessRespondAsyncData) return;
     const int respondSlot =
-        ipmi_vtable_slot_of(session, g_syms->sessRespondAsyncRaw, 24);
+        ipmi_vtable_slot_of(session, g_syms->sessRespondAsyncData, 24);
     if (respondSlot < 0) {
-        logf_("  -> %s NOT refused: respondToAsyncMethodRequest(raw) not in the "
-              "session vtable", what);
+        logf_("  -> %s NOT refused: respondToAsyncMethodRequest(DataInfo) not "
+              "in the session vtable", what);
         return;
     }
     void* const* svt = *(void* const* const*)(session);
-    typedef int (*RespondAsyncRawFn)(void* self, uint32_t ticket, int result,
-                                     const void* buf, size_t len);
-    const int rc = ((RespondAsyncRawFn)svt[respondSlot])(
-        session, ticket, SM_ENV_IPMI_ENOTSUP, NULL, 0);
-    logf_("  -> %s refused, respondToAsyncMethodRequest(raw) slot=%d rc=%#010x",
-          what, respondSlot, (unsigned)rc);
+    typedef int (*RespondAsyncFn)(void* self, uint32_t methodId, uint32_t ticket,
+                                  int result, const IpmiDataInfo* out,
+                                  uint32_t outCount);
+    const IpmiDataInfo none = { NULL, 0 };
+    const int rc = ((RespondAsyncFn)svt[respondSlot])(
+        session, methodId, ticket, SM_ENV_IPMI_ENOTSUP, &none, 1);
+    logf_("  -> %s refused, respondToAsyncMethodRequest(DataInfo) slot=%d "
+          "ticket=%#x method=%#x rc=%#010x",
+          what, respondSlot, ticket, methodId, (unsigned)rc);
 }
 
 static int64_t slot_dispatch(int slot, void* self, u64 a1, u64 a2, u64 a3, u64 a4,
@@ -366,7 +377,8 @@ static int64_t slot_dispatch(int slot, void* self, u64 a1, u64 a2, u64 a3, u64 a
                 logf_("  in[%u]  ptr=%p size=%zu", i, in ? in[i].data : NULL,
                       in ? in[i].size : 0);
             }
-            respond_async_refusal((IpmiSession*)(a1), (uint32_t)a2, "ASYNC");
+            respond_async_refusal((IpmiSession*)(a1), (uint32_t)a2, (uint32_t)a3,
+                                  "ASYNC");
             return SM_ENV_IPMI_ENOTSUP;
         }
 
@@ -375,7 +387,8 @@ static int64_t slot_dispatch(int slot, void* self, u64 a1, u64 a2, u64 a3, u64 a
                   "a4=%#lx a5=%#lx a6=%#lx -- not implemented, refusing",
                   slot * 8, (void*)a1, (unsigned)a2, (unsigned)a3,
                   (unsigned long)a4, (unsigned long)a5, (unsigned long)a6);
-            respond_async_refusal((IpmiSession*)(a1), (uint32_t)a2, "ASYNC-RAW");
+            respond_async_refusal((IpmiSession*)(a1), (uint32_t)a2, (uint32_t)a3,
+                                  "ASYNC-RAW");
             return SM_ENV_IPMI_ENOTSUP;
 
         case KIND_SESSION_KILLED:
