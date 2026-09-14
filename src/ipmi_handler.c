@@ -60,6 +60,12 @@ enum { kMaxSlots = 12 };
 static void*    g_vtable[2 + kMaxSlots];
 static SlotKind g_kind[kMaxSlots];
 
+// The connect slot. It and the disconnect callback beside it are both unnamed
+// and share one address, but take different arguments, and capture_connect
+// writes through its cfg pointer -- so only connect may run it. Taken as the
+// first unnamed slot, which is where connect has landed on every measured boot.
+static int g_connectSlot = -1;
+
 // The handler object itself. EventHandler is an interface and should carry no
 // data, but the padding costs nothing and a wrong guess about that would
 // otherwise be a memory corruption rather than a log line.
@@ -195,6 +201,29 @@ static void capture_connect(int slot, void* self, u64 srv, u64 cfg, u64 extra) {
     g_connect.pending = true;
 }
 
+// Refuse an async request on the wire. The RAW form deliberately: it takes the
+// ticket alone, so the reply cannot be routed wrong, where the descriptor form
+// takes (methodId, ticket) at the reverse offsets. Silence would be survivable
+// here -- unlike a sync slot -- so this is honesty, not a rescue from a kill.
+static void respond_async_refusal(IpmiSession* session, uint32_t ticket,
+                                  const char* what) {
+    if (!session || !g_syms || !g_syms->sessRespondAsyncRaw) return;
+    const int respondSlot =
+        ipmi_vtable_slot_of(session, g_syms->sessRespondAsyncRaw, 24);
+    if (respondSlot < 0) {
+        logf_("  -> %s NOT refused: respondToAsyncMethodRequest(raw) not in the "
+              "session vtable", what);
+        return;
+    }
+    void* const* svt = *(void* const* const*)(session);
+    typedef int (*RespondAsyncRawFn)(void* self, uint32_t ticket, int result,
+                                     const void* buf, size_t len);
+    const int rc = ((RespondAsyncRawFn)svt[respondSlot])(
+        session, ticket, SM_ENV_IPMI_ENOTSUP, NULL, 0);
+    logf_("  -> %s refused, respondToAsyncMethodRequest(raw) slot=%d rc=%#010x",
+          what, respondSlot, (unsigned)rc);
+}
+
 static int64_t slot_dispatch(int slot, void* self, u64 a1, u64 a2, u64 a3, u64 a4,
                       u64 a5, u64 a6) {
     const SlotKind kind = (slot >= 0 && slot < kMaxSlots) ? g_kind[slot]
@@ -324,25 +353,29 @@ static int64_t slot_dispatch(int slot, void* self, u64 a1, u64 a2, u64 a3, u64 a
             return SM_ENV_IPMI_ENOTSUP;
         }
 
+        // Both async slots arrive as (Session*, ticket, methodId, ...) -- the
+        // ticket FIRST, which is the reverse of the order the reply wants, and
+        // the easy mistake to make. The return value is discarded: these slots
+        // are declared void, so refusing has to be said on the wire.
         case KIND_ASYNC_DATAINFO: {
             const IpmiDataInfo* in = (const IpmiDataInfo*)(a4);
             uint32_t inCount         = (uint32_t)(a5);
-            logf_("ASYNC slot[%#04x] session=%p method=%#x unk=%#x inCount=%u",
+            logf_("ASYNC slot[%#04x] session=%p ticket=%#x method=%#x inCount=%u",
                   slot * 8, (void*)a1, (unsigned)a2, (unsigned)a3, inCount);
             for (uint32_t i = 0; i < inCount && i < 8; i++) {
                 logf_("  in[%u]  ptr=%p size=%zu", i, in ? in[i].data : NULL,
                       in ? in[i].size : 0);
             }
-            // No async command is in scope; refusing is honest and cannot hang
-            // the caller the way an unhandled command would.
+            respond_async_refusal((IpmiSession*)(a1), (uint32_t)a2, "ASYNC");
             return SM_ENV_IPMI_ENOTSUP;
         }
 
         case KIND_ASYNC_RAW:
-            logf_("ASYNC-RAW slot[%#04x] session=%p method=%#x unk=%#x a4=%#lx "
-                  "a5=%#lx a6=%#lx -- not implemented, refusing",
+            logf_("ASYNC-RAW slot[%#04x] session=%p ticket=%#x method=%#x "
+                  "a4=%#lx a5=%#lx a6=%#lx -- not implemented, refusing",
                   slot * 8, (void*)a1, (unsigned)a2, (unsigned)a3,
                   (unsigned long)a4, (unsigned long)a5, (unsigned long)a6);
+            respond_async_refusal((IpmiSession*)(a1), (uint32_t)a2, "ASYNC-RAW");
             return SM_ENV_IPMI_ENOTSUP;
 
         case KIND_SESSION_KILLED:
@@ -361,9 +394,12 @@ static int64_t slot_dispatch(int slot, void* self, u64 a1, u64 a2, u64 a3, u64 a
             // has to succeed or nothing else ever runs; an unknown command is
             // the opposite, and is refused.
             //
-            // Not hooking it is not the safer option either: 0x20 and 0x28
-            // share one address we cannot name or vet.
-            capture_connect(slot, self, a1, a2, a3);
+            // Not hooking these is not the safer option either: 0x20 and 0x28
+            // share one address we cannot name or vet. But only the connect
+            // slot may be CAPTURED: the one beside it takes two arguments, so
+            // capture_connect would write through a stale register. Returning 0
+            // is all the rest need; teardown belongs to onSessionKilled.
+            if (slot == g_connectSlot) capture_connect(slot, self, a1, a2, a3);
             return 0;
     }
 }
@@ -431,11 +467,22 @@ void handler_drain_connect_log(void) {
     if (!g_connect.pending) return;
     g_connect.pending = false;
 
-    uint32_t clientPid = 0, maxOut = 0, numEventFlag = 0, numMsgQueue = 0;
-    memcpy(&clientPid,    g_connect.cfgHead + 0x00, 4);
-    memcpy(&maxOut,       g_connect.cfgHead + 0x08, 4);
-    memcpy(&numEventFlag, g_connect.cfgHead + 0x38, 4);
-    memcpy(&numMsgQueue,  g_connect.cfgHead + 0x40, 4);
+    // SessionImpl::Config: clientPid +0x00, maxOutstanding +0x08, sync in/out
+    // size limits +0x10/+0x18, async maxOutstanding +0x20 and in/out
+    // +0x28/+0x30, numEventFlag +0x38, numMsgQueue +0x40, memorySize +0x148.
+    // The four size limits are the wall a command hits; nothing logged them.
+    uint32_t clientPid = 0, maxOut = 0, maxOutAsync = 0;
+    uint32_t numEventFlag = 0, numMsgQueue = 0;
+    uint64_t inLimit = 0, outLimit = 0, inLimitAsync = 0, outLimitAsync = 0;
+    memcpy(&clientPid,     g_connect.cfgHead + 0x00, 4);
+    memcpy(&maxOut,        g_connect.cfgHead + 0x08, 4);
+    memcpy(&inLimit,       g_connect.cfgHead + 0x10, 8);
+    memcpy(&outLimit,      g_connect.cfgHead + 0x18, 8);
+    memcpy(&maxOutAsync,   g_connect.cfgHead + 0x20, 4);
+    memcpy(&inLimitAsync,  g_connect.cfgHead + 0x28, 8);
+    memcpy(&outLimitAsync, g_connect.cfgHead + 0x30, 8);
+    memcpy(&numEventFlag,  g_connect.cfgHead + 0x38, 4);
+    memcpy(&numMsgQueue,   g_connect.cfgHead + 0x40, 4);
 
     logf_("CONNECT callback (drained) slot[%#04x] call#%u srv=%#lx cfg=%#lx "
           "extra=%#lx -- returned 0 with NO logging inside the callback",
@@ -445,6 +492,10 @@ void handler_drain_connect_log(void) {
           "numEventFlag=%u numMsgQueue=%u memorySize=%#lx",
           clientPid, maxOut, numEventFlag, numMsgQueue,
           (unsigned long)g_connect.memorySize);
+    logf_("  hard limits sync in=%#lx out=%#lx | async maxOutstanding=%u "
+          "in=%#lx out=%#lx",
+          (unsigned long)inLimit, (unsigned long)outLimit, maxOutAsync,
+          (unsigned long)inLimitAsync, (unsigned long)outLimitAsync);
     logf_("  memorySize seeded %#lx -> set to %#lx before createSession",
           (unsigned long)g_connect.memorySize,
           (unsigned long)g_connect.memorySizeSet);
@@ -514,6 +565,18 @@ HandlerBuild handler_build(const IpmiSyms* syms) {
               (g_kind[i] == KIND_UNKNOWN && sym) ? " (ambiguous address)" : "");
     }
     for (int i = slots; i < kMaxSlots; i++) g_kind[i] = KIND_UNKNOWN;
+
+    // Claim the connect slot, and only that one. Derived, never hardcoded.
+    for (int i = 0; i < slots; i++) {
+        if (g_kind[i] == KIND_UNKNOWN) { g_connectSlot = i; break; }
+    }
+    if (g_connectSlot < 0) {
+        logf_("  note: every slot was named, so no slot is taken as connect -- "
+              "connections will be accepted without a session being created");
+    } else {
+        logf_("  connect slot taken as [%#04x]; any other unnamed slot returns "
+              "0 without being read", g_connectSlot * 8);
+    }
 
     const unsigned wanted = M_SYNC_DI | M_SYNC_RAW | M_ASYNC_DI | M_ASYNC_RAW |
                             M_KILLED;

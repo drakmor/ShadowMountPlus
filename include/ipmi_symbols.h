@@ -54,6 +54,8 @@ typedef struct IpmiSyms {
     // reads as names rather than hex.
     void* sessRespondSyncBuf;
     void* sessRespondSyncRaw;
+    void* sessRespondAsyncData;
+    void* sessRespondAsyncRaw;
     void* sessGetClientPid;
     void* sessGetServer;
     void* sessDestroy;
