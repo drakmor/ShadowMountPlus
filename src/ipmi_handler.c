@@ -215,7 +215,19 @@ static void capture_connect(int slot, void* self, u64 srv, u64 cfg, u64 extra) {
 // and count=1 is the shape already known to be accepted.
 static void respond_async_refusal(IpmiSession* session, uint32_t ticket,
                                   uint32_t methodId, const char* what) {
-    if (!session || !g_syms || !g_syms->sessRespondAsyncData) return;
+    if (!session || !g_syms) return;
+    // Says so rather than returning quietly, which is the only difference a
+    // missing symbol can make here: with no reply path the caller blocks, and
+    // that is already the firmware's own behaviour -- EventHandler's async
+    // slots are a bare ret on every firmware from 1.00 to 12.70. Measured:
+    // libSceIpmi exports this symbol on all of them, so the branch is drift
+    // insurance, not a state any console reaches.
+    if (!g_syms->sessRespondAsyncData) {
+        logf_("  -> %s NOT refused: respondToAsyncMethodRequest(DataInfo) did "
+              "not resolve, so there is no reply path and the caller blocks",
+              what);
+        return;
+    }
     const int respondSlot =
         ipmi_vtable_slot_of(session, g_syms->sessRespondAsyncData, 24);
     if (respondSlot < 0) {
