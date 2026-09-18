@@ -10,14 +10,15 @@ CFLAGS += -DSHADOWMOUNT_VERSION=\"$(VERSION_TAG)\"
 # Linker
 LDFLAGS := -flto=thin -Wl,--gc-sections
 
-# Standard Libraries Only
-LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lsqlite3
+# Standard libraries only.
+LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lsqlite3 -lSceIpmi
 PS5_SCE_STUBS_DIR ?= $(PS5_PAYLOAD_SDK)/src/sce_stubs
 KERNEL_SYS_STUB_SO := src/libkernel_sys_ext.so
 KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUBS_DIR)/libkernel_sys.c src/libkernel_sys_ext.c
 
 ASSET_SRCS := src/notify_icon_asset.c src/config_ini_example_asset.c
-SRCS := src/main.c $(wildcard src/sm_*.c) $(ASSET_SRCS)
+IPMI_SRCS := src/ipmi_symbols.c src/ipmi_client.c src/ipmi_handler.c
+SRCS := src/main.c $(wildcard src/sm_*.c) $(IPMI_SRCS) $(ASSET_SRCS)
 OBJS := $(SRCS:.c=.o)
 HEADERS := $(wildcard include/*.h)
 
@@ -43,5 +44,18 @@ src/config_ini_example_asset.c: config.ini.example
 src/%.o: src/%.c $(HEADERS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# VERSION_TAG reaches the code as a COMMAND-LINE macro, so nothing in the
+# dependency graph moves when `git describe` does: a new commit leaves main.o
+# alone and the banner then names the wrong build. Measured 2026-09-14 -- the
+# console reported 1.6-6-ge19189 while running 26fa77c's code, which is the one
+# thing we identify a deployed build by. The stamp carries the tag and is
+# rewritten only when it actually changes, so the three objects that embed it
+# rebuild exactly when they must and incremental builds stay incremental.
+.PHONY: force
+src/version_tag.stamp: force
+	@printf '%s' '$(VERSION_TAG)' | cmp -s - $@ || printf '%s' '$(VERSION_TAG)' > $@
+
+src/main.o src/sm_log.o src/sm_env_ipmi.o: src/version_tag.stamp
+
 clean:
-	rm -f shadowmountplus.elf kill.elf src/*.o $(KERNEL_SYS_STUB_SO) src/notify_icon_asset.c src/config_ini_example_asset.c
+	rm -f shadowmountplus.elf kill.elf src/*.o src/version_tag.stamp $(KERNEL_SYS_STUB_SO) src/notify_icon_asset.c src/config_ini_example_asset.c

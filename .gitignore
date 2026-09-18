@@ -6,3 +6,7 @@ notify.txt
 src/notify_icon_asset.c
 refs/*
 docs/*
+*.so
+
+# Generated: carries VERSION_TAG so the objects that embed it rebuild when it moves.
+src/version_tag.stamp
