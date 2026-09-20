@@ -62,7 +62,7 @@ static uintptr_t resolve_vmspace_pmap(uintptr_t vmspace) {
     return vmspace + 0x2c0u;
   if (version >= 0x0105u && version <= 0x0550u)
     return vmspace + 0x2e0u;
-  if (version >= 0x0600u && version <= 0x1270u)
+  if (version >= 0x0600u && version <= 0x1360u)
     return vmspace + 0x2e8u;
   return 0;
 }

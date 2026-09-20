@@ -384,8 +384,15 @@ static bool resolve_kstuff_sysentvec_addrs(intptr_t *ps5_out, intptr_t *ps4_out)
 
   case 0x13000000:
   case 0x13200000:
-    *ps5_out = KERNEL_ADDRESS_DATA_BASE + 0xddd8a8;
-    *ps4_out = KERNEL_ADDRESS_DATA_BASE + 0xddda20;
+    *ps5_out = KERNEL_ADDRESS_DATA_BASE + 0xddd8b8;
+    *ps4_out = KERNEL_ADDRESS_DATA_BASE + 0xddda30;
+    return true;
+
+  case 0x13400000:
+  case 0x13420000:
+  case 0x13600000:
+    *ps5_out = KERNEL_ADDRESS_DATA_BASE + 0xddd8f8;
+    *ps4_out = KERNEL_ADDRESS_DATA_BASE + 0xddda70;
     return true;
 
   default:

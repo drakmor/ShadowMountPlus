@@ -65,6 +65,7 @@ src/main.o src/sm_image_index.o: FORCE
 
 src/sm_l10n.o: $(L10N_CATALOGS)
 src/sm_ampr_updater.o: src/sm_ampr_ca.inc
+src/sm_shellcore_offsets.o: src/sm_shellcore_offsets.inc
 
 .PHONY: FORCE
 FORCE:
