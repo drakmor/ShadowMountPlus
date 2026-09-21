@@ -1088,6 +1088,21 @@
         return name === game.title_id ? game.title_id : `${name} (${game.title_id})`;
       }
 
+      function appendRuntimeActions(actions, game) {
+        if (!game.image_backed) return null;
+        if (game.mounted) {
+          const unmount = actionButton(t("disconnect"), () => titleRuntime(game, "unmount"));
+          actions.append(unmount);
+          return unmount;
+        }
+        const mountReadOnly = actionButton(t("mountReadOnly"), () => titleRuntime(game, "mount", "ro"));
+        actions.append(mountReadOnly);
+        if (game.image_type !== "pfsc") {
+          actions.append(actionButton(t("mountReadWrite"), () => titleRuntime(game, "mount", "rw")));
+        }
+        return mountReadOnly;
+      }
+
       function gameCard(game) {
         const card = node("article", "game-card");
         card.append(coverFor(game));
@@ -1115,14 +1130,7 @@
         details.type = "button";
         details.addEventListener("click", () => showDetails(game.title_id));
         actions.append(details);
-        if (game.image_backed && game.mounted) {
-          actions.append(actionButton(t("disconnect"), () => titleRuntime(game, "unmount")));
-        } else if (game.image_backed) {
-          actions.append(actionButton(t("mountReadOnly"), () => titleRuntime(game, "mount", "ro")));
-          if (game.image_type !== "pfsc") {
-            actions.append(actionButton(t("mountReadWrite"), () => titleRuntime(game, "mount", "rw")));
-          }
-        }
+        appendRuntimeActions(actions, game);
         body.append(actions);
         card.append(body);
         return card;
@@ -1281,6 +1289,7 @@
             String(left.path).localeCompare(String(right.path))
           );
           state.storageDestinations = mounts;
+          if (!$("destinationModal").hidden) renderDestinationPicker();
           list.replaceChildren();
           if (!mounts.length) {
             list.append(node("span", "subtle", t("storageNotFound")));
@@ -1320,6 +1329,7 @@
           });
         } catch (error) {
           state.storageDestinations = [];
+          if (!$("destinationModal").hidden) renderDestinationPicker();
           list.replaceChildren(node("span", "subtle", errorMessage(error)));
         }
       }
@@ -1574,10 +1584,17 @@
           ? t("mountedTitle", { title: game.title_id, mode: mode ? ` (${mode})` : "" })
           : t("unmountedTitle", { title: game.title_id });
         return runMutation(label, async () => {
-          for (const mountedGame of mountedGames) {
-            await api("/games/unmount", { title_id: mountedGame.title_id });
+          let replacedMount = false;
+          try {
+            for (const mountedGame of mountedGames) {
+              await api("/games/unmount", { title_id: mountedGame.title_id });
+              replacedMount = true;
+            }
+            await api(`/games/${operation}`, payload);
+          } catch (error) {
+            if (replacedMount) await refreshAll();
+            throw error;
           }
-          await api(`/games/${operation}`, payload);
           if (!$('modal').hidden && state.selected &&
               state.selected.title_id === game.title_id) {
             state.selected.mounted = operation === "mount";
@@ -1624,17 +1641,7 @@
 
         const actions = $("modalActions");
         actions.replaceChildren();
-        let runtimeAction;
-        if (game.image_backed && game.mounted) {
-          runtimeAction = actionButton(t("disconnect"), () => titleRuntime(game, "unmount"));
-          actions.append(runtimeAction);
-        } else if (game.image_backed) {
-          runtimeAction = actionButton(t("mountReadOnly"), () => titleRuntime(game, "mount", "ro"));
-          actions.append(runtimeAction);
-          if (game.image_type !== "pfsc") {
-            actions.append(actionButton(t("mountReadWrite"), () => titleRuntime(game, "mount", "rw")));
-          }
-        }
+        const runtimeAction = appendRuntimeActions(actions, game);
         const storageBusy = Boolean(state.storageJob && state.storageJob.active);
         const copy = actionButton(t("copy"), () => storageOperation(game, "copy"));
         const move = actionButton(t("move"), () => storageOperation(game, "move"));
