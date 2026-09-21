@@ -699,6 +699,7 @@
           scanStarted: "Scan started",
           mountedTitle: "Mounted {title}{mode}",
           unmountedTitle: "Unmounted {title}",
+          remountConfirm: "{current} is already mounted. Unmount it and mount {target} instead?",
           source: "Source",
           runtimePath: "Runtime path",
           sizeError: "Error {status}",
@@ -838,6 +839,7 @@
           scanStarted: "Сканирование запущено",
           mountedTitle: "Смонтировано {title}{mode}",
           unmountedTitle: "Размонтировано {title}",
+          remountConfirm: "Уже смонтировано: {current}. Размонтировать и смонтировать {target}?",
           source: "Источник",
           runtimePath: "Runtime path",
           sizeError: "Ошибка {status}",
@@ -1079,13 +1081,13 @@
         details.type = "button";
         details.addEventListener("click", () => showDetails(game.title_id));
         actions.append(details);
-        if (game.mounted) {
+        if (game.image_backed && game.mounted) {
           actions.append(actionButton(t("disconnect"), () => titleRuntime(game, "unmount")));
         } else if (game.image_backed) {
           actions.append(actionButton(t("mountReadOnly"), () => titleRuntime(game, "mount", "ro")));
-          actions.append(actionButton(t("mountReadWrite"), () => titleRuntime(game, "mount", "rw")));
-        } else {
-          actions.append(actionButton(t("connect"), () => titleRuntime(game, "mount")));
+          if (game.image_type !== "pfsc") {
+            actions.append(actionButton(t("mountReadWrite"), () => titleRuntime(game, "mount", "rw")));
+          }
         }
         body.append(actions);
         card.append(body);
@@ -1529,10 +1531,20 @@
       function titleRuntime(game, operation, mode) {
         const payload = { title_id: game.title_id };
         if (mode) payload.mode = mode;
+        const mountedGames = operation === "mount"
+          ? state.games.filter((item) => item.mounted && item.title_id !== game.title_id)
+          : [];
+        if (mountedGames.length) {
+          const current = mountedGames.map((item) => gameLabel(item)).join(", ");
+          if (!confirm(t("remountConfirm", { current, target: gameLabel(game) }))) return;
+        }
         const label = operation === "mount"
           ? t("mountedTitle", { title: game.title_id, mode: mode ? ` (${mode})` : "" })
           : t("unmountedTitle", { title: game.title_id });
         return runMutation(label, async () => {
+          for (const mountedGame of mountedGames) {
+            await api("/games/unmount", { title_id: mountedGame.title_id });
+          }
           await api(`/games/${operation}`, payload);
           if (!$('modal').hidden && state.selected &&
               state.selected.title_id === game.title_id) {
@@ -1581,16 +1593,15 @@
         const actions = $("modalActions");
         actions.replaceChildren();
         let runtimeAction;
-        if (game.mounted) {
+        if (game.image_backed && game.mounted) {
           runtimeAction = actionButton(t("disconnect"), () => titleRuntime(game, "unmount"));
           actions.append(runtimeAction);
         } else if (game.image_backed) {
           runtimeAction = actionButton(t("mountReadOnly"), () => titleRuntime(game, "mount", "ro"));
           actions.append(runtimeAction);
-          actions.append(actionButton(t("mountReadWrite"), () => titleRuntime(game, "mount", "rw")));
-        } else {
-          runtimeAction = actionButton(t("connect"), () => titleRuntime(game, "mount"));
-          actions.append(runtimeAction);
+          if (game.image_type !== "pfsc") {
+            actions.append(actionButton(t("mountReadWrite"), () => titleRuntime(game, "mount", "rw")));
+          }
         }
         const storageBusy = Boolean(state.storageJob && state.storageJob.active);
         const copy = actionButton(t("copy"), () => storageOperation(game, "copy"));
@@ -1613,7 +1624,7 @@
         if (unpack) actions.append(unpack);
         actions.append(actionButton(t("uninstall"), () => uninstallGame(game), "danger"));
         actions.append(remove);
-        if (focusRuntimeAction) runtimeAction.focus();
+        if (focusRuntimeAction && runtimeAction) runtimeAction.focus();
       }
 
       async function showDetails(titleId) {
