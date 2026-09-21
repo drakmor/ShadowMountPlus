@@ -1,42 +1,49 @@
 #include "sm_platform.h"
+#include <json-c/json.h>
 #include "sm_gameinfo.h"
 #include "sm_limits.h"
 #include "sm_path_state.h"
 
 // --- Game Metadata Parsing (param.json) ---
-static int extract_json_string(const char *json, const char *key, char *out,
-                               size_t out_size) {
-  if (!json || !key || !out || out_size == 0)
-    return -1;
+static bool extract_json_string(struct json_object *object, const char *key,
+                                 char *out, size_t out_size) {
+  struct json_object *value = NULL;
+  if (!json_object_is_type(object, json_type_object) ||
+      !json_object_object_get_ex(object, key, &value) ||
+      !json_object_is_type(value, json_type_string))
+    return false;
+  size_t length = (size_t)json_object_get_string_len(value);
+  const char *text = json_object_get_string(value);
+  if (length == 0 || length >= out_size || memchr(text, '\0', length))
+    return false;
+  memcpy(out, text, length + 1u);
+  return true;
+}
 
-  char search[64];
-  int written = snprintf(search, sizeof(search), "\"%s\"", key);
-  if (written < 0 || (size_t)written >= sizeof(search))
-    return -1;
-  const char *p = strstr(json, search);
-  if (!p)
-    return -1;
-  p = strchr(p + strlen(search), ':');
-  if (!p)
-    return -2;
-  while (*++p && isspace(*p)) {
-    /* skip */
+static void extract_title_name(struct json_object *root, char *out) {
+  struct json_object *localized = NULL;
+  struct json_object *language = NULL;
+  if (json_object_object_get_ex(root, "localizedParameters", &localized) &&
+      json_object_is_type(localized, json_type_object)) {
+    if (json_object_object_get_ex(localized, "en-US", &language) &&
+        extract_json_string(language, "titleName", out, MAX_TITLE_NAME))
+      return;
+    char default_language[32];
+    if (extract_json_string(localized, "defaultLanguage", default_language,
+                             sizeof(default_language)) &&
+        json_object_object_get_ex(localized, default_language, &language) &&
+        extract_json_string(language, "titleName", out, MAX_TITLE_NAME))
+      return;
   }
-  if (*p != '"')
-    return -3;
-  p++;
-
-  size_t i = 0;
-  while (i < out_size - 1 && p[i] && p[i] != '"') {
-    out[i] = p[i];
-    i++;
+  if (extract_json_string(root, "titleName", out, MAX_TITLE_NAME))
+    return;
+  if (json_object_is_type(localized, json_type_object)) {
+    json_object_object_foreach(localized, key, value) {
+      (void)key;
+      if (extract_json_string(value, "titleName", out, MAX_TITLE_NAME))
+        return;
+    }
   }
-  out[i] = '\0';
-  if (p[i] != '"') {
-    out[0] = '\0';
-    return -4;
-  }
-  return 0;
 }
 
 bool is_supported_game_title_id(const char *title_id) {
@@ -78,10 +85,8 @@ bool get_game_info(const char *base_path, const struct stat *param_st,
     return false;
   }
   FILE *f = fopen(path, "rb");
-  if (!f) {
-    store_cached_game_info(base_path, param_st, false, "", "");
+  if (!f)
     return false;
-  }
 
   size_t len = (size_t)param_st->st_size;
   char *buf = (char *)malloc(len + 1);
@@ -97,23 +102,33 @@ bool get_game_info(const char *base_path, const struct stat *param_st,
   }
   buf[len] = '\0';
 
-  bool valid = false;
-  int res = extract_json_string(buf, "titleId", out_id, MAX_TITLE_ID);
-  if (res != 0)
-    res = extract_json_string(buf, "title_id", out_id, MAX_TITLE_ID);
-  if (res == 0 && is_supported_game_title_id(out_id)) {
-    const char *en_ptr = strstr(buf, "\"en-US\"");
-    const char *search_start = en_ptr ? en_ptr : buf;
-    if (extract_json_string(search_start, "titleName", out_name,
-                            MAX_TITLE_NAME) != 0)
-      extract_json_string(buf, "titleName", out_name, MAX_TITLE_NAME);
+  struct json_tokener *tokener = json_tokener_new_ex(32);
+  if (!tokener) {
+    free(buf);
+    return false;
+  }
+  json_tokener_set_flags(tokener, JSON_TOKENER_STRICT | JSON_TOKENER_VALIDATE_UTF8);
+  struct json_object *root = json_tokener_parse_ex(tokener, buf, (int)len);
+  size_t parsed = json_tokener_get_parse_end(tokener);
+  while (parsed < len && isspace((unsigned char)buf[parsed]))
+    parsed++;
+  bool valid = json_tokener_get_error(tokener) == json_tokener_success &&
+               parsed == len && json_object_is_type(root, json_type_object);
+  json_tokener_free(tokener);
+  if (valid) {
+    valid = extract_json_string(root, "titleId", out_id, MAX_TITLE_ID) ||
+            extract_json_string(root, "title_id", out_id, MAX_TITLE_ID);
+    valid = valid && is_supported_game_title_id(out_id);
+  }
+  if (valid) {
+    extract_title_name(root, out_name);
     if (out_name[0] == '\0')
       (void)strlcpy(out_name, out_id, MAX_TITLE_NAME);
-    valid = true;
   } else {
     out_id[0] = '\0';
     out_name[0] = '\0';
   }
+  json_object_put(root);
   free(buf);
 
   store_cached_game_info(base_path, param_st, valid, out_id, out_name);

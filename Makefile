@@ -59,7 +59,7 @@ src/web_index_asset.c: web/index.html
 src/shell_icon_param_asset.c: assets/shell_icon_param.json
 	xxd -i $< > $@
 
-src/sm_api_service.o src/sm_icon_thumb.o: CFLAGS += $(HOMEBREW_CFLAGS)
+src/sm_api_service.o src/sm_icon_thumb.o src/sm_gameinfo.o: CFLAGS += $(HOMEBREW_CFLAGS)
 src/main.o src/sm_image_index.o: CFLAGS += -DSHADOWMOUNT_BUILD_TIME=\"$(BUILD_TIME)\"
 src/main.o src/sm_image_index.o: FORCE
 
