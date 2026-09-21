@@ -3,6 +3,7 @@
 #include <dirent.h>
 
 #include "sm_limits.h"
+#include "sm_path_utils.h"
 #include "sm_runtime.h"
 #include "sm_storage.h"
 
@@ -14,12 +15,14 @@ static bool valid_storage_path(const char *path) {
   for (const char *component = path + 1; *component != '\0';) {
     const char *end = strchr(component, '/');
     size_t length = end ? (size_t)(end - component) : strlen(component);
-    if ((length == 1 && component[0] == '.') ||
+    if (length == 0 || (length == 1 && component[0] == '.') ||
         (length == 2 && component[0] == '.' && component[1] == '.')) {
       return false;
     }
     if (!end)
       break;
+    if (end[1] == '\0')
+      return false;
     component = end + 1;
   }
   return true;
@@ -288,7 +291,7 @@ int sm_storage_copy_path_progress(const char *source, const char *destination,
                                   sm_storage_progress_fn progress,
                                   sm_storage_cancel_fn cancel, void *ctx) {
   if (!valid_storage_path(source) || !valid_storage_path(destination) ||
-      strcmp(source, destination) == 0) {
+      path_matches_root_or_child(destination, source)) {
     errno = EINVAL;
     return -1;
   }
@@ -397,7 +400,7 @@ int sm_storage_move_path_progress(const char *source, const char *destination,
                                   void *ctx,
                                   bool *renamed_out) {
   if (!valid_storage_path(source) || !valid_storage_path(destination) ||
-      strcmp(source, destination) == 0) {
+      path_matches_root_or_child(destination, source)) {
     errno = EINVAL;
     return -1;
   }

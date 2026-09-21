@@ -1099,8 +1099,6 @@ static int copy_file_buffered(const char *src, const char *dst, bool set_mode,
   }
   int ret = 0;
   while (true) {
-    if (ret != 0)
-      break;
     size_t n = fread(buffer, 1, buffer_size, fs);
     if (n > 0 && fwrite(buffer, 1, n, fd) != n) {
       ret = -1;
@@ -1182,17 +1180,24 @@ static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
   if (!d)
     return -1;
   int ret = 0;
-  struct dirent *e;
   char ss[MAX_PATH], dd[MAX_PATH];
   struct stat st;
   struct stat lst;
-  while ((e = readdir(d))) {
+  while (true) {
+    errno = 0;
+    struct dirent *e = readdir(d);
+    if (!e) {
+      if (errno != 0)
+        ret = -1;
+      break;
+    }
     if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
       continue;
     int src_written = snprintf(ss, sizeof(ss), "%s/%s", src, e->d_name);
     int dst_written = snprintf(dd, sizeof(dd), "%s/%s", dst, e->d_name);
     if (src_written < 0 || (size_t)src_written >= sizeof(ss) ||
         dst_written < 0 || (size_t)dst_written >= sizeof(dd)) {
+      errno = ENAMETOOLONG;
       ret = -1;
       break;
     }
@@ -1207,6 +1212,7 @@ static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
       }
       if (S_ISDIR(st.st_mode)) {
         log_debug("  [COPY] refusing symlink directory: %s", ss);
+        errno = EINVAL;
         ret = -1;
         break;
       }
@@ -1246,8 +1252,13 @@ static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
       }
     }
   }
-  if (closedir(d) != 0)
+  int saved_errno = ret != 0 ? errno : 0;
+  if (closedir(d) != 0 && ret == 0) {
     ret = -1;
+    saved_errno = errno;
+  }
+  if (ret != 0)
+    errno = saved_errno;
   return ret;
 }
 
