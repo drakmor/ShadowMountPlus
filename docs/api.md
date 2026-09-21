@@ -136,7 +136,10 @@ its file size; a folder uses the sum of its regular-file sizes.
 virtual mounts such as `devfs`, `nullfs` and `tmpfs`. Each item contains the
 device `source`, `mount_point`, `filesystem`, `total_bytes`, `free_bytes`,
 `available_bytes`, `used_bytes` and `read_only`. `available_bytes` is the space
-available for new files; `used_bytes` is calculated against that value.
+available for new files; `used_bytes` is calculated against that value. The
+`destinations` array contains only writable, currently available managed
+`/data/homebrew`, `/mnt/ext*/homebrew` and `/mnt/usb*/homebrew` paths and adds
+the selectable `path` to the same filesystem metadata.
 
 `copy` and `move` preserve the source basename and require an existing
 destination under a configured non-runtime scan root. They and `delete` return

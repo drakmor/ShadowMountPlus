@@ -38,7 +38,7 @@ bool path_matches_root_or_child(const char *path, const char *root) {
 static const char *find_usb_storage_root(const char *path) {
   static const char *usb_roots[] = {
       "/mnt/usb0", "/mnt/usb1", "/mnt/usb2", "/mnt/usb3", "/mnt/usb4",
-      "/mnt/usb5", "/mnt/usb6", "/mnt/usb7", "/mnt/ext0",
+      "/mnt/usb5", "/mnt/usb6", "/mnt/usb7", "/mnt/ext0", "/mnt/ext1",
   };
 
   if (!path || path[0] == '\0')

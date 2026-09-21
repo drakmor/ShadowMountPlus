@@ -160,6 +160,7 @@ static storage_job_t g_storage_job = {
 };
 
 static int operation_http_status(int status);
+static bool destination_is_managed(const char *destination);
 static void handle_game_storage_operation(
     struct MHD_Connection *connection, struct json_object *request,
     game_storage_operation_t operation);
@@ -699,6 +700,29 @@ static struct json_object *filesystem_to_json(const struct statfs *mount) {
   return item;
 }
 
+static int append_storage_destination(struct json_object *items,
+                                      const char *path) {
+  char resolved[MAX_PATH];
+  struct stat st;
+  struct statfs filesystem;
+  if (!realpath(path, resolved) || stat(resolved, &st) != 0 ||
+      !S_ISDIR(st.st_mode) || !destination_is_managed(resolved) ||
+      statfs(resolved, &filesystem) != 0 ||
+      !filesystem_has_capacity(&filesystem) ||
+      (filesystem.f_flags & MNT_RDONLY) != 0) {
+    return 0;
+  }
+
+  struct json_object *item = filesystem_to_json(&filesystem);
+  if (!item || !add_json_string(item, "path", path) ||
+      json_object_array_add(items, item) != 0) {
+    if (item)
+      json_object_put(item);
+    return -1;
+  }
+  return 1;
+}
+
 static void handle_storage(struct MHD_Connection *connection) {
   struct statfs *mounts = NULL;
   int mount_count = sm_mount_table_snapshot(&mounts);
@@ -711,12 +735,15 @@ static void handle_storage(struct MHD_Connection *connection) {
 
   struct json_object *response = new_status_response(0);
   struct json_object *items = json_object_new_array_ext(mount_count);
-  if (!response || !items) {
+  struct json_object *destinations = json_object_new_array();
+  if (!response || !items || !destinations) {
     free(mounts);
     if (response)
       json_object_put(response);
     if (items)
       json_object_put(items);
+    if (destinations)
+      json_object_put(destinations);
     send_out_of_memory_response(connection);
     return;
   }
@@ -731,6 +758,7 @@ static void handle_storage(struct MHD_Connection *connection) {
       if (item)
         json_object_put(item);
       json_object_put(items);
+      json_object_put(destinations);
       json_object_put(response);
       send_out_of_memory_response(connection);
       return;
@@ -739,13 +767,43 @@ static void handle_storage(struct MHD_Connection *connection) {
   }
   free(mounts);
 
-  if (!add_json_int(response, "count", (int64_t)count)) {
+  static const char *const destination_paths[] = {
+      "/data/homebrew",     "/mnt/ext0/homebrew", "/mnt/ext1/homebrew",
+      "/mnt/usb0/homebrew", "/mnt/usb1/homebrew", "/mnt/usb2/homebrew",
+      "/mnt/usb3/homebrew", "/mnt/usb4/homebrew", "/mnt/usb5/homebrew",
+      "/mnt/usb6/homebrew", "/mnt/usb7/homebrew",
+  };
+  size_t destination_count = 0;
+  for (size_t i = 0;
+       i < sizeof(destination_paths) / sizeof(destination_paths[0]); ++i) {
+    int result = append_storage_destination(destinations,
+                                            destination_paths[i]);
+    if (result < 0) {
+      json_object_put(destinations);
+      json_object_put(items);
+      json_object_put(response);
+      send_out_of_memory_response(connection);
+      return;
+    }
+    destination_count += (size_t)result;
+  }
+
+  if (!add_json_int(response, "count", (int64_t)count) ||
+      !add_json_int(response, "destination_count",
+                    (int64_t)destination_count)) {
+    json_object_put(destinations);
     json_object_put(items);
     json_object_put(response);
     send_out_of_memory_response(connection);
     return;
   }
   if (!add_json_value(response, "mounts", items)) {
+    json_object_put(destinations);
+    json_object_put(response);
+    send_out_of_memory_response(connection);
+    return;
+  }
+  if (!add_json_value(response, "destinations", destinations)) {
     json_object_put(response);
     send_out_of_memory_response(connection);
     return;

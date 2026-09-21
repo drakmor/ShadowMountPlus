@@ -318,6 +318,7 @@
     .modal[hidden] { display: none; }
     .modal-card { width: min(720px, 100%); max-height: 90vh; overflow: auto; border-radius: 18px; }
     .modal-card.log-card { width: min(1440px, 96vw); }
+    .modal-card.destination-card { width: min(560px, 100%); }
     .modal-head { display: flex; align-items: start; justify-content: space-between; gap: 20px; padding: 18px; border-bottom: 1px solid var(--line); }
     .close { width: 36px; min-height: 36px; padding: 0; font-size: 22px; }
     .details { display: grid; grid-template-columns: 168px minmax(0, 1fr); align-items: start; gap: 18px; padding: 18px; }
@@ -326,6 +327,10 @@
     .detail-key { color: var(--muted); }
     .detail-value { min-width: 0; overflow-wrap: anywhere; }
     .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 18px 18px; }
+    .destination-list { display: grid; gap: 8px; padding: 18px; }
+    .destination-list .btn { justify-content: space-between; width: 100%; text-align: left; }
+    .destination-custom { display: flex; gap: 8px; padding: 0 18px 18px; }
+    .destination-custom input { min-width: 0; width: 100%; }
 
     .toast {
       position: fixed;
@@ -543,6 +548,23 @@
     </div>
   </div>
 
+  <div class="modal" id="destinationModal" hidden role="dialog" aria-modal="true" aria-labelledby="destinationTitle">
+    <div class="modal-card destination-card">
+      <div class="modal-head">
+        <div>
+          <h2 id="destinationTitle"></h2>
+          <p class="subtle" data-i18n="destinationDescription">Choose an available Homebrew folder or enter a custom path</p>
+        </div>
+        <button class="btn close" id="closeDestination" type="button" aria-label="Close" data-i18n-aria-label="close">&times;</button>
+      </div>
+      <div class="destination-list" id="destinationChoices"></div>
+      <form class="destination-custom" id="destinationForm">
+        <input id="customDestination" required placeholder="/mnt/usb0/homebrew" data-i18n-placeholder="customDestination">
+        <button class="btn small" type="submit" data-i18n="useDestination">Use path</button>
+      </form>
+    </div>
+  </div>
+
   <div class="modal" id="logModal" hidden role="dialog" aria-modal="true" aria-labelledby="logTitle">
     <div class="modal-card log-card">
       <div class="modal-head">
@@ -572,6 +594,8 @@
         activity: [],
         busy: false,
         storageJob: null,
+        storageDestinations: [],
+        destinationRequest: null,
         storagePollTimer: 0,
         reportedStorageJob: "",
         scanPaths: [],
@@ -717,6 +741,11 @@
           storageBusy: "A storage operation is already running",
           copyDestination: "Destination folder for copying:",
           moveDestination: "Destination folder for moving:",
+          chooseCopyDestination: "Copy destination",
+          chooseMoveDestination: "Move destination",
+          destinationDescription: "Choose an available Homebrew folder or enter a custom path",
+          customDestination: "Custom absolute path",
+          useDestination: "Use path",
           unpackDestination: "Destination folder for unpacking. A {title} subfolder will be created:",
           unpackDeleteConfirm: "Delete the source image only after unpacking completes successfully?\n\nCancel keeps the image.",
           jobStarted: "{operation} {title} started as job {id}",
@@ -857,6 +886,11 @@
           storageBusy: "Уже выполняется операция с хранилищем",
           copyDestination: "Папка назначения для копирования:",
           moveDestination: "Папка назначения для перемещения:",
+          chooseCopyDestination: "Куда копировать",
+          chooseMoveDestination: "Куда переставить",
+          destinationDescription: "Выберите доступную папку Homebrew или введите свой путь",
+          customDestination: "Свой абсолютный путь",
+          useDestination: "Использовать",
           unpackDestination: "Папка назначения для распаковки. В ней будет создана подпапка {title}:",
           unpackDeleteConfirm: "Удалить исходный образ только после успешного завершения распаковки?\n\nОтмена сохранит образ.",
           jobStarted: "{operation} {title} запущено, задача {id}",
@@ -1243,13 +1277,10 @@
         const list = $("storageList");
         try {
           const data = await api("/storage");
-          const allMounts = (data.mounts || []).slice().sort((left, right) =>
-            String(left.mount_point).localeCompare(String(right.mount_point))
+          const mounts = (data.destinations || []).slice().sort((left, right) =>
+            String(left.path).localeCompare(String(right.path))
           );
-          const libraryMounts = allMounts.filter((mount) =>
-            mount.mount_point === "/user" || /^\/mnt\/(?:usb|ext)\d+(?:\/|$)/.test(mount.mount_point)
-          );
-          const mounts = libraryMounts.length ? libraryMounts : allMounts.filter((mount) => !mount.read_only);
+          state.storageDestinations = mounts;
           list.replaceChildren();
           if (!mounts.length) {
             list.append(node("span", "subtle", t("storageNotFound")));
@@ -1263,9 +1294,9 @@
             const freePercent = 100 - usedPercent;
             const row = node("div", "storage-row");
             const head = node("div", "storage-head");
-            const path = node("span", "storage-path", mount.mount_point);
-            path.title = mount.mount_point;
-            head.append(path, badge(mount.read_only ? "R/O" : mount.filesystem || "FS", mount.read_only ? "" : "live"));
+            const path = node("span", "storage-path", mount.path);
+            path.title = mount.path;
+            head.append(path, badge(mount.filesystem || "FS", "live"));
             row.append(head);
             const meta = node("div", "storage-meta", `${mount.filesystem || t("unknown")} · ${mount.source || "—"}`);
             meta.title = mount.source || "";
@@ -1276,7 +1307,7 @@
             row.append(space);
             const meter = node("div", "storage-meter");
             meter.setAttribute("role", "progressbar");
-            meter.setAttribute("aria-label", t("storageUsed", { path: mount.mount_point }));
+            meter.setAttribute("aria-label", t("storageUsed", { path: mount.path }));
             meter.setAttribute("aria-valuemin", "0");
             meter.setAttribute("aria-valuemax", "100");
             meter.setAttribute("aria-valuenow", String(Math.round(usedPercent)));
@@ -1288,6 +1319,7 @@
             list.append(row);
           });
         } catch (error) {
+          state.storageDestinations = [];
           list.replaceChildren(node("span", "subtle", errorMessage(error)));
         }
       }
@@ -1645,14 +1677,55 @@
         state.selected = null;
       }
 
-      async function storageOperation(game, operation) {
+      function closeDestinationPicker() {
+        $("destinationModal").hidden = true;
+        state.destinationRequest = null;
+      }
+
+      function renderDestinationPicker() {
+        const request = state.destinationRequest;
+        if (!request) return;
+        $("destinationTitle").textContent = t(request.operation === "copy"
+          ? "chooseCopyDestination"
+          : "chooseMoveDestination");
+        const choices = $("destinationChoices");
+        choices.replaceChildren();
+        if (!state.storageDestinations.length) {
+          choices.append(node("span", "subtle", t("storageNotFound")));
+        }
+        state.storageDestinations.forEach((destination) => {
+          choices.append(actionButton(
+            `${destination.path} · ${t("freeSpace", { size: formatBytes(Number(destination.available_bytes)) })}`,
+            () => chooseStorageDestination(destination.path)
+          ));
+        });
+      }
+
+      function storageOperation(game, operation) {
         if (state.storageJob && state.storageJob.active) {
           toast(t("storageBusy"), true);
           return;
         }
-        const destination = prompt(t(operation === "copy" ? "copyDestination" : "moveDestination"), "/mnt/usb0");
-        if (!destination) return;
-        await startStorageJob(game, operation, { title_id: game.title_id, destination_dir: destination });
+        state.destinationRequest = { game, operation };
+        $("customDestination").value = "";
+        renderDestinationPicker();
+        $("destinationModal").hidden = false;
+      }
+
+      async function chooseStorageDestination(destination) {
+        const request = state.destinationRequest;
+        const path = String(destination || "").trim();
+        if (!request || !path) return;
+        closeDestinationPicker();
+        await startStorageJob(request.game, request.operation, {
+          title_id: request.game.title_id,
+          destination_dir: path
+        });
+      }
+
+      function submitCustomDestination(event) {
+        event.preventDefault();
+        chooseStorageDestination($("customDestination").value);
       }
 
       async function unpackImage(game) {
@@ -1708,6 +1781,7 @@
         renderGames();
         if (state.storageJob) renderStorageJob(state.storageJob);
         if (state.selected) renderDetails(state.selected);
+        if (!$("destinationModal").hidden) renderDestinationPicker();
         renderScanPaths();
         refreshStorage();
         refreshManual();
@@ -1725,11 +1799,15 @@
       $("refreshLog").addEventListener("click", refreshLog);
       $("closeLog").addEventListener("click", closeDebugLog);
       $("logModal").addEventListener("click", (event) => { if (event.target === $("logModal")) closeDebugLog(); });
+      $("destinationForm").addEventListener("submit", submitCustomDestination);
+      $("closeDestination").addEventListener("click", closeDestinationPicker);
+      $("destinationModal").addEventListener("click", (event) => { if (event.target === $("destinationModal")) closeDestinationPicker(); });
       $("closeModal").addEventListener("click", closeModal);
       $("modal").addEventListener("click", (event) => { if (event.target === $("modal")) closeModal(); });
       document.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
-        if (!$("logModal").hidden) closeDebugLog();
+        if (!$("destinationModal").hidden) closeDestinationPicker();
+        else if (!$("logModal").hidden) closeDebugLog();
         else if (!$("modal").hidden) closeModal();
       });
 
