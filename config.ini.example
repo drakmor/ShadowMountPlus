@@ -116,15 +116,16 @@
 
 # Sandbox fakelib support:
 # 1/true/yes/on  -> mount fakelib2 when present, otherwise fakelib, into common/lib
-# Installed PKGs use only their own app0/fakelib2 or app0/fakelib; external
-# backport directories are not overlaid on app0 and are not used as sources.
+# Installed PKGs can receive an external backport through the earlier NSFS app0
+# redirect; this switch controls only the later common/lib fakelib overlay.
 # 0/false/no/off -> disable fakelib overlays
 # Default: 1
 # backport_fakelib=1
 
 # Updates for multiple emulators in the game fakelib:
 # 1/true/yes/on  -> cache the game's fakelib before launch and replace matching
-#                   cached files from emulators_path; fakelib2 is never changed
+#                   cached files from emulators_path; fakelib2 and installed
+#                   PKGs are never changed
 # 0/false/no/off -> disable emulator updates
 # Default: 1
 # update_emulators=1

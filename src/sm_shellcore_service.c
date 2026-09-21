@@ -13,6 +13,7 @@
 #include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_path_utils.h"
+#include "sm_pkg_backport.h"
 #include "sm_runtime.h"
 #include "sm_scan.h"
 #include "sm_scanner.h"
@@ -482,18 +483,15 @@ bool sm_shellcore_ensure_title_runtime(const char *title_id) {
 
 static int handle_launch_request(const char *title_id) {
   pthread_mutex_lock(&g_service.mutex);
+  g_service.pending_launch_title_id[0] = '\0';
+  g_service.pending_sandbox_ready_handled = false;
   if (is_supported_game_title_id(title_id)) {
     (void)strlcpy(g_service.pending_launch_title_id, title_id,
                   sizeof(g_service.pending_launch_title_id));
-    g_service.pending_sandbox_ready_handled = false;
     if (mount_owner_matches(&g_service.prepared, title_id))
       g_service.prepared.sandbox_ready_handled = false;
   }
   pthread_mutex_unlock(&g_service.mutex);
-
-  char source_path[MAX_PATH];
-  if (!read_mount_link(title_id, source_path, sizeof(source_path)))
-    sm_fakelib_prepare_title_cache(title_id, NULL);
 
   int status = mount_managed_title_runtime(title_id, false, true, NULL);
   if (status != 0) {
@@ -826,6 +824,7 @@ static int handle_launch_failed_request(const char *title_id) {
     return 0;
 
   sm_fakelib_game_on_launch_failed(title_id);
+  sm_pkg_backport_on_launch_failed(title_id);
 
   pthread_mutex_lock(&g_service.mutex);
   if (strcmp(g_service.pending_launch_title_id, title_id) == 0) {
@@ -896,6 +895,11 @@ static int handle_sandbox_ready_request(const char *title_id) {
   if (effective_title_id[0] == '\0' || already_handled)
     return 0;
 
+  errno = 0;
+  bool package_ready =
+      sm_pkg_backport_on_sandbox_ready(effective_title_id);
+  int package_status = package_ready ? 0 : (errno != 0 ? errno : EIO);
+
   if (sm_fakelib_game_on_sandbox_ready(effective_title_id)) {
     pthread_mutex_lock(&g_service.mutex);
     if (strcmp(g_service.pending_launch_title_id,
@@ -908,7 +912,12 @@ static int handle_sandbox_ready_request(const char *title_id) {
     pthread_mutex_unlock(&g_service.mutex);
     log_debug("  [SHELLCORE] sandbox ready handled: %s",
               effective_title_id);
-    return 0;
+    if (package_ready)
+      return 0;
+    log_debug("  [SHELLCORE] package fallback unavailable: %s status=%d "
+              "(%s)",
+              effective_title_id, package_status, strerror(package_status));
+    return package_status;
   }
 
   int status = errno != 0 ? errno : EIO;
@@ -1108,8 +1117,10 @@ bool sm_shellcore_service_start(void) {
 }
 
 void sm_shellcore_service_stop(void) {
-  if (!g_service.started)
+  if (!g_service.started) {
+    sm_pkg_backport_shutdown();
     return;
+  }
   pthread_mutex_lock(&g_service.mutex);
   g_service.stop_requested = true;
   int fd = g_service.listen_fd;
@@ -1124,6 +1135,7 @@ void sm_shellcore_service_stop(void) {
   pthread_cond_broadcast(&g_service.cond);
   pthread_mutex_unlock(&g_service.mutex);
   pthread_join(g_service.thread, NULL);
+  sm_pkg_backport_shutdown();
   pthread_mutex_lock(&g_service.mutex);
   g_service.started = false;
   g_service.stop_requested = false;

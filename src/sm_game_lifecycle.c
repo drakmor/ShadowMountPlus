@@ -17,6 +17,7 @@
 #include "sm_mdbg.h"
 #include "sm_path_utils.h"
 #include "sm_paths.h"
+#include "sm_pkg_backport.h"
 #include "sm_runtime.h"
 #include "sm_scan.h"
 #include "sm_scanner.h"
@@ -391,6 +392,7 @@ static bool try_game_process_handoff(int kq, pid_t pid, const char *title_id,
   // and sm_fakelib_game_on_exec() mounts it again for the replacement process.
   uint32_t effective_app_id = app_id != 0 ? app_id : old_app_id;
   sm_shellcore_service_bind_prepared_app(title_id, effective_app_id, pid);
+  sm_pkg_backport_on_exec(pid, title_id);
   sm_fakelib_game_on_exec(pid, title_id, false);
   bool kstuff_rebound =
       sm_kstuff_game_handoff(old_pid, pid, title_id, effective_app_id);
@@ -430,6 +432,7 @@ static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
             (long)pid, app_id);
   publish_active_game(pid, title_id, app_id);
   sm_kstuff_game_on_exec(pid, title_id, app_id, exec_time_us);
+  sm_pkg_backport_on_exec(pid, title_id);
   sm_fakelib_game_on_exec(pid, title_id, true);
   return true;
 }
@@ -755,6 +758,7 @@ static void finalize_game_exit(pid_t pid, const char *fallback_title_id) {
   char owned_title_id[MAX_TITLE_ID] = {0};
   bool owned_exit =
       sm_shellcore_service_note_game_exit(pid, owned_title_id);
+  sm_pkg_backport_on_exit(pid);
   sm_fakelib_game_on_exit(pid);
   sm_kstuff_game_on_exit(pid);
   if (owned_exit) {

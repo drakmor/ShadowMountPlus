@@ -862,12 +862,13 @@ void sm_fakelib_cleanup_caches(void) {
 }
 
 static void init_cache_context(const char *title_id, const char *game_path,
+                               bool allow_emulator_updates,
                                fakelib_cache_context_t *context) {
   memset(context, 0, sizeof(*context));
   (void)strlcpy(context->game_path, game_path, sizeof(context->game_path));
 
   const runtime_config_t cfg = runtime_config();
-  if (cfg.update_emulators_enabled) {
+  if (allow_emulator_updates && cfg.update_emulators_enabled) {
     (void)strlcpy(context->emulators_path, cfg.emulators_path,
                   sizeof(context->emulators_path));
   }
@@ -1015,7 +1016,8 @@ static bool rebuild_fakelib_cache(
 }
 
 static void prepare_title_cache(const char *title_id, const char *game_path,
-                                bool include_backport) {
+                                bool include_backport,
+                                bool allow_emulator_updates) {
   if (!is_supported_game_title_id(title_id))
     return;
   const runtime_config_t cfg = runtime_config();
@@ -1037,7 +1039,13 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
   }
 
   fakelib_cache_context_t context;
-  init_cache_context(title_id, game_source_path, &context);
+  init_cache_context(title_id, game_source_path, allow_emulator_updates,
+                     &context);
+  if (context.emulators_path[0] == '\0' &&
+      !(context.flags & FAKELIB_CACHE_HAS_GLOBAL)) {
+    remove_title_cache(title_id);
+    return;
+  }
   if (!compute_cache_context_signatures(&context)) {
     log_debug("  [FAKELIB] cache fingerprint failed for %s", title_id);
     remove_title_cache(title_id);
@@ -1081,12 +1089,13 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
 void sm_fakelib_prepare_title_cache(const char *title_id,
                                     const char *game_path) {
   pthread_mutex_lock(&g_fakelib_cache_mutex);
-  prepare_title_cache(title_id, game_path, true);
+  prepare_title_cache(title_id, game_path, true, true);
   pthread_mutex_unlock(&g_fakelib_cache_mutex);
 }
 
 static bool resolve_cached_fakelib_locked(
-    const char *title_id, const char *game_path, char cache_path[MAX_PATH],
+    const char *title_id, const char *game_path, bool allow_emulator_updates,
+    char cache_path[MAX_PATH],
     size_t *emulator_file_count_out, bool *includes_global_out) {
   *emulator_file_count_out = 0;
   *includes_global_out = false;
@@ -1094,7 +1103,7 @@ static bool resolve_cached_fakelib_locked(
     return false;
 
   fakelib_cache_context_t context;
-  init_cache_context(title_id, game_path, &context);
+  init_cache_context(title_id, game_path, allow_emulator_updates, &context);
 
   char cache_root[MAX_PATH];
   if (!build_cache_path(title_id, "", cache_root))
@@ -1125,12 +1134,14 @@ static bool resolve_cached_fakelib_locked(
 
 static bool resolve_cached_fakelib(const char *title_id,
                                     const char *game_path,
+                                    bool allow_emulator_updates,
                                     char cache_path[MAX_PATH],
                                     size_t *emulator_file_count_out,
                                     bool *includes_global_out) {
   pthread_mutex_lock(&g_fakelib_cache_mutex);
   bool resolved = resolve_cached_fakelib_locked(
-      title_id, game_path, cache_path, emulator_file_count_out,
+      title_id, game_path, allow_emulator_updates, cache_path,
+      emulator_file_count_out,
       includes_global_out);
   pthread_mutex_unlock(&g_fakelib_cache_mutex);
   return resolved;
@@ -1202,10 +1213,10 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
 
   if (!managed_title && sandbox_resolved) {
     // A package's own fakelib is not visible until ShellCore has mounted
-    // app0. Build the same composable cache used by folder/image games now,
-    // while the process is still blocked at the sandbox-ready hook.
+    // app0. Prefer the external backport source directly and never add files
+    // from emulators_path for installed packages.
     pthread_mutex_lock(&g_fakelib_cache_mutex);
-    prepare_title_cache(title_id, sandbox_app0_path, false);
+    prepare_title_cache(title_id, sandbox_app0_path, true, false);
     pthread_mutex_unlock(&g_fakelib_cache_mutex);
   }
 
@@ -1214,7 +1225,7 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
   const char *game_path = managed_title ? managed_game_path
                                         : sandbox_app0_path;
   fakelib_source_kind_t source_kind = resolve_game_fakelib_source_for_path(
-      title_id, game_path, managed_title, game_source_path);
+      title_id, game_path, true, game_source_path);
   bool has_game = source_kind != FAKELIB_SOURCE_NONE;
   bool allows_composition = source_kind != FAKELIB_SOURCE_FAKELIB2;
   bool has_global = allows_composition &&
@@ -1230,8 +1241,8 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
   if (source_kind == FAKELIB_SOURCE_COMPOSABLE) {
     char cache_path[MAX_PATH];
     cache_resolved = resolve_cached_fakelib(
-        title_id, game_source_path, cache_path, &emulator_file_count,
-        &cache_includes_global);
+        title_id, game_source_path, managed_title, cache_path,
+        &emulator_file_count, &cache_includes_global);
     if (cache_resolved) {
       (void)strlcpy(game_source_path, cache_path, sizeof(game_source_path));
       log_debug("  [FAKELIB] using cache for %s: %s", title_id,
