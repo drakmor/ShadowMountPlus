@@ -16,6 +16,7 @@
 #include "sm_log.h"
 #include "sm_mdbg.h"
 #include "sm_path_utils.h"
+#include "sm_paths.h"
 #include "sm_runtime.h"
 #include "sm_scan.h"
 #include "sm_scanner.h"
@@ -24,6 +25,8 @@
 
 #define MAX_PENDING_GAME_EXEC_CANDIDATES 32
 #define GAME_SANDBOX_ROOT "/mnt/sandbox"
+#define PPR_FIH_PROBE_SIZE 0x28
+#define PPR_SUPERBLOCK_MARKER_OFFSET 0x370
 
 typedef struct {
   bool active;
@@ -152,6 +155,88 @@ static bool title_is_usb_backed(const char *title_id, const char *source_path,
     return true;
   }
   return has_mount_link && is_usb_storage_path(source_path);
+}
+
+static uint64_t load_u64_unaligned(const uint8_t *data) {
+  uint64_t value;
+  memcpy(&value, data, sizeof(value));
+  return value;
+}
+
+static bool pread_exact_at(int fd, void *buffer, size_t size, off_t offset) {
+  uint8_t *bytes = (uint8_t *)buffer;
+  size_t total = 0;
+  while (total < size) {
+    ssize_t count = pread(fd, bytes + total, size - total,
+                          offset + (off_t)total);
+    if (count > 0) {
+      total += (size_t)count;
+      continue;
+    }
+    if (count < 0 && errno == EINTR)
+      continue;
+    return false;
+  }
+  return true;
+}
+
+static bool package_is_plaintext_ppr(const char *path) {
+  static const uint8_t plaintext_marker[16] = "PPRPLAIN-NOAUTH!";
+  uint8_t fih[PPR_FIH_PROBE_SIZE];
+  uint8_t marker[sizeof(plaintext_marker)];
+
+  int fd = open(path, O_RDONLY);
+  if (fd < 0)
+    return false;
+
+  struct stat st;
+  bool matched = false;
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+      !pread_exact_at(fd, fih, sizeof(fih), 0)) {
+    goto done;
+  }
+
+  uint64_t superblock_offset = load_u64_unaligned(fih + 0x20);
+  uint64_t file_size = (uint64_t)st.st_size;
+  if (superblock_offset > file_size ||
+      PPR_SUPERBLOCK_MARKER_OFFSET > file_size - superblock_offset ||
+      sizeof(marker) > file_size - superblock_offset -
+                           PPR_SUPERBLOCK_MARKER_OFFSET) {
+    goto done;
+  }
+
+  off_t marker_offset =
+      (off_t)(superblock_offset + PPR_SUPERBLOCK_MARKER_OFFSET);
+  matched = pread_exact_at(fd, marker, sizeof(marker), marker_offset) &&
+            memcmp(marker, plaintext_marker, sizeof(marker)) == 0;
+
+done:
+  close(fd);
+  return matched;
+}
+
+static bool title_uses_plaintext_ppr_package(
+    const char *title_id, char package_path_out[MAX_PATH]) {
+  static const char *const package_path_formats[] = {
+      APP_BASE "/%s/app.pkg",
+      "/mnt/ext0/user/app/%s/app.pkg",
+      "/mnt/ext0/ps5/user/app/%s/app.pkg",
+      "/mnt/ext1/user/app/%s/app.pkg",
+  };
+
+  package_path_out[0] = '\0';
+  for (size_t i = 0;
+       i < sizeof(package_path_formats) / sizeof(package_path_formats[0]);
+       ++i) {
+    int written = snprintf(package_path_out, MAX_PATH, package_path_formats[i],
+                           title_id);
+    if (written < 0 || written >= MAX_PATH)
+      continue;
+    if (package_is_plaintext_ppr(package_path_out))
+      return true;
+  }
+  package_path_out[0] = '\0';
+  return false;
 }
 
 static uint64_t min_nonzero_u64(uint64_t a, uint64_t b) {
@@ -777,8 +862,8 @@ static void handle_game_exit(pid_t pid) {
   finalize_game_exit(pid, NULL);
 }
 
-static bool terminate_usb_game_for_sleep(int kq, pid_t pid,
-                                         const char *title_id) {
+static bool terminate_game_for_sleep(int kq, pid_t pid, const char *title_id,
+                                     const char *reason) {
   if (kill(pid, SIGKILL) != 0) {
     if (errno == ESRCH) {
       handle_game_exit(pid);
@@ -786,12 +871,12 @@ static bool terminate_usb_game_for_sleep(int kq, pid_t pid,
         finalize_pending_game_exit();
       return true;
     }
-    log_debug("  [SLEEP] failed to kill USB game: %s pid=%ld: %s", title_id,
-              (long)pid, strerror(errno));
+    log_debug("  [SLEEP] failed to kill %s game: %s pid=%ld: %s", reason,
+              title_id, (long)pid, strerror(errno));
     return false;
   }
-  log_debug("  [SLEEP] killing USB game before suspend: %s pid=%ld", title_id,
-            (long)pid);
+  log_debug("  [SLEEP] killing %s game before suspend: %s pid=%ld", reason,
+            title_id, (long)pid);
 
   uint64_t now_us = monotonic_time_us();
   uint64_t deadline_us =
@@ -823,7 +908,7 @@ static bool terminate_usb_game_for_sleep(int kq, pid_t pid,
         if (exited_pid == pid) {
           if (g_pending_game_exit.active && g_pending_game_exit.pid == pid)
             finalize_pending_game_exit();
-          log_debug("  [SLEEP] USB game stopped: %s pid=%ld", title_id,
+          log_debug("  [SLEEP] %s game stopped: %s pid=%ld", reason, title_id,
                     (long)pid);
           return true;
         }
@@ -836,8 +921,8 @@ static bool terminate_usb_game_for_sleep(int kq, pid_t pid,
         handle_game_exit(pid);
         if (g_pending_game_exit.active && g_pending_game_exit.pid == pid)
           finalize_pending_game_exit();
-        log_debug("  [SLEEP] USB game exited without NOTE_EXIT: %s pid=%ld",
-                  title_id, (long)pid);
+        log_debug("  [SLEEP] %s game exited without NOTE_EXIT: %s pid=%ld",
+                  reason, title_id, (long)pid);
         return true;
       }
       log_debug("  [SLEEP] timed out waiting NOTE_EXIT: %s pid=%ld", title_id,
@@ -964,31 +1049,45 @@ static void *game_lifecycle_watcher_main(void *arg) {
             active_game && title_is_usb_backed(
                                suspended_game_title_id, source_path,
                                has_mount_link);
+        char plaintext_ppr_path[MAX_PATH];
+        bool plaintext_ppr_pkg_game =
+            active_game && !has_mount_link &&
+            title_uses_plaintext_ppr_package(suspended_game_title_id,
+                                             plaintext_ppr_path);
         clear_all_pending_game_launches();
         sm_fakelib_game_shutdown();
-        sm_kstuff_sleep_enter();
-        bool usb_cleanup_allowed = true;
-        if (usb_game) {
-          usb_cleanup_allowed = terminate_usb_game_for_sleep(
-              kq, suspended_game_pid, suspended_game_title_id);
-          if (usb_cleanup_allowed) {
+        bool sleep_cleanup_complete = true;
+        if (plaintext_ppr_pkg_game) {
+          log_debug("  [SLEEP] plaintext-PPR package detected: %s",
+                    plaintext_ppr_path);
+          sleep_cleanup_complete = terminate_game_for_sleep(
+              kq, suspended_game_pid, suspended_game_title_id,
+              "plaintext-PPR PKG");
+          if (sleep_cleanup_complete)
             suspended_game_pid = 0;
-          }
         }
-        if (usb_cleanup_allowed) {
-          usb_cleanup_allowed = wait_for_shellcore_exit_cleanup_for_sleep(
+        // Keep kstuff active until a plaintext-PPR package has unmounted.
+        sm_kstuff_sleep_enter();
+        if (usb_game && !plaintext_ppr_pkg_game && sleep_cleanup_complete) {
+          sleep_cleanup_complete = terminate_game_for_sleep(
+              kq, suspended_game_pid, suspended_game_title_id, "USB-backed");
+          if (sleep_cleanup_complete)
+            suspended_game_pid = 0;
+        }
+        if (sleep_cleanup_complete) {
+          sleep_cleanup_complete = wait_for_shellcore_exit_cleanup_for_sleep(
               kq, usb_game);
         }
-        if (usb_cleanup_allowed) {
+        if (sleep_cleanup_complete) {
           runtime_mount_state_lock();
           unmount_usb_sources_for_suspend();
           runtime_mount_state_unlock();
         } else {
-          log_debug("[SLEEP] USB cleanup skipped: game/sandbox cleanup "
-                    "incomplete");
+          log_debug("[SLEEP] sleep cleanup incomplete; USB source cleanup "
+                    "skipped");
         }
-        // Keep a live non-USB game published while it is suspended so scanner
-        // work cannot race its unchanged runtime mount.
+        // Keep a live game that did not require termination published while it
+        // is suspended so scanner work cannot race its unchanged runtime.
         sleep_cleanup_done = true;
       }
 
