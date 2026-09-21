@@ -3,7 +3,7 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "디버그 설정으로 이동",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor 및 커뮤니티",
-    /* English: ShadowMount+ startup with web interface */
+    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor 및 커뮤니티\n관리: http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
@@ -44,8 +44,6 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_IMAGE_UNREADABLE_DAMAGED] = "마운트된 이미지를 읽을 수 없거나 손상되었습니다",
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "이미지 캐시가 가득 찼습니다(%u개). 마운트 %s을(를) 추적할 수 없습니다",
-    /* English: Image cache full (%u entries), rolling back mount */
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] = "이미지 캐시가 가득 찼습니다(%u개). 마운트를 되돌립니다",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
     [SM_L10N_INSTALL_FAILED_TIMEOUT] = "설치 실패: %s (%s)\n5분 후 시간 초과",
     /* English: Batch install queued (%d): */
@@ -92,9 +90,9 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ShellCore 후크 설치에 실패했습니다",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "목표 온도 %u °C → %u °C",
-    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
     [SM_L10N_USB_CONNECTED_SCANNING] = "외장 드라이브 %s 연결됨.\n여유 공간: %llu.%llu / %llu.%llu GB (블록 크기: %llu KB)\n드라이브의 게임: %d%s",
-    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    /* English: \nFor maximum performance, use a cluster size of no more than 64 KB */
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n최대 성능을 위해 64 KB 이하의 클러스터 크기를 사용하세요",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "외장 드라이브 %s 연결 해제됨",

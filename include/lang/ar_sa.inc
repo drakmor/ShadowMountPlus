@@ -3,7 +3,7 @@ static const char *const g_ar_sa[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "الانتقال إلى إعدادات التصحيح",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor والمجتمع",
-    /* English: ShadowMount+ startup with web interface */
+    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor والمجتمع\nالتحكم: http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
@@ -44,8 +44,6 @@ static const char *const g_ar_sa[SM_L10N_COUNT] = {
     [SM_L10N_IMAGE_UNREADABLE_DAMAGED] = "الصورة المحمّلة غير قابلة للقراءة أو تالفة",
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "ذاكرة الصور المؤقتة ممتلئة (%u إدخالًا)، ولا يمكن تتبع التركيب %s",
-    /* English: Image cache full (%u entries), rolling back mount */
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] = "ذاكرة الصور المؤقتة ممتلئة (%u إدخالًا)، جارٍ التراجع عن التركيب",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
     [SM_L10N_INSTALL_FAILED_TIMEOUT] = "فشل التثبيت: %s (%s)\nانتهت المهلة بعد 5 دقائق",
     /* English: Batch install queued (%d): */
@@ -92,9 +90,9 @@ static const char *const g_ar_sa[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: تعذر تثبيت خطافات ShellCore",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "درجة الحرارة المستهدفة %u °C → %u °C",
-    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
     [SM_L10N_USB_CONNECTED_SCANNING] = "تم توصيل محرك الأقراص الخارجي %s.\nالمتاح %llu.%llu من %llu.%llu غيغابايت (حجم الكتلة %llu كيلوبايت)\nالألعاب على القرص: %d%s",
-    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    /* English: \nFor maximum performance, use a cluster size of no more than 64 KB */
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nللحصول على أقصى أداء، استخدم حجم عنقود لا يزيد عن 64 كيلوبايت",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "تم فصل محرك الأقراص الخارجي %s",

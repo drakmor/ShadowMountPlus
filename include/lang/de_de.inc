@@ -3,7 +3,7 @@ static const char *const g_de_de[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Zu den Debug-Einstellungen",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor und die Community",
-    /* English: ShadowMount+ startup with web interface */
+    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor und die Community\nSteuerung: http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
@@ -44,8 +44,6 @@ static const char *const g_de_de[SM_L10N_COUNT] = {
     [SM_L10N_IMAGE_UNREADABLE_DAMAGED] = "Gemountetes Image ist nicht lesbar oder beschädigt",
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "Image-Cache voll (%u Einträge), Einbindung %s kann nicht verfolgt werden",
-    /* English: Image cache full (%u entries), rolling back mount */
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] = "Image-Cache voll (%u Einträge), Einbindung wird rückgängig gemacht",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
     [SM_L10N_INSTALL_FAILED_TIMEOUT] = "Installation fehlgeschlagen: %s (%s)\nZeitüberschreitung nach 5 Minuten",
     /* English: Batch install queued (%d): */
@@ -92,9 +90,9 @@ static const char *const g_de_de[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ShellCore-Hooks konnten nicht installiert werden",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Zieltemperatur %u °C → %u °C",
-    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
     [SM_L10N_USB_CONNECTED_SCANNING] = "Externes Laufwerk %s verbunden.\nFrei: %llu.%llu von %llu.%llu GB (Blockgröße %llu KB)\nSpiele auf dem Laufwerk: %d%s",
-    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    /* English: \nFor maximum performance, use a cluster size of no more than 64 KB */
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nVerwenden Sie für maximale Leistung eine Clustergröße von höchstens 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Externes Laufwerk %s getrennt",

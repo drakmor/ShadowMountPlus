@@ -3,7 +3,7 @@ static const char *const g_zh_tw[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "前往除錯設定",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor 與社群",
-    /* English: ShadowMount+ startup with web interface */
+    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor 與社群\n管理: http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
@@ -44,8 +44,6 @@ static const char *const g_zh_tw[SM_L10N_COUNT] = {
     [SM_L10N_IMAGE_UNREADABLE_DAMAGED] = "已掛載的映像無法讀取或已損壞",
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "映像快取已滿（%u 筆），無法追蹤掛載 %s",
-    /* English: Image cache full (%u entries), rolling back mount */
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] = "映像快取已滿（%u 筆），正在復原掛載",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
     [SM_L10N_INSTALL_FAILED_TIMEOUT] = "安裝失敗: %s (%s)\n5 分鐘後逾時",
     /* English: Batch install queued (%d): */
@@ -92,9 +90,9 @@ static const char *const g_zh_tw[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+：無法安裝 ShellCore 掛鉤",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "目標溫度 %u °C → %u °C",
-    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
     [SM_L10N_USB_CONNECTED_SCANNING] = "外接磁碟機 %s 已連接。\n可用：%llu.%llu / %llu.%llu GB（區塊大小 %llu KB）\n磁碟機上的遊戲：%d%s",
-    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    /* English: \nFor maximum performance, use a cluster size of no more than 64 KB */
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n為獲得最佳效能，請使用不超過 64 KB 的叢集大小",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "外接磁碟機 %s 已中斷連接",

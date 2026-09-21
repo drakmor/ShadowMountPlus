@@ -3,7 +3,7 @@ static const char *const g_fr_ca[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Accéder aux paramètres de débogage",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor et la communauté",
-    /* English: ShadowMount+ startup with web interface */
+    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor et la communauté\nContrôle : http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
@@ -44,8 +44,6 @@ static const char *const g_fr_ca[SM_L10N_COUNT] = {
     [SM_L10N_IMAGE_UNREADABLE_DAMAGED] = "L'image montée est illisible ou endommagée",
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "Le cache d’images est plein (%u entrées), impossible de suivre le montage %s",
-    /* English: Image cache full (%u entries), rolling back mount */
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] = "Le cache d’images est plein (%u entrées), annulation du montage",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
     [SM_L10N_INSTALL_FAILED_TIMEOUT] = "Échec de l'installation : %s (%s)\nDélai expiré après 5 minutes",
     /* English: Batch install queued (%d): */
@@ -92,9 +90,9 @@ static const char *const g_fr_ca[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+ : échec de l’installation des hooks ShellCore",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Température cible %u °C → %u °C",
-    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
     [SM_L10N_USB_CONNECTED_SCANNING] = "Lecteur externe %s connecté.\nLibre : %llu.%llu sur %llu.%llu Go (bloc %llu Ko)\nJeux sur le lecteur : %d%s",
-    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    /* English: \nFor maximum performance, use a cluster size of no more than 64 KB */
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nPour des performances maximales, utilisez une taille de cluster ne dépassant pas 64 Ko",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Lecteur externe %s déconnecté",

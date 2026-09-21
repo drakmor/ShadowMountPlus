@@ -3,7 +3,7 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "デバッグ設定へ移動",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor とコミュニティ",
-    /* English: ShadowMount+ startup with web interface */
+    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor とコミュニティ\n管理: http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
@@ -44,8 +44,6 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_IMAGE_UNREADABLE_DAMAGED] = "マウント済みイメージを読み取れないか破損しています",
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "イメージキャッシュが満杯です (%u 件)。マウント %s を追跡できません",
-    /* English: Image cache full (%u entries), rolling back mount */
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] = "イメージキャッシュが満杯です (%u 件)。マウントを元に戻します",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
     [SM_L10N_INSTALL_FAILED_TIMEOUT] = "インストールに失敗しました: %s (%s)\n5 分後にタイムアウトしました",
     /* English: Batch install queued (%d): */
@@ -92,9 +90,9 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ShellCoreフックのインストールに失敗しました",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "目標温度 %u °C → %u °C",
-    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
     [SM_L10N_USB_CONNECTED_SCANNING] = "外付けドライブ %s が接続されました。\n空き容量: %llu.%llu / %llu.%llu GB（ブロックサイズ: %llu KB）\nドライブ上のゲーム: %d%s",
-    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    /* English: \nFor maximum performance, use a cluster size of no more than 64 KB */
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n最大限のパフォーマンスを得るには、クラスターサイズを 64 KB 以下にしてください",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "外付けドライブ %s が切断されました",

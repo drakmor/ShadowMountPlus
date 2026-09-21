@@ -3,7 +3,7 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Μετάβαση στις ρυθμίσεις αποσφαλμάτωσης",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor και η κοινότητα",
-    /* English: ShadowMount+ startup with web interface */
+    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor και η κοινότητα\nΈλεγχος: http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
@@ -44,8 +44,6 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_IMAGE_UNREADABLE_DAMAGED] = "Το mounted image δεν διαβάζεται ή είναι κατεστραμμένο",
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "Η προσωρινή μνήμη ειδώλων είναι πλήρης (%u εγγραφές), δεν είναι δυνατή η παρακολούθηση της προσάρτησης %s",
-    /* English: Image cache full (%u entries), rolling back mount */
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] = "Η προσωρινή μνήμη ειδώλων είναι πλήρης (%u εγγραφές), γίνεται αναίρεση της προσάρτησης",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
     [SM_L10N_INSTALL_FAILED_TIMEOUT] = "Αποτυχία εγκατάστασης: %s (%s)\nTimeout μετά από 5 λεπτά",
     /* English: Batch install queued (%d): */
@@ -92,9 +90,9 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: απέτυχε η εγκατάσταση των hooks του ShellCore",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Θερμοκρασία-στόχος %u °C → %u °C",
-    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
     [SM_L10N_USB_CONNECTED_SCANNING] = "Ο εξωτερικός δίσκος %s συνδέθηκε.\nΕλεύθερα: %llu.%llu από %llu.%llu GB (μέγεθος μπλοκ %llu KB)\nΠαιχνίδια στον δίσκο: %d%s",
-    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    /* English: \nFor maximum performance, use a cluster size of no more than 64 KB */
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nΓια μέγιστη απόδοση, χρησιμοποιήστε μέγεθος συμπλέγματος έως 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Ο εξωτερικός δίσκος %s αποσυνδέθηκε",

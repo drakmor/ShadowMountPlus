@@ -35,8 +35,6 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
         "Mounted image is unreadable or damaged",
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] =
         "Image cache full (%u entries), cannot track mount %s",
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] =
-        "Image cache full (%u entries), rolling back mount",
     [SM_L10N_INSTALL_FAILED_TIMEOUT] =
         "Install failed: %s (%s)\nTimed out after 5 minutes",
     [SM_L10N_BATCH_INSTALL_QUEUED] = "Batch install queued (%d):",

@@ -3,7 +3,7 @@ static const char *const g_fi_fi[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Siirry virheenkorjausasetuksiin",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor ja yhteisö",
-    /* English: ShadowMount+ startup with web interface */
+    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor ja yhteisö\nHallinta: http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
@@ -44,8 +44,6 @@ static const char *const g_fi_fi[SM_L10N_COUNT] = {
     [SM_L10N_IMAGE_UNREADABLE_DAMAGED] = "Liitetty levykuva ei ole luettavissa tai se on vioittunut",
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "Levykuvavälimuisti on täynnä (%u merkintää), liittämistä %s ei voi seurata",
-    /* English: Image cache full (%u entries), rolling back mount */
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] = "Levykuvavälimuisti on täynnä (%u merkintää), liittäminen perutaan",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
     [SM_L10N_INSTALL_FAILED_TIMEOUT] = "Asennus epäonnistui: %s (%s)\nAikakatkaisu 5 minuutin jälkeen",
     /* English: Batch install queued (%d): */
@@ -92,9 +90,9 @@ static const char *const g_fi_fi[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: ShellCore-hookkien asennus epäonnistui",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Tavoitelämpötila %u °C → %u °C",
-    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
     [SM_L10N_USB_CONNECTED_SCANNING] = "Ulkoinen asema %s yhdistetty.\nVapaana: %llu.%llu / %llu.%llu Gt (lohko %llu kt)\nPelejä asemalla: %d%s",
-    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    /* English: \nFor maximum performance, use a cluster size of no more than 64 KB */
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nSaat parhaan suorituskyvyn käyttämällä enintään 64 kt:n klusterikokoa",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Ulkoinen asema %s irrotettu",

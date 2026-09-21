@@ -3,7 +3,7 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Đi tới cài đặt gỡ lỗi",
     /* English: ShadowMount+ v%s\n© Drakmor and Community */
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor và Cộng đồng",
-    /* English: ShadowMount+ startup with web interface */
+    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor và Cộng đồng\nĐiều khiển: http://%s:%u",
     /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
@@ -44,8 +44,6 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_IMAGE_UNREADABLE_DAMAGED] = "Ảnh đĩa đã gắn không thể đọc được hoặc bị hỏng",
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "Bộ nhớ đệm ảnh đĩa đã đầy (%u mục), không thể theo dõi điểm gắn %s",
-    /* English: Image cache full (%u entries), rolling back mount */
-    [SM_L10N_IMAGE_CACHE_FULL_ROLLBACK] = "Bộ nhớ đệm ảnh đĩa đã đầy (%u mục), đang hoàn tác việc gắn",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
     [SM_L10N_INSTALL_FAILED_TIMEOUT] = "Cài đặt thất bại: %s (%s)\nHết thời gian sau 5 phút",
     /* English: Batch install queued (%d): */
@@ -92,9 +90,9 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: không thể cài đặt hook ShellCore",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Nhiệt độ mục tiêu %u °C → %u °C",
-    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d */
+    /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
     [SM_L10N_USB_CONNECTED_SCANNING] = "Đã kết nối ổ đĩa ngoài %s.\nTrống: %llu.%llu / %llu.%llu GB (kích thước khối %llu KB)\nTrò chơi trên ổ đĩa: %d%s",
-    /* English: For maximum performance, use a cluster size of no more than 64 KB */
+    /* English: \nFor maximum performance, use a cluster size of no more than 64 KB */
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nĐể đạt hiệu suất tối đa, hãy sử dụng kích thước cụm không quá 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Đã ngắt kết nối ổ đĩa ngoài %s",
