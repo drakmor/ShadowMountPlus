@@ -156,9 +156,10 @@ static int scanner_usb_slot_for_path(const char *path) {
     return -1;
 
   char slot = path[prefix_len];
+  if (slot < '0' || slot >= '0' + SCANNER_USB_SLOT_COUNT)
+    return -1;
   char suffix = path[prefix_len + 1u];
-  if (slot < '0' || slot >= '0' + SCANNER_USB_SLOT_COUNT ||
-      (suffix != '\0' && suffix != '/')) {
+  if (suffix != '\0' && suffix != '/') {
     return -1;
   }
   return slot - '0';
@@ -1565,6 +1566,33 @@ static bool handle_scan_root_parent_event(
   return true;
 }
 
+static bool handle_scanner_control_event(int kq, const struct kevent *event,
+                                          uint64_t now_us) {
+  if (event->filter == EVFILT_READ &&
+      event->ident == (uintptr_t)g_scanner_wake_pipe[0]) {
+    drain_scanner_wake_pipe();
+    return true;
+  }
+  if (event->filter != EVFILT_VNODE)
+    return false;
+  if (event->ident == (uintptr_t)g_scanner_config_fd) {
+    if ((event->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0)
+      reopen_config_file_watch(kq, now_us);
+    schedule_config_reload(now_us);
+    return true;
+  }
+  if (event->ident == (uintptr_t)g_scanner_manual_fd) {
+    if ((event->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0) {
+      close_scanner_manual_file();
+      g_scanner_manual_probe_due_us = now_us == 0 ? 1 : now_us;
+    } else {
+      schedule_manual_scan(now_us);
+    }
+    return true;
+  }
+  return false;
+}
+
 static bool process_scanner_events(int kq, const struct timespec *timeout,
                                    bool *timed_out_out) {
   *timed_out_out = false;
@@ -1589,31 +1617,9 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
   for (int i = 0; i < nev; i++) {
     const struct kevent *event = &events[i];
 
-    if (event->filter == EVFILT_READ &&
-        event->ident == (uintptr_t)g_scanner_wake_pipe[0]) {
-      drain_scanner_wake_pipe();
+    if (handle_scanner_control_event(kq, event, now_us) ||
+        event->filter != EVFILT_VNODE)
       continue;
-    }
-
-    if (event->filter != EVFILT_VNODE)
-      continue;
-
-    if (event->ident == (uintptr_t)g_scanner_config_fd) {
-      if ((event->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0)
-        reopen_config_file_watch(kq, now_us);
-      schedule_config_reload(now_us);
-      continue;
-    }
-
-    if (event->ident == (uintptr_t)g_scanner_manual_fd) {
-      if ((event->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0) {
-        close_scanner_manual_file();
-        g_scanner_manual_probe_due_us = now_us == 0 ? 1 : now_us;
-        continue;
-      }
-      schedule_manual_scan(now_us);
-      continue;
-    }
 
     scanner_watch_entry_t *watch_owner =
         find_scanner_watch_entry_by_fd(event->ident);
@@ -1720,6 +1726,9 @@ static bool discard_scanner_events_nowait(int kq) {
     }
     if (nev == 0)
       return true;
+    uint64_t now_us = monotonic_time_us();
+    for (int i = 0; i < nev; ++i)
+      (void)handle_scanner_control_event(kq, &events[i], now_us);
   }
 }
 
@@ -1781,7 +1790,10 @@ void sm_scanner_wake(void) {
     return;
 
   static const char token = 'S';
-  (void)write((int)wake_fd, &token, sizeof(token));
+  ssize_t written;
+  do {
+    written = write((int)wake_fd, &token, sizeof(token));
+  } while (written < 0 && errno == EINTR);
 }
 
 bool sm_scanner_usb_watches_suspended(void) {
@@ -1797,6 +1809,10 @@ void sm_scanner_end_external_mutation(void) {
 }
 
 bool sm_scanner_run_startup_sync(void) {
+  if (g_scanner_wake_pipe[0] < 0 || g_scanner_wake_pipe[1] < 0) {
+    request_scanner_shutdown("scanner wake pipe unavailable at startup");
+    return false;
+  }
   while (!should_stop_requested()) {
     while (runtime_sleep_mode_active() && !should_stop_requested()) {
       fd_set readfds;
@@ -1917,6 +1933,13 @@ void sm_scanner_run_loop(void) {
         request_scanner_shutdown("scanner stale event drain failed");
         return;
       }
+      // Sleep may have discarded config/manual rename or write events. Reopen
+      // the current files and schedule reloads before returning to idle waits.
+      uint64_t resume_us = monotonic_time_us();
+      reopen_config_file_watch(kq, resume_us);
+      schedule_config_reload(resume_us);
+      reopen_manual_file_watch(kq, resume_us);
+      g_scanner_manual_scan_due_us = resume_us + RUNTIME_RESUME_GRACE_US;
       if (!resume_usb_scan_root_watch_trees(kq)) {
         close(kq);
         clear_scanner_watch_entries();

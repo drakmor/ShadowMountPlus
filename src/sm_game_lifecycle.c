@@ -1123,7 +1123,10 @@ void wake_game_lifecycle_watcher(void) {
     return;
 
   char wake = 'x';
-  ssize_t written = write(g_game_lifecycle_wake_pipe[1], &wake, sizeof(wake));
+  ssize_t written;
+  do {
+    written = write(g_game_lifecycle_wake_pipe[1], &wake, sizeof(wake));
+  } while (written < 0 && errno == EINTR);
   if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
     log_debug("  [GAME] wake pipe write failed: %s", strerror(errno));
   }

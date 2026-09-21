@@ -106,9 +106,11 @@ static void resolve_web_interface_address(const char *bind_address,
 }
 
 static void on_signal(int sig) {
+  int saved_errno = errno;
   (void)sig;
   g_stop_requested = 1;
   sm_scanner_wake();
+  errno = saved_errno;
 }
 
 void install_signal_handlers(void) {
@@ -126,7 +128,9 @@ void install_signal_handlers(void) {
 }
 
 bool should_stop_requested(void) {
-  if (g_stop_requested)
+  if (g_stop_requested ||
+      atomic_load_explicit(&g_shutdown_on_going_stop_requested,
+                            memory_order_acquire))
     return true;
 
   uint64_t now_us = monotonic_time_us();
@@ -135,9 +139,11 @@ bool should_stop_requested(void) {
         atomic_load_explicit(&g_next_stop_file_poll_us, memory_order_acquire);
     if (next_poll_us != 0 && now_us < next_poll_us)
       return false;
-    atomic_store_explicit(&g_next_stop_file_poll_us,
-                          now_us + STOP_FILE_POLL_INTERVAL_US,
-                          memory_order_release);
+    if (!atomic_compare_exchange_strong_explicit(
+            &g_next_stop_file_poll_us, &next_poll_us,
+            now_us + STOP_FILE_POLL_INTERVAL_US, memory_order_acq_rel,
+            memory_order_acquire))
+      return false;
   }
 
   if (remove(KILL_FILE) == 0) {
@@ -162,7 +168,6 @@ void request_shutdown_stop(const char *reason) {
                           memory_order_release);
     log_debug("[SHUTDOWN] requested by %s", g_shutdown_stop_reason);
   }
-  g_stop_requested = 1;
   sm_scanner_wake();
   wake_game_lifecycle_watcher();
 }
