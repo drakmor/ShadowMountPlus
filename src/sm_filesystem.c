@@ -859,20 +859,25 @@ static void log_backport_overlay_failure(const char *mount_point,
   free(mounts);
 }
 
-bool mount_backport_overlay(const char *mount_point,
-                            const char *backport_path,
-                            const char *title_id) {
+backport_overlay_result_t mount_backport_overlay(const char *mount_point,
+                                                  const char *backport_path,
+                                                  const char *title_id) {
   struct stat backport_st;
   if (stat(backport_path, &backport_st) != 0 || !S_ISDIR(backport_st.st_mode))
-    return true;
+    return BACKPORT_OVERLAY_SKIPPED;
 
   struct statfs mounted_sfs;
   if (statfs(mount_point, &mounted_sfs) != 0 ||
       strcmp(mounted_sfs.f_mntonname, mount_point) != 0) {
-    return true;
+    return BACKPORT_OVERLAY_SKIPPED;
   }
-  if (strcmp(mounted_sfs.f_fstypename, "unionfs") == 0)
-    return true;
+  if (strcmp(mounted_sfs.f_fstypename, "unionfs") == 0) {
+    const char *source = mounted_sfs.f_mntfromname;
+    if (strncmp(source, "<above>:", 8) == 0)
+      source += 8;
+    return strcmp(source, backport_path) == 0 ? BACKPORT_OVERLAY_ACTIVE
+                                              : BACKPORT_OVERLAY_SKIPPED;
+  }
 
   bool mount_read_only = ((mounted_sfs.f_flags & MNT_RDONLY) != 0);
   struct iovec overlay_iov[] = {
@@ -888,7 +893,7 @@ bool mount_backport_overlay(const char *mount_point,
   if (nmount(overlay_iov, IOVEC_SIZE(overlay_iov), overlay_flags) == 0) {
     log_debug("  [IMG] backport overlay mounted (%s): %s -> %s",
               mount_read_only ? "ro" : "rw", backport_path, mount_point);
-    return true;
+    return BACKPORT_OVERLAY_ACTIVE;
   }
 
   int overlay_err = errno;
@@ -899,7 +904,7 @@ bool mount_backport_overlay(const char *mount_point,
   notify_system_l10n(SM_L10N_BACKPORT_OVERLAY_FAILED, title_id, backport_path,
                      (uint32_t)overlay_err);
   errno = overlay_err;
-  return false;
+  return BACKPORT_OVERLAY_FAILED;
 }
 
 static bool unmount_controlled_mount_stack_impl(const char *path,

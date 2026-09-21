@@ -837,10 +837,14 @@ bool mount_backport_overlay_for_title(const char *source_path,
   char system_ex_path[MAX_PATH];
   snprintf(system_ex_path, sizeof(system_ex_path), "/system_ex/app/%s",
            title_id);
-  if (!mount_backport_overlay(system_ex_path, backport_path, title_id)) {
+  backport_overlay_result_t result =
+      mount_backport_overlay(system_ex_path, backport_path, title_id);
+  if (result == BACKPORT_OVERLAY_FAILED) {
     note_backport_mount_failure(backport_path);
     return false;
   }
+  if (result == BACKPORT_OVERLAY_SKIPPED)
+    return false;
   clear_backport_mount_failure(backport_path);
   return true;
 }

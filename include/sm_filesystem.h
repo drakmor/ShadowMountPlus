@@ -7,6 +7,7 @@
 #include <sys/types.h>
 
 #include "sm_limits.h"
+#include "sm_types.h"
 
 struct statfs;
 
@@ -58,10 +59,10 @@ bool reconcile_title_backport_mount(const char *title_id, const char *src_path,
                                     const char *expected_backport_path,
                                     bool *overlay_active_out);
 // Mount a prepared backport overlay on top of an already mounted title.
-// Returns false only when nmount() itself fails.
-bool mount_backport_overlay(const char *mount_point,
-                            const char *backport_path,
-                            const char *title_id);
+// FAILED means nmount() failed; missing sources/preconditions are SKIPPED.
+backport_overlay_result_t mount_backport_overlay(const char *mount_point,
+                                                  const char *backport_path,
+                                                  const char *title_id);
 // Unmount all managed /system_ex/app/<title_id> mount stacks on shutdown.
 bool shutdown_title_mounts(void);
 // Remove stale mount links and optionally restore image-backed mounts.

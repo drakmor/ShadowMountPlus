@@ -6,6 +6,12 @@
 
 #include "sm_limits.h"
 
+typedef enum {
+  BACKPORT_OVERLAY_SKIPPED = 0,
+  BACKPORT_OVERLAY_ACTIVE,
+  BACKPORT_OVERLAY_FAILED,
+} backport_overlay_result_t;
+
 typedef struct {
   // +0x00: 1 -> mount read-only, 0 -> allow write.
   uint32_t ro;
