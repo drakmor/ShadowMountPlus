@@ -138,8 +138,9 @@ device `source`, `mount_point`, `filesystem`, `total_bytes`, `free_bytes`,
 `available_bytes`, `used_bytes` and `read_only`. `available_bytes` is the space
 available for new files; `used_bytes` is calculated against that value. The
 `destinations` array contains only writable, currently available managed
-`/data/homebrew`, `/mnt/ext*/homebrew` and `/mnt/usb*/homebrew` paths and adds
-the selectable `path` to the same filesystem metadata.
+`/data/homebrew`, `/mnt/ext*/homebrew` and `/mnt/usb*/homebrew` paths. Scanned
+`/mnt/ext*` and `/mnt/usb*` roots are included as additional destinations. Each
+item adds the selectable `path` to the same filesystem metadata.
 
 `copy` and `move` preserve the source basename and require an existing
 destination under a configured non-runtime scan root. They and `delete` return

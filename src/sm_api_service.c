@@ -768,10 +768,17 @@ static void handle_storage(struct MHD_Connection *connection) {
   free(mounts);
 
   static const char *const destination_paths[] = {
-      "/data/homebrew",     "/mnt/ext0/homebrew", "/mnt/ext1/homebrew",
-      "/mnt/usb0/homebrew", "/mnt/usb1/homebrew", "/mnt/usb2/homebrew",
-      "/mnt/usb3/homebrew", "/mnt/usb4/homebrew", "/mnt/usb5/homebrew",
-      "/mnt/usb6/homebrew", "/mnt/usb7/homebrew",
+      "/data/homebrew",
+      "/mnt/ext0",          "/mnt/ext0/homebrew",
+      "/mnt/ext1",          "/mnt/ext1/homebrew",
+      "/mnt/usb0",          "/mnt/usb0/homebrew",
+      "/mnt/usb1",          "/mnt/usb1/homebrew",
+      "/mnt/usb2",          "/mnt/usb2/homebrew",
+      "/mnt/usb3",          "/mnt/usb3/homebrew",
+      "/mnt/usb4",          "/mnt/usb4/homebrew",
+      "/mnt/usb5",          "/mnt/usb5/homebrew",
+      "/mnt/usb6",          "/mnt/usb6/homebrew",
+      "/mnt/usb7",          "/mnt/usb7/homebrew",
   };
   size_t destination_count = 0;
   for (size_t i = 0;
