@@ -20,6 +20,7 @@
 #define AMPR_SSL_POOL_SIZE                                                \
   ((256u + 4u * AMPR_PRIVATE_CA_COUNT) * 1024u)
 #define AMPR_HTTP_POOL_SIZE (256u * 1024u)
+#define AMPR_HTTP_HEADER_MAX_SIZE (32u * 1024u)
 #define AMPR_IO_BUFFER_SIZE (64u * 1024u)
 #define AMPR_MAX_DOWNLOAD_SIZE (16u * 1024u * 1024u)
 #define AMPR_HTTP_TIMEOUT_US (30u * 1000u * 1000u)
@@ -37,27 +38,29 @@ typedef struct {
 int sceSslLoadCert(int ssl_id, int ca_count, const SceSslData **ca_list,
                    const SceSslData *cert, const SceSslData *private_key);
 int sceSslUnloadCert(int ssl_id);
-int sceHttp2Init(int net_pool_id, int ssl_id, size_t pool_size,
-                 int max_concurrent_requests);
-int sceHttp2Term(int http_id);
-int sceHttp2CreateTemplate(int http_id, const char *user_agent,
+int sceHttpInit(int net_pool_id, int ssl_id, size_t pool_size);
+int sceHttpTerm(int http_id);
+int sceHttpCreateTemplate(int http_id, const char *user_agent,
                            int http_version, int auto_proxy_config);
-int sceHttp2DeleteTemplate(int template_id);
-int sceHttp2CreateRequestWithURL(int template_id, const char *method,
+int sceHttpDeleteTemplate(int template_id);
+int sceHttpCreateConnectionWithURL(int template_id, const char *url,
+                                     int enable_keepalive);
+int sceHttpDeleteConnection(int connection_id);
+int sceHttpCreateRequestWithURL2(int connection_id, const char *method,
                                  const char *url, uint64_t content_length);
-int sceHttp2DeleteRequest(int request_id);
-int sceHttp2SendRequest(int request_id, const void *data, size_t size);
-int sceHttp2GetStatusCode(int request_id, int *status_code);
-int sceHttp2GetAllResponseHeaders(int request_id, char **headers,
+int sceHttpDeleteRequest(int request_id);
+int sceHttpSendRequest(int request_id, const void *data, size_t size);
+int sceHttpGetStatusCode(int request_id, int *status_code);
+int sceHttpGetAllResponseHeaders(int request_id, char **headers,
                                   size_t *headers_size);
-int sceHttp2ReadData(int request_id, void *buffer, size_t size);
-int sceHttp2AbortRequest(int request_id);
-int sceHttp2SetAutoRedirect(int id, int enabled);
-int sceHttp2SetTimeOut(int id, uint32_t timeout_us);
-int sceHttp2SetResolveTimeOut(int id, uint32_t timeout_us);
-int sceHttp2SetConnectTimeOut(int id, uint32_t timeout_us);
-int sceHttp2SetSendTimeOut(int id, uint32_t timeout_us);
-int sceHttp2SetRecvTimeOut(int id, uint32_t timeout_us);
+int sceHttpReadData(int request_id, void *buffer, size_t size);
+int sceHttpAbortRequest(int request_id);
+int sceHttpSetAutoRedirect(int id, int enabled);
+int sceHttpSetResponseHeaderMaxSize(int id, size_t size);
+int sceHttpSetResolveTimeOut(int id, uint32_t timeout_us);
+int sceHttpSetConnectTimeOut(int id, uint32_t timeout_us);
+int sceHttpSetSendTimeOut(int id, uint32_t timeout_us);
+int sceHttpSetRecvTimeOut(int id, uint32_t timeout_us);
 
 #include "sm_ampr_ca.inc"
 
@@ -175,6 +178,16 @@ static void clear_active_request(int request_id) {
   if (g_ampr_updater.active_request_id == request_id)
     g_ampr_updater.active_request_id = -1;
   pthread_mutex_unlock(&g_ampr_updater.mutex);
+}
+
+// Keep the ID pinned until abort completes: the worker clears it before delete.
+// Call with g_ampr_updater.mutex held to exclude delete and ID reuse.
+static void abort_active_request_locked(void) {
+  int request_id = g_ampr_updater.active_request_id;
+  if (request_id < 0)
+    return;
+  g_ampr_updater.active_request_id = -1;
+  (void)sceHttpAbortRequest(request_id);
 }
 
 static bool ensure_net_initialized(void) {
@@ -393,9 +406,9 @@ static bool try_read_remote_modified_time(int request_id, time_t *time_out) {
   char *headers = NULL;
   size_t headers_size = 0;
   int rc =
-      sceHttp2GetAllResponseHeaders(request_id, &headers, &headers_size);
+      sceHttpGetAllResponseHeaders(request_id, &headers, &headers_size);
   if (rc != 0) {
-    log_sce_failure("sceHttp2GetAllResponseHeaders", rc);
+    log_sce_failure("sceHttpGetAllResponseHeaders", rc);
     return false;
   }
 
@@ -525,26 +538,30 @@ static bool regular_files_equal(const char *first, const char *second,
 }
 
 static bool configure_http_template(int template_id) {
-  int rc = sceHttp2SetAutoRedirect(template_id, 1);
+  int rc = sceHttpSetAutoRedirect(template_id, 1);
   if (rc != 0) {
-    log_sce_failure("sceHttp2SetAutoRedirect", rc);
+    log_sce_failure("sceHttpSetAutoRedirect", rc);
+    return false;
+  }
+
+  // GitHub redirect responses include large CSP and signed Location headers.
+  rc = sceHttpSetResponseHeaderMaxSize(template_id, AMPR_HTTP_HEADER_MAX_SIZE);
+  if (rc != 0) {
+    log_sce_failure("sceHttpSetResponseHeaderMaxSize", rc);
     return false;
   }
 
   int timeout_error = 0;
-  rc = sceHttp2SetTimeOut(template_id, AMPR_HTTP_TIMEOUT_US);
-  if (rc != 0)
-    timeout_error = rc;
-  rc = sceHttp2SetResolveTimeOut(template_id, AMPR_HTTP_TIMEOUT_US);
+  rc = sceHttpSetResolveTimeOut(template_id, AMPR_HTTP_TIMEOUT_US);
   if (timeout_error == 0 && rc != 0)
     timeout_error = rc;
-  rc = sceHttp2SetConnectTimeOut(template_id, AMPR_HTTP_TIMEOUT_US);
+  rc = sceHttpSetConnectTimeOut(template_id, AMPR_HTTP_TIMEOUT_US);
   if (timeout_error == 0 && rc != 0)
     timeout_error = rc;
-  rc = sceHttp2SetSendTimeOut(template_id, AMPR_HTTP_TIMEOUT_US);
+  rc = sceHttpSetSendTimeOut(template_id, AMPR_HTTP_TIMEOUT_US);
   if (timeout_error == 0 && rc != 0)
     timeout_error = rc;
-  rc = sceHttp2SetRecvTimeOut(template_id, AMPR_HTTP_TIMEOUT_US);
+  rc = sceHttpSetRecvTimeOut(template_id, AMPR_HTTP_TIMEOUT_US);
   if (timeout_error == 0 && rc != 0)
     timeout_error = rc;
   if (timeout_error != 0) {
@@ -555,13 +572,13 @@ static bool configure_http_template(int template_id) {
 }
 
 static bool create_and_send_request(
-    int template_id, const char *method, const ampr_update_config_t *snapshot,
+    int connection_id, const char *method, const ampr_update_config_t *snapshot,
     int *request_id_out, int *status_code_out,
     ampr_update_result_t *result_out) {
-  int request_id = sceHttp2CreateRequestWithURL(template_id, method,
+  int request_id = sceHttpCreateRequestWithURL2(connection_id, method,
                                                 snapshot->url, 0);
   if (request_id < 0) {
-    log_sce_failure("sceHttp2CreateRequestWithURL", request_id);
+    log_sce_failure("sceHttpCreateRequestWithURL2", request_id);
     return false;
   }
   *request_id_out = request_id;
@@ -571,19 +588,19 @@ static bool create_and_send_request(
     return false;
   }
 
-  int rc = sceHttp2SendRequest(request_id, NULL, 0);
+  int rc = sceHttpSendRequest(request_id, NULL, 0);
   if (rc != 0) {
     if (update_snapshot_is_current(snapshot))
-      log_sce_failure("sceHttp2SendRequest", rc);
+      log_sce_failure("sceHttpSendRequest", rc);
     else
       *result_out = AMPR_UPDATE_CANCELLED;
     return false;
   }
 
-  rc = sceHttp2GetStatusCode(request_id, status_code_out);
+  rc = sceHttpGetStatusCode(request_id, status_code_out);
   if (rc != 0) {
     if (update_snapshot_is_current(snapshot))
-      log_sce_failure("sceHttp2GetStatusCode", rc);
+      log_sce_failure("sceHttpGetStatusCode", rc);
     else
       *result_out = AMPR_UPDATE_CANCELLED;
     return false;
@@ -597,6 +614,7 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
   int ssl_id = -1;
   int http_id = -1;
   int template_id = -1;
+  int connection_id = -1;
   int request_id = -1;
   int output_fd = -1;
   unsigned char *buffer = NULL;
@@ -645,23 +663,29 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
       goto cleanup;
     ca_certificates_loaded = true;
   }
-  http_id = sceHttp2Init(net_pool_id, ssl_id, AMPR_HTTP_POOL_SIZE, 1);
+  // Blocking HTTP/1.1 avoids libhttp2's internal event-thread affinity.
+  http_id = sceHttpInit(net_pool_id, ssl_id, AMPR_HTTP_POOL_SIZE);
   if (http_id < 0) {
-    log_sce_failure("sceHttp2Init", http_id);
+    log_sce_failure("sceHttpInit", http_id);
     goto cleanup;
   }
-  template_id = sceHttp2CreateTemplate(http_id, "ShadowMountPlus/1.0",
+  template_id = sceHttpCreateTemplate(http_id, "ShadowMountPlus/1.0",
                                        AMPR_HTTP_VERSION_1_1, 1);
   if (template_id < 0) {
-    log_sce_failure("sceHttp2CreateTemplate", template_id);
+    log_sce_failure("sceHttpCreateTemplate", template_id);
     goto cleanup;
   }
   if (!configure_http_template(template_id))
     goto cleanup;
+  connection_id = sceHttpCreateConnectionWithURL(template_id, snapshot->url, 1);
+  if (connection_id < 0) {
+    log_sce_failure("sceHttpCreateConnectionWithURL", connection_id);
+    goto cleanup;
+  }
 
   int status_code = 0;
   if (!destination_missing) {
-    if (!create_and_send_request(template_id, "HEAD", snapshot, &request_id,
+    if (!create_and_send_request(connection_id, "HEAD", snapshot, &request_id,
                                  &status_code, &result)) {
       goto cleanup;
     }
@@ -680,7 +704,7 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
     }
 
     clear_active_request(request_id);
-    (void)sceHttp2DeleteRequest(request_id);
+    (void)sceHttpDeleteRequest(request_id);
     request_id = -1;
   } else {
     log_debug("  [AMPR] emulator is missing; downloading: %s", destination);
@@ -697,7 +721,7 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
   }
 
   status_code = 0;
-  if (!create_and_send_request(template_id, "GET", snapshot, &request_id,
+  if (!create_and_send_request(connection_id, "GET", snapshot, &request_id,
                                &status_code, &result)) {
     goto cleanup;
   }
@@ -737,10 +761,10 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
       result = AMPR_UPDATE_CANCELLED;
       goto cleanup;
     }
-    int received = sceHttp2ReadData(request_id, buffer, AMPR_IO_BUFFER_SIZE);
+    int received = sceHttpReadData(request_id, buffer, AMPR_IO_BUFFER_SIZE);
     if (received < 0) {
       if (update_snapshot_is_current(snapshot))
-        log_sce_failure("sceHttp2ReadData", received);
+        log_sce_failure("sceHttpReadData", received);
       else
         result = AMPR_UPDATE_CANCELLED;
       goto cleanup;
@@ -816,12 +840,14 @@ cleanup:
     (void)close(output_fd);
   if (request_id >= 0) {
     clear_active_request(request_id);
-    (void)sceHttp2DeleteRequest(request_id);
+    (void)sceHttpDeleteRequest(request_id);
   }
+  if (connection_id >= 0)
+    (void)sceHttpDeleteConnection(connection_id);
   if (template_id >= 0)
-    (void)sceHttp2DeleteTemplate(template_id);
+    (void)sceHttpDeleteTemplate(template_id);
   if (http_id >= 0)
-    (void)sceHttp2Term(http_id);
+    (void)sceHttpTerm(http_id);
   if (ca_certificates_loaded)
     (void)sceSslUnloadCert(ssl_id);
   if (ssl_id >= 0)
@@ -946,13 +972,10 @@ void sm_ampr_updater_stop(void) {
   g_ampr_updater.stop_requested = true;
   g_ampr_updater.wake_requested = true;
   g_ampr_updater.config_generation++;
-  int active_request_id = g_ampr_updater.active_request_id;
-  g_ampr_updater.active_request_id = -1;
+  abort_active_request_locked();
   pthread_cond_broadcast(&g_ampr_updater.cond);
   pthread_mutex_unlock(&g_ampr_updater.mutex);
 
-  if (active_request_id >= 0)
-    (void)sceHttp2AbortRequest(active_request_id);
   (void)pthread_join(g_ampr_updater.thread, NULL);
 
   pthread_mutex_lock(&g_ampr_updater.mutex);
@@ -976,17 +999,12 @@ void sm_ampr_updater_on_sleep_change(bool active) {
     return;
   }
 
-  int active_request_id = -1;
   if (active) {
     g_ampr_updater.config_generation++;
-    active_request_id = g_ampr_updater.active_request_id;
-    g_ampr_updater.active_request_id = -1;
+    abort_active_request_locked();
   }
   pthread_cond_broadcast(&g_ampr_updater.cond);
   pthread_mutex_unlock(&g_ampr_updater.mutex);
-
-  if (active_request_id >= 0)
-    (void)sceHttp2AbortRequest(active_request_id);
 }
 
 void sm_ampr_updater_on_config_reload(const runtime_config_t *old_cfg,
@@ -1002,11 +1020,7 @@ void sm_ampr_updater_on_config_reload(const runtime_config_t *old_cfg,
   pthread_mutex_lock(&g_ampr_updater.mutex);
   g_ampr_updater.config_generation++;
   g_ampr_updater.wake_requested = true;
-  int active_request_id = g_ampr_updater.active_request_id;
-  g_ampr_updater.active_request_id = -1;
+  abort_active_request_locked();
   pthread_cond_broadcast(&g_ampr_updater.cond);
   pthread_mutex_unlock(&g_ampr_updater.mutex);
-
-  if (active_request_id >= 0)
-    (void)sceHttp2AbortRequest(active_request_id);
 }
