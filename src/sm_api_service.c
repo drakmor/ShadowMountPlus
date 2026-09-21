@@ -701,8 +701,8 @@ static struct json_object *filesystem_to_json(const struct statfs *mount) {
 
 static void handle_storage(struct MHD_Connection *connection) {
   struct statfs *mounts = NULL;
-  int mount_count = getmntinfo(&mounts, MNT_NOWAIT);
-  if (mount_count < 0 || !mounts) {
+  int mount_count = sm_mount_table_snapshot(&mounts);
+  if (mount_count < 0) {
     int status = errno != 0 ? errno : EIO;
     send_error_response(connection, operation_http_status(status), status,
                         strerror(status));
@@ -712,6 +712,7 @@ static void handle_storage(struct MHD_Connection *connection) {
   struct json_object *response = new_status_response(0);
   struct json_object *items = json_object_new_array_ext(mount_count);
   if (!response || !items) {
+    free(mounts);
     if (response)
       json_object_put(response);
     if (items)
@@ -726,6 +727,7 @@ static void handle_storage(struct MHD_Connection *connection) {
       continue;
     struct json_object *item = filesystem_to_json(&mounts[i]);
     if (!item || json_object_array_add(items, item) != 0) {
+      free(mounts);
       if (item)
         json_object_put(item);
       json_object_put(items);
@@ -735,9 +737,15 @@ static void handle_storage(struct MHD_Connection *connection) {
     }
     count++;
   }
+  free(mounts);
 
-  if (!add_json_int(response, "count", (int64_t)count) ||
-      !add_json_value(response, "mounts", items)) {
+  if (!add_json_int(response, "count", (int64_t)count)) {
+    json_object_put(items);
+    json_object_put(response);
+    send_out_of_memory_response(connection);
+    return;
+  }
+  if (!add_json_value(response, "mounts", items)) {
     json_object_put(response);
     send_out_of_memory_response(connection);
     return;
@@ -2555,7 +2563,6 @@ static void *storage_job_thread_main(void *arg) {
   if (unpack_mounted) {
     if (!sm_shellcore_release_title_runtime(title_id) && status == 0)
       status = errno == EBUSY ? EBUSY : EIO;
-    unpack_mounted = false;
   }
   if (status == 0 && operation == GAME_STORAGE_UNPACK && delete_source &&
       sm_storage_delete_path(source) != 0) {

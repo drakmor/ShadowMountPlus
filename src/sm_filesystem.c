@@ -14,6 +14,41 @@ static bool unmount_controlled_mount_stack(const char *path);
 static bool unmount_controlled_mount_stack_impl(const char *path,
                                                 bool diagnose_busy);
 
+int sm_mount_table_snapshot(struct statfs **mounts_out) {
+  *mounts_out = NULL;
+  int count = getfsstat(NULL, 0, MNT_NOWAIT);
+  if (count < 0)
+    return -1;
+
+  // A full buffer may be truncated by concurrent mounts. Grow it a bounded
+  // number of times before reporting an unavailable table.
+  size_t capacity = (size_t)count + 16u;
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    if (capacity > (size_t)LONG_MAX / sizeof(struct statfs)) {
+      errno = EOVERFLOW;
+      return -1;
+    }
+    size_t bytes = capacity * sizeof(struct statfs);
+    struct statfs *mounts = malloc(bytes);
+    if (!mounts)
+      return -1;
+    count = getfsstat(mounts, (long)bytes, MNT_NOWAIT);
+    if (count >= 0 && (size_t)count < capacity) {
+      *mounts_out = mounts;
+      return count;
+    }
+    int saved_errno = errno;
+    free(mounts);
+    if (count < 0) {
+      errno = saved_errno;
+      return -1;
+    }
+    capacity *= 2u;
+  }
+  errno = EAGAIN;
+  return -1;
+}
+
 // --- FILESYSTEM ---
 bool is_installed(const char *title_id) {
   char path[MAX_PATH];
@@ -320,9 +355,6 @@ static bool source_path_needs_cleanup(const char *source_path) {
       snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", source_path);
   if (written < 0 || (size_t)written >= sizeof(eboot_path))
     return true;
-  if (path_exists(eboot_path))
-    return false;
-
   return !path_exists(eboot_path);
 }
 
@@ -410,16 +442,17 @@ void cleanup_staged_mount_links(void) {
                          cleanup_staged_mount_links_entry, NULL);
 }
 
-static bool get_top_mount(const char *path, struct statfs *mount_st_out) {
+// 1: mounted, 0: absent, -1: mount table unavailable.
+static int get_top_mount(const char *path, struct statfs *mount_st_out) {
   if (statfs(path, mount_st_out) == 0 &&
       strcmp(mount_st_out->f_mntonname, path) == 0) {
-    return true;
+    return 1;
   }
 
   struct statfs *mntbuf = NULL;
-  int mntcount = getmntinfo(&mntbuf, MNT_NOWAIT);
-  if (mntcount <= 0 || !mntbuf)
-    return false;
+  int mntcount = sm_mount_table_snapshot(&mntbuf);
+  if (mntcount < 0)
+    return -1;
 
   const struct statfs *best_mount = NULL;
   for (int i = 0; i < mntcount; i++) {
@@ -432,11 +465,11 @@ static bool get_top_mount(const char *path, struct statfs *mount_st_out) {
     }
   }
 
-  if (!best_mount)
-    return false;
-
-  *mount_st_out = *best_mount;
-  return true;
+  bool found = best_mount != NULL;
+  if (found)
+    *mount_st_out = *best_mount;
+  free(mntbuf);
+  return found;
 }
 
 typedef enum {
@@ -502,7 +535,9 @@ static bool inspect_title_stack(const char *title_id, const char *source_path,
   }
 
   struct statfs *mntbuf = NULL;
-  int mntcount = getmntinfo(&mntbuf, MNT_NOWAIT);
+  int mntcount = sm_mount_table_snapshot(&mntbuf);
+  if (mntcount < 0)
+    return false;
   const struct statfs *best_mount = NULL;
   bool found_mount_entry = false;
   if (mntcount > 0 && mntbuf) {
@@ -558,19 +593,15 @@ static bool inspect_title_stack(const char *title_id, const char *source_path,
     } else if (!found_mount_entry) {
       log_debug("  [LINK] no mount entries for %s", state_out->system_ex_path);
     }
-    for (int i = 0; i < mntcount; i++) {
-      if (strcmp(mntbuf[i].f_mntonname, state_out->system_ex_path) != 0)
-        continue;
-      log_debug("  [LINK] mount entry for %s: type=%s from=%s flags=0x%lX",
-                state_out->system_ex_path, mntbuf[i].f_fstypename,
-                mntbuf[i].f_mntfromname, (unsigned long)mntbuf[i].f_flags);
-    }
+    free(mntbuf);
     errno = inspect_errno;
     return false;
   }
 
-  if (!top_mount)
+  if (!top_mount) {
+    free(mntbuf);
     return true;
+  }
 
   const char *top_from = top_mount->f_mntfromname;
   if (strcmp(top_mount->f_fstypename, "unionfs") == 0 &&
@@ -594,14 +625,16 @@ static bool inspect_title_stack(const char *title_id, const char *source_path,
     state_out->has_our_backport = true;
   }
 
+  free(mntbuf);
   return true;
 }
 
 static bool unmount_top_controlled_layer_impl(const char *path,
                                               bool diagnose_busy) {
   struct statfs mount_st;
-  if (!get_top_mount(path, &mount_st))
-    return true;
+  int mounted = get_top_mount(path, &mount_st);
+  if (mounted <= 0)
+    return mounted == 0;
 
   bool controlled_top =
       (strcmp(mount_st.f_fstypename, "unionfs") == 0) ||
@@ -802,8 +835,8 @@ static void log_backport_overlay_failure(const char *mount_point,
   log_backport_overlay_path("covered", mount_point, NULL, mounted_sfs);
 
   struct statfs *mounts = NULL;
-  int mount_count = getmntinfo(&mounts, MNT_NOWAIT);
-  if (mount_count <= 0 || !mounts) {
+  int mount_count = sm_mount_table_snapshot(&mounts);
+  if (mount_count < 0) {
     int table_errno = errno;
     log_debug("  [IMG][UNIONFS] mount table unavailable: error=%d (%s)",
               table_errno, strerror(table_errno));
@@ -823,6 +856,7 @@ static void log_backport_overlay_failure(const char *mount_point,
     log_debug("  [IMG][UNIONFS] no exact mount-table entry for %s",
               mount_point);
   }
+  free(mounts);
 }
 
 bool mount_backport_overlay(const char *mount_point,
@@ -872,14 +906,15 @@ static bool unmount_controlled_mount_stack_impl(const char *path,
                                                 bool diagnose_busy) {
   for (int i = 0; i < MAX_LAYERED_UNMOUNT_ATTEMPTS * 4; i++) {
     struct statfs mount_st;
-    if (!get_top_mount(path, &mount_st))
-      return true;
+    int mounted = get_top_mount(path, &mount_st);
+    if (mounted <= 0)
+      return mounted == 0;
     if (!unmount_top_controlled_layer_impl(path, diagnose_busy))
       return false;
   }
 
   struct statfs mount_st;
-  return !get_top_mount(path, &mount_st);
+  return get_top_mount(path, &mount_st) == 0;
 }
 
 static bool unmount_controlled_mount_stack(const char *path) {
@@ -1422,6 +1457,11 @@ static bool cleanup_mount_links_entry(const char *title_id,
     memset(&state, 0, sizeof(state));
     bool inspected = inspect_title_stack(title_id, source_path,
                                          ctx->removed_source_root, &state);
+    if (!inspected) {
+      log_debug("  [LINK] keeping mount link for %s: mount state unavailable",
+                title_id);
+      return true;
+    }
     bool top_is_ours = inspected && title_stack_top_is_managed(&state);
     bool stack_matches_link = false;
     if (inspected && source_path[0] != '\0') {

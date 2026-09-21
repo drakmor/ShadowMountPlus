@@ -565,17 +565,20 @@ static bool cache_root_is_mounted(const char *cache_root) {
     return false;
 
   struct statfs *mounts = NULL;
-  int mount_count = getmntinfo(&mounts, MNT_NOWAIT);
-  if (mount_count <= 0 || !mounts)
+  int mount_count = sm_mount_table_snapshot(&mounts);
+  if (mount_count < 0)
     return true;
 
   for (int i = 0; i < mount_count; ++i) {
     const char *source = mounts[i].f_mntfromname;
     if (strncmp(source, "<above>:", 8) == 0)
       source += 8;
-    if (strcmp(source, cache_fakelib) == 0)
+    if (strcmp(source, cache_fakelib) == 0) {
+      free(mounts);
       return true;
+    }
   }
+  free(mounts);
   return false;
 }
 

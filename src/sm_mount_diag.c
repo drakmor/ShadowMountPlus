@@ -5,6 +5,7 @@
 #include <sys/vnode.h>
 
 #include "sm_log.h"
+#include "sm_filesystem.h"
 #include "sm_mount_diag.h"
 #include "sm_path_utils.h"
 
@@ -117,8 +118,8 @@ static void collect_mount_dependencies(const char *mount_point,
   (void)add_diag_root(roots, mount_point);
 
   struct statfs *mounts = NULL;
-  int mount_count = getmntinfo(&mounts, MNT_NOWAIT);
-  if (mount_count <= 0 || !mounts) {
+  int mount_count = sm_mount_table_snapshot(&mounts);
+  if (mount_count < 0) {
     log_debug("  [MOUNT-BUSY] mount table unavailable for %s: %s",
               mount_point, strerror(errno));
     return;
@@ -141,6 +142,7 @@ static void collect_mount_dependencies(const char *mount_point,
     if (consumes_mount)
       (void)add_diag_root(roots, target);
   }
+  free(mounts);
   *dependency_count_out = dependency_count;
 }
 

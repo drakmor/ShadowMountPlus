@@ -8,6 +8,12 @@
 
 #include "sm_limits.h"
 
+struct statfs;
+
+// Return a private mount-table snapshot; the caller frees *mounts_out.
+// Returns the entry count, or -1 with *mounts_out == NULL on failure.
+int sm_mount_table_snapshot(struct statfs **mounts_out);
+
 // Check whether a title is present in the installed app set.
 bool is_installed(const char *title_id);
 // Check whether /user/appmeta/<TITLE_ID>/param.json exists.

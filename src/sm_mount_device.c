@@ -1,6 +1,7 @@
 #include "sm_platform.h"
 #include "sm_runtime.h"
 #include "sm_mount_device.h"
+#include "sm_filesystem.h"
 #include "sm_image_cache.h"
 #include "sm_limits.h"
 #include "sm_log.h"
@@ -87,8 +88,8 @@ bool resolve_device_from_mount(const char *mount_point,
   }
 
   struct statfs *mntbuf = NULL;
-  int mntcount = getmntinfo(&mntbuf, MNT_NOWAIT);
-  if (mntcount <= 0 || !mntbuf)
+  int mntcount = sm_mount_table_snapshot(&mntbuf);
+  if (mntcount < 0)
     return false;
 
   for (int i = 0; i < mntcount; i++) {
@@ -96,14 +97,17 @@ bool resolve_device_from_mount(const char *mount_point,
       continue;
     if (parse_unit_from_dev_path(mntbuf[i].f_mntfromname, "/dev/lvd", unit_out)) {
       *backend_out = ATTACH_BACKEND_LVD;
+      free(mntbuf);
       return true;
     }
     if (parse_unit_from_dev_path(mntbuf[i].f_mntfromname, "/dev/md", unit_out)) {
       *backend_out = ATTACH_BACKEND_MD;
+      free(mntbuf);
       return true;
     }
   }
 
+  free(mntbuf);
   return false;
 }
 
@@ -115,11 +119,16 @@ static bool is_path_mountpoint(const char *path) {
   // An unreadable filesystem can make statfs(path) fail while it is still in
   // the mount table. Treat it as active until unmount removes that entry.
   struct statfs *mntbuf = NULL;
-  int mntcount = getmntinfo(&mntbuf, MNT_NOWAIT);
+  int mntcount = sm_mount_table_snapshot(&mntbuf);
+  if (mntcount < 0)
+    return true; // Do not detach a device when its mount state is unknown.
   for (int i = 0; i < mntcount && mntbuf; ++i) {
-    if (strcmp(mntbuf[i].f_mntonname, path) == 0)
+    if (strcmp(mntbuf[i].f_mntonname, path) == 0) {
+      free(mntbuf);
       return true;
+    }
   }
+  free(mntbuf);
   return false;
 }
 
@@ -130,7 +139,11 @@ bool is_active_image_mount_point(const char *path) {
 bool wait_for_lvd_release(void) {
   for (unsigned int waited_us = 0;; waited_us += LVD_RELEASE_WAIT_POLL_US) {
     struct statfs *mntbuf = NULL;
-    int mntcount = getmntinfo(&mntbuf, MNT_NOWAIT);
+    int mntcount = sm_mount_table_snapshot(&mntbuf);
+    if (mntcount < 0) {
+      log_debug("  [IMG][LVD] mount table unavailable: %s", strerror(errno));
+      return false;
+    }
     bool mounted = false;
     for (int i = 0; i < mntcount && mntbuf; i++) {
       if (strcmp(mntbuf[i].f_mntfromname, "/dev/lvd2") != 0)
@@ -139,6 +152,7 @@ bool wait_for_lvd_release(void) {
       break;
     }
     if (!mounted) {
+      free(mntbuf);
       if (waited_us != 0)
         log_debug("  [IMG][LVD] /dev/lvd2 released");
       return true;
@@ -164,6 +178,7 @@ bool wait_for_lvd_release(void) {
                   (unsigned long)mntbuf[i].f_flags);
       }
     }
+    free(mntbuf);
     if (should_stop_requested())
       return false;
     if (waited_us >= LVD_RELEASE_WAIT_MAX_US) {
@@ -198,14 +213,21 @@ static bool read_device_node_identity(
 static bool device_node_is_mounted(const char *devname,
                                    char mount_point[MNAMELEN]) {
   struct statfs *mounts = NULL;
-  int mount_count = getmntinfo(&mounts, MNT_NOWAIT);
+  int mount_count = sm_mount_table_snapshot(&mounts);
+  if (mount_count < 0) {
+    if (mount_point)
+      (void)strlcpy(mount_point, "unknown", MNAMELEN);
+    return true;
+  }
   for (int i = 0; i < mount_count && mounts; ++i) {
     if (strcmp(mounts[i].f_mntfromname, devname) != 0)
       continue;
     if (mount_point)
       (void)strlcpy(mount_point, mounts[i].f_mntonname, MNAMELEN);
+    free(mounts);
     return true;
   }
+  free(mounts);
   return false;
 }
 
