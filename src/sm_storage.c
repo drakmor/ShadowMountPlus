@@ -7,7 +7,7 @@
 #include "sm_runtime.h"
 #include "sm_storage.h"
 
-#define STORAGE_COPY_BUFFER_SIZE (256u * 1024u)
+#define STORAGE_COPY_BUFFER_SIZE (4u * 1024u * 1024u)
 
 static bool valid_storage_path(const char *path) {
   if (!path || path[0] != '/' || path[1] == '\0')
@@ -147,6 +147,7 @@ static int copy_regular_file(const char *source, const char *destination,
   int source_fd = open(source, O_RDONLY);
   if (source_fd < 0)
     return -1;
+  (void)posix_fadvise(source_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
   int destination_fd =
       open(destination, O_WRONLY | O_CREAT | O_EXCL, mode & 0777);
   if (destination_fd < 0) {
@@ -194,7 +195,7 @@ static int copy_regular_file(const char *source, const char *destination,
     }
   }
   int saved_errno = result != 0 ? errno : 0;
-  if (result == 0 && fsync(destination_fd) != 0) {
+  if (result == 0 && fdatasync(destination_fd) != 0) {
     result = -1;
     saved_errno = errno;
   }
