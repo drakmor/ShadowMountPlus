@@ -1716,7 +1716,9 @@ static bool discard_scanner_events_nowait(int kq) {
   struct timespec timeout;
   memset(&timeout, 0, sizeof(timeout));
 
-  while (true) {
+  // Leave remaining events queued so continuous activity cannot starve the
+  // main loop's stop, reload and scheduling checks.
+  for (int batch = 0; batch < SCANNER_EVENT_DRAIN_BATCHES; batch++) {
     int nev = kevent(kq, NULL, 0, events, SCANNER_EVENT_BATCH, &timeout);
     if (nev < 0) {
       if (errno == EINTR)
@@ -1730,6 +1732,7 @@ static bool discard_scanner_events_nowait(int kq) {
     for (int i = 0; i < nev; ++i)
       (void)handle_scanner_control_event(kq, &events[i], now_us);
   }
+  return true;
 }
 
 static char g_scanner_shutdown_reason[128];
