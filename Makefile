@@ -41,7 +41,6 @@ usb-info.elf: tools/usb_info.c
 shadowmountplus.elf: $(OBJS) $(KERNEL_SYS_STUB_SO)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(KERNEL_SYS_STUB_SO) $(LIBS)
 	$(PS5_PAYLOAD_SDK)/bin/prospero-strip --strip-all $@
-	rm -f $(ASSET_SRCS)
 
 $(KERNEL_SYS_STUB_SO): $(KERNEL_SYS_STUB_SRCS)
 	test -f "$(PS5_SCE_STUBS_DIR)/libkernel_sys.c"
