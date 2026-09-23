@@ -31,7 +31,7 @@ bool is_path_stable_now(const char *path, double *root_diff_out,
     *root_diff_out = root_diff;
   if (root_diff < 0.0)
     return true;
-  return root_diff > (double)runtime_config().stability_wait_seconds;
+  return root_diff >= (double)runtime_config().stability_wait_seconds;
 }
 
 bool wait_for_stability_fast(const char *path, const char *name) {
