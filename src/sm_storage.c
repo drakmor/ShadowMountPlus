@@ -28,6 +28,38 @@ static bool valid_storage_path(const char *path) {
   return true;
 }
 
+static bool valid_storage_transfer_paths(const char *source,
+                                          const char *destination) {
+  if (!valid_storage_path(source) || !valid_storage_path(destination) ||
+      path_matches_root_or_child(destination, source)) {
+    errno = EINVAL;
+    return false;
+  }
+
+  char parent[MAX_PATH];
+  if (strlcpy(parent, destination, sizeof(parent)) >= sizeof(parent)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  char *separator = strrchr(parent, '/');
+  if (separator == parent)
+    separator[1] = '\0';
+  else
+    *separator = '\0';
+
+  // The destination does not exist yet. Resolve its parent to also catch
+  // aliases that would recursively copy a directory into itself.
+  char resolved_source[PATH_MAX];
+  char resolved_parent[PATH_MAX];
+  if (!realpath(source, resolved_source) || !realpath(parent, resolved_parent))
+    return false;
+  if (path_matches_root_or_child(resolved_parent, resolved_source)) {
+    errno = EINVAL;
+    return false;
+  }
+  return true;
+}
+
 static bool storage_operation_cancelled(sm_storage_cancel_fn cancel,
                                         void *ctx) {
   return should_stop_requested() || runtime_sleep_mode_active() ||
@@ -291,9 +323,7 @@ int sm_storage_copy_path(const char *source, const char *destination) {
 int sm_storage_copy_path_progress(const char *source, const char *destination,
                                   sm_storage_progress_fn progress,
                                   sm_storage_cancel_fn cancel, void *ctx) {
-  if (!valid_storage_path(source) || !valid_storage_path(destination) ||
-      path_matches_root_or_child(destination, source)) {
-    errno = EINVAL;
+  if (!valid_storage_transfer_paths(source, destination)) {
     return -1;
   }
   struct stat st;
@@ -400,9 +430,7 @@ int sm_storage_move_path_progress(const char *source, const char *destination,
                                   sm_storage_finalize_fn begin_finalize,
                                   void *ctx,
                                   bool *renamed_out) {
-  if (!valid_storage_path(source) || !valid_storage_path(destination) ||
-      path_matches_root_or_child(destination, source)) {
-    errno = EINVAL;
+  if (!valid_storage_transfer_paths(source, destination)) {
     return -1;
   }
   if (renamed_out)
