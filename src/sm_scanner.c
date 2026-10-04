@@ -30,6 +30,7 @@
 #include "sm_scan.h"
 #include "sm_scan_tree.h"
 #include "sm_scanner.h"
+#include "sm_shellcore_hooks.h"
 #include "sm_shellcore_service.h"
 #include "sm_time.h"
 #include "sm_title_state.h"
@@ -1890,6 +1891,7 @@ void sm_scanner_run_loop(void) {
     next_fakelib_cache_cleanup_us = 1;
   bool was_sleeping = false;
   bool scan_work_blocked = false;
+  uint64_t hooks_refresh_due_us = 0;
 
   while (true) {
     if (should_stop_requested()) {
@@ -1943,6 +1945,9 @@ void sm_scanner_run_loop(void) {
       schedule_config_reload(resume_us);
       reopen_manual_file_watch(kq, resume_us);
       g_scanner_manual_scan_due_us = resume_us + RUNTIME_RESUME_GRACE_US;
+      // Rest mode can drop the SceShellCore hooks; check them when the
+      // post-resume scans become due, before they register anything.
+      hooks_refresh_due_us = resume_us + RUNTIME_RESUME_GRACE_US;
       if (!resume_usb_scan_root_watch_trees(kq)) {
         close(kq);
         clear_scanner_watch_entries();
@@ -1955,6 +1960,13 @@ void sm_scanner_run_loop(void) {
       next_full_resync_us =
           monotonic_time_us() + RUNTIME_RESUME_GRACE_US;
       log_debug("[SLEEP] USB scanner watches resumed");
+    }
+
+    if (hooks_refresh_due_us != 0 &&
+        monotonic_time_us() >= hooks_refresh_due_us) {
+      hooks_refresh_due_us = 0;
+      if (!sm_shellcore_hooks_refresh())
+        log_debug("  [SHELLCORE] hooks could not be reinstalled after resume");
     }
 
     bool game_mount_busy = sm_game_lifecycle_has_active_game() ||

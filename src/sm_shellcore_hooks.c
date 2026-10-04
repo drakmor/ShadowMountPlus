@@ -111,7 +111,14 @@ typedef struct {
   shellcore_hook_record_t hooks[SHELLCORE_MAX_HOOK_COUNT];
 } shellcore_hooks_state_t;
 
+static const uint8_t *const k_hook_symbols[SHELLCORE_MAX_HOOK_COUNT] = {
+    sm_shellcore_bridge_launch_hook,
+    sm_shellcore_bridge_sandbox_hook,
+    sm_shellcore_bridge_install_all_hook,
+};
+
 static shellcore_hooks_state_t g_hooks;
+static bool g_hooks_wanted;
 static pthread_mutex_t g_install_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static uintptr_t remote_bridge_symbol(const uint8_t *symbol) {
@@ -301,6 +308,17 @@ static bool remote_call_matches(pid_t pid, uintptr_t source,
          verify_remote_bytes(pid, source, patch, sizeof(patch));
 }
 
+// Whether hook `index` of g_hooks still diverts its target into our bridge.
+static bool hook_installed(pid_t pid, size_t index) {
+  const shellcore_hook_record_t *hook = &g_hooks.hooks[index];
+  uintptr_t target_address = g_hooks.remote.targets[hook->target];
+  uintptr_t hook_address = remote_bridge_symbol(k_hook_symbols[index]);
+  return hook->target == SM_SHELLCORE_TARGET_SANDBOX_READY
+             ? remote_call_matches(pid, target_address, hook_address)
+             : remote_hook_matches(pid, target_address, hook_address,
+                                   hook->original_size);
+}
+
 /*
  * A forced payload replacement can bypass our shutdown path while leaving
  * ShellCore alive. Recover only a bridge with this exact code signature and
@@ -310,11 +328,6 @@ static bool recover_stale_bridge(
     pid_t pid, const sm_shellcore_remote_t *remote,
     const shellcore_hook_record_t hooks[SHELLCORE_MAX_HOOK_COUNT],
     size_t hook_count, uintptr_t bridge_address, size_t bridge_size) {
-  static const uint8_t *const hook_symbols[SHELLCORE_MAX_HOOK_COUNT] = {
-      sm_shellcore_bridge_launch_hook,
-      sm_shellcore_bridge_sandbox_hook,
-      sm_shellcore_bridge_install_all_hook,
-  };
   static const uint8_t *const trampoline_symbols[SHELLCORE_MAX_HOOK_COUNT] = {
       sm_shellcore_bridge_launch_trampoline,
       NULL,
@@ -335,7 +348,7 @@ static bool recover_stale_bridge(
       return false;
     }
     size_t hook_offset =
-        (size_t)(hook_symbols[i] - sm_shellcore_bridge_blob_start);
+        (size_t)(k_hook_symbols[i] - sm_shellcore_bridge_blob_start);
     if (target == SM_SHELLCORE_TARGET_SANDBOX_READY) {
       uintptr_t destination = 0;
       uintptr_t original_target =
@@ -760,6 +773,33 @@ done:
   return ok;
 }
 
+static bool hooks_in_place_locked(pid_t pid) {
+  if (g_hooks.status != SHELLCORE_HOOKS_READY || g_hooks.remote.pid != pid)
+    return false;
+  for (size_t i = 0; i < g_hooks.hook_count; ++i) {
+    if (!hook_installed(pid, i))
+      return false;
+  }
+  return true;
+}
+
+// SceShellCore can come back from rest mode without our hooks, or as a new
+// process. Install the bridge again the same way startup does; the stale-bridge
+// recovery in install_hooks_for_pid() detaches whatever is left of the old one.
+static bool reinstall_hooks_locked(const char *reason) {
+  if (!g_hooks_wanted || g_hooks.status == SHELLCORE_HOOKS_ROLLBACK_PENDING)
+    return false;
+  pid_t pid = find_shellcore_pid();
+  if (pid <= 0)
+    return false;
+  if (hooks_in_place_locked(pid))
+    return true;
+  log_debug("  [SHELLCORE] hooks lost (%s); reinstalling: old_pid=%ld pid=%ld",
+            reason, (long)g_hooks.remote.pid, (long)pid);
+  memset(&g_hooks, 0, sizeof(g_hooks));
+  return install_hooks_for_pid(pid);
+}
+
 bool sm_shellcore_hooks_start(void) {
   pthread_mutex_lock(&g_install_mutex);
   if (g_hooks.status != SHELLCORE_HOOKS_EMPTY) {
@@ -775,12 +815,21 @@ bool sm_shellcore_hooks_start(void) {
     return false;
   }
   bool ok = install_hooks_for_pid(pid);
+  g_hooks_wanted = ok;
+  pthread_mutex_unlock(&g_install_mutex);
+  return ok;
+}
+
+bool sm_shellcore_hooks_refresh(void) {
+  pthread_mutex_lock(&g_install_mutex);
+  bool ok = !g_hooks_wanted || reinstall_hooks_locked("resume");
   pthread_mutex_unlock(&g_install_mutex);
   return ok;
 }
 
 void sm_shellcore_hooks_stop(void) {
   pthread_mutex_lock(&g_install_mutex);
+  g_hooks_wanted = false;
   if (g_hooks.status == SHELLCORE_HOOKS_EMPTY) {
     pthread_mutex_unlock(&g_install_mutex);
     return;
@@ -822,11 +871,6 @@ void sm_shellcore_hooks_stop(void) {
 
   bool restored = true;
   bool found_installed_hook = false;
-  static const uint8_t *const hook_symbols[SHELLCORE_MAX_HOOK_COUNT] = {
-      sm_shellcore_bridge_launch_hook,
-      sm_shellcore_bridge_sandbox_hook,
-      sm_shellcore_bridge_install_all_hook,
-  };
   for (size_t i = 0; i < g_hooks.hook_count; ++i) {
     shellcore_hook_record_t *hook = &g_hooks.hooks[i];
     uintptr_t target_address = g_hooks.remote.targets[hook->target];
@@ -838,16 +882,7 @@ void sm_shellcore_hooks_stop(void) {
       }
       continue;
     }
-    const uint8_t *hook_symbol = hook_symbols[i];
-    uintptr_t hook_address =
-        g_hooks.bridge_address +
-        (uintptr_t)(hook_symbol - sm_shellcore_bridge_blob_start);
-    bool hook_matches =
-        hook->target == SM_SHELLCORE_TARGET_SANDBOX_READY
-            ? remote_call_matches(pid, target_address, hook_address)
-            : remote_hook_matches(pid, target_address, hook_address,
-                                  hook->original_size);
-    if (hook_matches) {
+    if (hook_installed(pid, i)) {
       found_installed_hook = true;
       if (!restore_remote_bytes(pid, target_address, hook->original,
                                 hook->original_size)) {
@@ -898,6 +933,7 @@ bool sm_shellcore_install_title_dir(const char *title_id,
   }
 
   pthread_mutex_lock(&g_install_mutex);
+  (void)reinstall_hooks_locked("before AppInstallAll");
   if (g_hooks.status != SHELLCORE_HOOKS_READY ||
       g_hooks.hook_count < SHELLCORE_MAX_HOOK_COUNT) {
     pthread_mutex_unlock(&g_install_mutex);

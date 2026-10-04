@@ -7,6 +7,11 @@
 bool sm_shellcore_hooks_start(void);
 void sm_shellcore_hooks_stop(void);
 
+// Reinstall the bridge when SceShellCore no longer carries every hook, as
+// happens across rest mode. Returns whether the hooks are in place afterwards;
+// does nothing when the bridge was never installed.
+bool sm_shellcore_hooks_refresh(void);
+
 // Return whether this firmware uses the internal TitleDir bridge.
 bool sm_shellcore_install_bridge_enabled(void);
 
