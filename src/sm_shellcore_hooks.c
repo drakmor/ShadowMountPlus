@@ -796,8 +796,18 @@ static bool reinstall_hooks_locked(const char *reason) {
     return true;
   log_debug("  [SHELLCORE] hooks lost (%s); reinstalling: old_pid=%ld pid=%ld",
             reason, (long)g_hooks.remote.pid, (long)pid);
+  shellcore_hooks_state_t previous = g_hooks;
   memset(&g_hooks, 0, sizeof(g_hooks));
-  return install_hooks_for_pid(pid);
+  if (install_hooks_for_pid(pid))
+    return true;
+  // Hooks that survived in the same process may still divert into the old
+  // bridge. Keep owning them so a later reinstall or shutdown restores them.
+  if (g_hooks.status == SHELLCORE_HOOKS_EMPTY &&
+      previous.status != SHELLCORE_HOOKS_EMPTY && previous.remote.pid == pid) {
+    g_hooks = previous;
+    g_hooks.status = SHELLCORE_HOOKS_STALE;
+  }
+  return false;
 }
 
 bool sm_shellcore_hooks_start(void) {

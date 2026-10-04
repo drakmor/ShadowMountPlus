@@ -43,6 +43,7 @@
 #define SCANNER_CONFIG_PROBE_INTERVAL_US 10000000ull
 #define SCANNER_MANUAL_RELOAD_DEBOUNCE_US 250000ull
 #define SCANNER_MANUAL_PROBE_INTERVAL_US 10000000ull
+#define SCANNER_HOOK_REFRESH_ATTEMPTS 3u
 #define SCANNER_USB_SLOT_COUNT 8
 #define SCANNER_USB_MOUNT_PROBE_DELAY_US 1000000ull
 #define SCANNER_MAX_RECOMMENDED_CLUSTER_SIZE_BYTES (64ull * 1024ull)
@@ -1892,6 +1893,7 @@ void sm_scanner_run_loop(void) {
   bool was_sleeping = false;
   bool scan_work_blocked = false;
   uint64_t hooks_refresh_due_us = 0;
+  unsigned hooks_refresh_attempts = 0;
 
   while (true) {
     if (should_stop_requested()) {
@@ -1948,6 +1950,7 @@ void sm_scanner_run_loop(void) {
       // Rest mode can drop the SceShellCore hooks; check them when the
       // post-resume scans become due, before they register anything.
       hooks_refresh_due_us = resume_us + RUNTIME_RESUME_GRACE_US;
+      hooks_refresh_attempts = 0;
       if (!resume_usb_scan_root_watch_trees(kq)) {
         close(kq);
         clear_scanner_watch_entries();
@@ -1965,8 +1968,17 @@ void sm_scanner_run_loop(void) {
     if (hooks_refresh_due_us != 0 &&
         monotonic_time_us() >= hooks_refresh_due_us) {
       hooks_refresh_due_us = 0;
-      if (!sm_shellcore_hooks_refresh())
-        log_debug("  [SHELLCORE] hooks could not be reinstalled after resume");
+      if (!sm_shellcore_hooks_refresh()) {
+        if (++hooks_refresh_attempts < SCANNER_HOOK_REFRESH_ATTEMPTS) {
+          hooks_refresh_due_us = monotonic_time_us() + RUNTIME_RESUME_GRACE_US;
+          log_debug("  [SHELLCORE] hook reinstall after resume failed; "
+                    "retrying (%u/%u)",
+                    hooks_refresh_attempts, SCANNER_HOOK_REFRESH_ATTEMPTS);
+        } else {
+          log_debug("  [SHELLCORE] hooks could not be reinstalled after "
+                    "resume");
+        }
+      }
     }
 
     bool game_mount_busy = sm_game_lifecycle_has_active_game() ||
@@ -2231,6 +2243,10 @@ void sm_scanner_run_loop(void) {
     uint64_t deadline_us = compute_next_scan_deadline_us(
         now_us, next_full_resync_us, next_fakelib_cache_cleanup_us,
         !game_mount_busy);
+    if (hooks_refresh_due_us != 0 &&
+        (deadline_us == 0 || hooks_refresh_due_us < deadline_us)) {
+      deadline_us = hooks_refresh_due_us;
+    }
     struct timespec timeout;
     const struct timespec *timeout_ptr =
         build_wait_timeout(&timeout, now_us, deadline_us);
