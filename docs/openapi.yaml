@@ -1241,7 +1241,7 @@ components:
   schemas:
     TitleId:
       type: string
-      pattern: "^(CUSA|PPSA|LAPY|FAKE)[0-9]{5}$"
+      pattern: "^(CUSA|PPSA|LAPY|FAKE|PCSX)[0-9]{5}$"
       examples: [PPSA12345]
 
     TitleRequest:

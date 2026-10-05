@@ -10,6 +10,7 @@
 #include "sm_mdbg.h"
 #include "sm_time.h"
 #include "sm_types.h"
+#include "sm_ucred.h"
 
 int sceKernelDebugGetPrivateLogText(void *buffer, size_t buffer_size,
                                     char **text, uint64_t *text_size);
@@ -149,12 +150,13 @@ static int elevate_to_coredump(void) {
       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   pid_t pid = getpid();
 
-  if (kernel_set_ucred_authid(pid, SCE_AUTHID_COREDUMP) < 0)
-    return -1;
-  if (kernel_set_ucred_caps(pid, k_priv_caps) < 0)
-    return -1;
-
-  return 0;
+  int result = 0;
+  sm_ucred_lock();
+  if (kernel_set_ucred_authid(pid, SCE_AUTHID_COREDUMP) < 0 ||
+      kernel_set_ucred_caps(pid, k_priv_caps) < 0)
+    result = -1;
+  sm_ucred_unlock();
+  return result;
 }
 #endif
 
@@ -293,9 +295,13 @@ static int fetch_log_text(const char **text_out, size_t *text_len_out) {
   *text_out = NULL;
   *text_len_out = 0;
 
+  // The read needs the coredump authid: hold the credential lock so that a
+  // temporary elevation elsewhere cannot be in place during it.
   pthread_mutex_lock(&g_mdbg_kernel_log_mutex);
+  sm_ucred_lock();
   int ret = MDBG_FETCH_LOG_TEXT(g_mdbg.log_storage, g_mdbg.log_buffer_size,
                                 &raw_text, &raw_len);
+  sm_ucred_unlock();
   pthread_mutex_unlock(&g_mdbg_kernel_log_mutex);
   if (ret < 0)
     return ret;
@@ -333,7 +339,9 @@ int sm_mdbg_get_log_tail(size_t max_bytes, char **text_out,
   char *raw_text = NULL;
   uint64_t raw_length = 0;
   pthread_mutex_lock(&g_mdbg_kernel_log_mutex);
+  sm_ucred_lock();
   int ret = MDBG_FETCH_LOG_TEXT(storage, buffer_size, &raw_text, &raw_length);
+  sm_ucred_unlock();
   pthread_mutex_unlock(&g_mdbg_kernel_log_mutex);
   if (ret != 0) {
     free(storage);

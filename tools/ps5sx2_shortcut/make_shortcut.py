@@ -73,6 +73,9 @@ def main():
     a = ap.parse_args()
 
     title_id = title_id_for(a.serial)
+    # The same rule as ShadowMountPlus's launch route, so a wrong path fails here and not on the console.
+    if not re.fullmatch(r"/data/PCSX2(?:/games)?/[^/]+\.(?:iso|chd|cso|zso)", a.image, re.IGNORECASE):
+        sys.exit("--image must be an .iso, .chd, .cso or .zso file directly in /data/PCSX2/games or /data/PCSX2")
     app = HERE / "dist" / "shortcuts" / title_id
     shutil.rmtree(app, ignore_errors=True)
     (app / "sce_sys").mkdir(parents=True)

@@ -6,6 +6,7 @@
 
 #include "sm_log.h"
 #include "sm_shellcore_remote.h"
+#include "sm_ucred.h"
 
 #define X86_PAGE_FRAME 0x000ffffffffff000ull
 #define X86_PAGE_VALID 0x001ull
@@ -18,19 +19,24 @@ static int privileged_ptrace(int request, pid_t pid, void *address, int data) {
       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   pid_t self = getpid();
   uint8_t saved_caps[sizeof(k_priv_caps)];
+  sm_ucred_lock();
   uint64_t saved_authid = kernel_get_ucred_authid(self);
-  if (!saved_authid || kernel_get_ucred_caps(self, saved_caps) != 0)
+  if (!saved_authid || kernel_get_ucred_caps(self, saved_caps) != 0) {
+    sm_ucred_unlock();
     return -1;
+  }
   if (kernel_set_ucred_authid(self, SCE_AUTHID_DEBUGGER) != 0 ||
       kernel_set_ucred_caps(self, k_priv_caps) != 0) {
     (void)kernel_set_ucred_authid(self, saved_authid);
     (void)kernel_set_ucred_caps(self, saved_caps);
+    sm_ucred_unlock();
     return -1;
   }
 
   int result = ptrace(request, pid, (caddr_t)address, data);
   bool restored = kernel_set_ucred_authid(self, saved_authid) == 0;
   restored = kernel_set_ucred_caps(self, saved_caps) == 0 && restored;
+  sm_ucred_unlock();
   return restored ? result : -1;
 }
 

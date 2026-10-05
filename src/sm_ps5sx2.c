@@ -4,6 +4,7 @@
 
 #include "sm_log.h"
 #include "sm_ps5sx2.h"
+#include "sm_ucred.h"
 
 #define PS5SX2_TITLE_ID "PPSA99203"
 #define PS5SX2_APP_DIR "/user/app/" PS5SX2_TITLE_ID
@@ -118,33 +119,33 @@ static void remove_our_nomenu_flag(const char *why) {
   log_debug("  [PS5SX2] nomenu flag removed (%s)", why);
 }
 
-// Runs fn with ShellCore's authid, as the launch services require. The
-// credential is per process, so it is restored right after the call.
-static int with_shellcore_authid(int (*fn)(void *), void *arg) {
-  pid_t self = getpid();
-  uint64_t saved = kernel_get_ucred_authid(self);
-  if (!saved || kernel_set_ucred_authid(self, SCE_AUTHID_SHELLCORE) != 0)
-    return -1;
-  int result = fn(arg);
-  (void)kernel_set_ucred_authid(self, saved);
-  return result;
+static int running_big_app(void *arg) {
+  (void)arg;
+  return sceSystemServiceGetAppIdOfRunningBigApp();
 }
 
-static int close_big_app(void *arg) {
-  (void)arg;
-  int app_id = sceSystemServiceGetAppIdOfRunningBigApp();
+static int kill_app(void *arg) {
+  return sceSystemServiceKillApp(*(int *)arg, -1, 0, 0);
+}
+
+// Each launch service call runs with ShellCore's authid on its own, so the
+// elevation does not last through the wait for the app to exit.
+static bool close_big_app(void) {
+  int app_id =
+      sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, running_big_app, NULL);
   if (app_id <= 0)
-    return 0;
-  int rc = sceSystemServiceKillApp(app_id, -1, 0, 0);
+    return true;
+  int rc = sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, kill_app, &app_id);
   log_debug("  [PS5SX2] closing the running app 0x%x: 0x%08x", app_id,
             (unsigned)rc);
   for (unsigned waited = 0; waited < BIG_APP_EXIT_WAIT_US;
        waited += POLL_US) {
-    if (sceSystemServiceGetAppIdOfRunningBigApp() <= 0)
-      return 0;
+    if (sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, running_big_app, NULL) <=
+        0)
+      return true;
     sceKernelUsleep(POLL_US);
   }
-  return -1;
+  return false;
 }
 
 static int launch_ps5sx2(void *arg) {
@@ -196,13 +197,13 @@ static void *launch_thread_main(void *arg) {
     }
   }
 
-  if (with_shellcore_authid(close_big_app, NULL) != 0) {
+  if (!close_big_app()) {
     log_debug("  [PS5SX2] the running app did not close");
     notify_system_l10n(SM_L10N_PS5SX2_CLOSE_RUNNING_GAME);
     goto done;
   }
   // The launch answers the new app's id, or a negative SCE error.
-  int rc = with_shellcore_authid(launch_ps5sx2, job);
+  int rc = sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, launch_ps5sx2, job);
   log_debug("  [PS5SX2] launch %s with %s: 0x%08x", PS5SX2_TITLE_ID,
             job->file, (unsigned)rc);
   if (rc < 0) {
