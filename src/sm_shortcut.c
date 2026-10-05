@@ -42,6 +42,7 @@ int sceSystemServiceLaunchApp(const char *title_id, char **argv,
                               app_launch_ctx_t *ctx);
 
 typedef struct {
+  int shortcut_app_id;
   char title_id[MAX_TITLE_ID];
   char args[SHORTCUT_MAX_ARGS][SHORTCUT_ARG_MAX];
   size_t arg_count;
@@ -199,28 +200,48 @@ static int kill_app(void *arg) {
   return sceSystemServiceKillApp(*(int *)arg, -1, 0, 0);
 }
 
-static int app_title_id(void *arg) {
-  char *title_id = arg;
-  int app_id = sceSystemServiceGetAppIdOfRunningBigApp();
-  if (app_id <= 0)
+typedef struct {
+  int app_id;
+  char title_id[MAX_TITLE_ID];
+} running_app_t;
+
+static int running_app_title_id(void *arg) {
+  running_app_t *app = arg;
+  app->app_id = sceSystemServiceGetAppIdOfRunningBigApp();
+  if (app->app_id <= 0)
     return -1;
-  return sceSystemServiceGetAppTitleId(app_id, title_id);
+  return sceSystemServiceGetAppTitleId(app->app_id, app->title_id);
 }
 
 // Each launch service call runs with ShellCore's authid on its own, so the
-// elevation does not last through the wait for the app to exit.
-static bool close_big_app(void) {
-  int app_id =
-      sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, running_big_app, NULL);
+// elevation does not last through the wait for the app to exit. Only the
+// shortcut that was checked is closed: if another app has come to the front
+// since, nothing is closed and the launch is dropped. A failed authid change
+// counts as a failure, never as "no app running".
+static bool close_shortcut(int shortcut_app_id) {
+  int app_id = 0;
+  if (!sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, running_big_app, NULL,
+                            &app_id))
+    return false;
   if (app_id <= 0)
     return true;
-  int rc = sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, kill_app, &app_id);
-  log_debug("  [SHORTCUT] closing the running app 0x%x: 0x%08x", app_id,
+  if (app_id != shortcut_app_id) {
+    log_debug("  [SHORTCUT] app 0x%x came to the front; not closing it",
+              app_id);
+    return false;
+  }
+  int rc = 0;
+  if (!sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, kill_app, &app_id, &rc))
+    return false;
+  log_debug("  [SHORTCUT] closing the shortcut app 0x%x: 0x%08x", app_id,
             (unsigned)rc);
   for (unsigned waited = 0; waited < BIG_APP_EXIT_WAIT_US;
        waited += POLL_US) {
-    if (sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, running_big_app, NULL) <=
-        0)
+    int running = 0;
+    if (!sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, running_big_app, NULL,
+                              &running))
+      return false;
+    if (running <= 0)
       return true;
     sceKernelUsleep(POLL_US);
   }
@@ -246,15 +267,17 @@ static void *launch_thread_main(void *arg) {
 
   if (job->ps5sx2 && !sm_ps5sx2_prepare(&job->ps5sx2_launch))
     goto done;
-  if (!close_big_app()) {
-    log_debug("  [SHORTCUT] the running app did not close");
+  if (!close_shortcut(job->shortcut_app_id)) {
+    log_debug("  [SHORTCUT] the shortcut app did not close");
     notify_system_l10n(SM_L10N_SHORTCUT_CLOSE_RUNNING_APP);
     goto done;
   }
   // The launch answers the new app's id, or a negative SCE error.
-  int rc = sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, launch_target, job);
+  int rc = -1;
+  bool elevated =
+      sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, launch_target, job, &rc);
   log_debug("  [SHORTCUT] launch %s: 0x%08x", job->title_id, (unsigned)rc);
-  launched = rc >= 0;
+  launched = elevated && rc >= 0;
   if (!launched)
     notify_system_l10n(SM_L10N_SHORTCUT_LAUNCH_FAILED, job->title_id,
                        (unsigned)rc);
@@ -270,13 +293,18 @@ done:
 }
 
 static int check_shortcut(launch_job_t *job, const char **reason_out) {
-  char shortcut_id[MAX_TITLE_ID] = {0};
-  if (sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, app_title_id,
-                           shortcut_id) != 0 ||
-      shortcut_id[0] == '\0') {
+  running_app_t shortcut;
+  memset(&shortcut, 0, sizeof(shortcut));
+  int rc = -1;
+  if (!sm_ucred_with_authid(SCE_AUTHID_SHELLCORE, running_app_title_id,
+                            &shortcut, &rc))
+    return EPERM;
+  if (rc != 0 || shortcut.title_id[0] == '\0') {
     *reason_out = "no_running_shortcut";
     return ENOENT;
   }
+  const char *shortcut_id = shortcut.title_id;
+  job->shortcut_app_id = shortcut.app_id;
 
   char source[MAX_PATH];
   char path[MAX_PATH];
