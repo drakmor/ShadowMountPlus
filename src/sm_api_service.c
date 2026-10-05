@@ -20,6 +20,8 @@
 #include "sm_image_cache.h"
 #include "sm_image_index.h"
 #include "sm_install_queue.h"
+#include "sm_kstuff.h"
+#include "sm_kstuff_caps.h"
 #include "sm_log.h"
 #include "sm_manual.h"
 #include "sm_mdbg.h"
@@ -630,7 +632,8 @@ static void handle_version(struct MHD_Connection *fd) {
       !append_json_string(capabilities, "manage_settings") ||
       !append_json_string(capabilities, "read_debug_log") ||
       !append_json_string(capabilities, "read_kernel_log") ||
-      !append_json_string(capabilities, "rescan")) {
+      !append_json_string(capabilities, "rescan") ||
+      !append_json_string(capabilities, "environment")) {
     json_object_put(capabilities);
     json_object_put(response);
     send_out_of_memory_response(fd);
@@ -641,6 +644,72 @@ static void handle_version(struct MHD_Connection *fd) {
     send_out_of_memory_response(fd);
     return;
   }
+  (void)send_json_object(fd, 200, response);
+  json_object_put(response);
+}
+
+// capabilities_valid separates "measured" from "could not measure", which is
+// not "none present": an empty array may mean kstuff has not autoloaded yet.
+static void handle_env(struct MHD_Connection *fd) {
+  uint32_t caps = 0;
+  const bool caps_valid = sm_kstuff_probe_caps(&caps);
+
+  struct json_object *response = new_status_response(0);
+  if (!response) {
+    send_out_of_memory_response(fd);
+    return;
+  }
+
+  struct json_object *kstuff = json_object_new_object();
+  struct json_object *capabilities = json_object_new_array();
+  if (!kstuff || !capabilities) {
+    if (kstuff)
+      json_object_put(kstuff);
+    if (capabilities)
+      json_object_put(capabilities);
+    json_object_put(response);
+    send_out_of_memory_response(fd);
+    return;
+  }
+
+  bool named = true;
+  if (caps_valid) {
+    if (caps & SM_KSTUFF_CAP_SYSDIRPATH)
+      named = named && append_json_string(capabilities, "sysdirpath");
+    if (caps & SM_KSTUFF_CAP_TROPHY)
+      named = named && append_json_string(capabilities, "trophy");
+  }
+  if (!named) {
+    json_object_put(capabilities);
+    json_object_put(kstuff);
+    json_object_put(response);
+    send_out_of_memory_response(fd);
+    return;
+  }
+
+  if (!add_json_value(kstuff, "capabilities", capabilities) ||
+      !add_json_bool(kstuff, "capabilities_valid", caps_valid) ||
+      !add_json_bool(kstuff, "present", sm_kstuff_is_supported()) ||
+      !add_json_bool(kstuff, "enabled", sm_kstuff_is_enabled())) {
+    json_object_put(kstuff);
+    json_object_put(response);
+    send_out_of_memory_response(fd);
+    return;
+  }
+
+  if (!add_json_value(response, "kstuff", kstuff)) {
+    json_object_put(response);
+    send_out_of_memory_response(fd);
+    return;
+  }
+
+  if (!add_json_int(response, "api_version", SM_API_VERSION) ||
+      !add_json_string(response, "shadowmount_version", SHADOWMOUNT_VERSION)) {
+    json_object_put(response);
+    send_out_of_memory_response(fd);
+    return;
+  }
+
   (void)send_json_object(fd, 200, response);
   json_object_put(response);
 }
@@ -2346,6 +2415,8 @@ static void dispatch_request(struct MHD_Connection *connection,
     handle_kernel_log(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_SCAN) == 0) {
     handle_scan(connection, json);
+  } else if (strcmp(route, SM_API_ROUTE_ENV) == 0) {
+    handle_env(connection);
   } else {
     send_error_response(connection, 404, ENOENT, "unknown API route");
   }

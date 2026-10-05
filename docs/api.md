@@ -48,6 +48,7 @@ device.
 | --- | --- | --- |
 | `/` | GET | Serve `/data/shadowmount/index.html`, or the embedded page when it is absent |
 | `/api/v1/version` | `{}` | API and ShadowMount versions plus capabilities |
+| `/api/v1/env` | `{}` | Console environment: the kstuff ShellCore patches measured in its live text, plus kstuff presence and state |
 | `/api/v1/storage` | `{}` | Mounted storage filesystems with total, free and available space |
 | `/api/v1/images` | `{}` | Complete image snapshot |
 | `/api/v1/scan` | `{"reset_attempts":false}` | Queue an immediate full rescan; optionally reset title and image retry counters |
@@ -113,9 +114,34 @@ A successful version response has this shape:
   "status": 0,
   "api_version": 1,
   "shadowmount_version": "1.7",
-  "capabilities": ["web_ui", "storage_space", "list_images", "list_games", "game_info", "game_icon", "mount_game", "unmount_game", "uninstall_game", "move_game_source", "copy_game_source", "delete_game_source", "unpack_game_image", "storage_job_status", "storage_job_cancel", "list_manual_sources", "add_manual_source", "remove_manual_source", "manage_settings", "read_debug_log", "read_kernel_log", "rescan"]
+  "capabilities": ["web_ui", "storage_space", "list_images", "list_games", "game_info", "game_icon", "mount_game", "unmount_game", "uninstall_game", "move_game_source", "copy_game_source", "delete_game_source", "unpack_game_image", "storage_job_status", "storage_job_cancel", "list_manual_sources", "add_manual_source", "remove_manual_source", "manage_settings", "read_debug_log", "read_kernel_log", "rescan", "environment"]
 }
 ```
+
+The environment response reports loader state a sandboxed title cannot observe
+for itself:
+
+```json
+{
+  "status": 0,
+  "kstuff": {
+    "capabilities": ["sysdirpath", "trophy"],
+    "capabilities_valid": true,
+    "present": true,
+    "enabled": false
+  },
+  "api_version": 1,
+  "shadowmount_version": "1.7"
+}
+```
+
+`capabilities` names the optional SceShellCore patches the loaded kstuff
+applied, measured from its live text rather than taken from a version number,
+and names rather than a bitmask so a name an older client does not recognise is
+ignorable. `capabilities_valid` is false when nothing could be measured, which
+is not the same as no patches being present: kstuff may autoload after this
+payload, so a later request can answer differently. `present` and `enabled`
+report ShadowMount's own kstuff control, not the patches.
 
 List responses contain `count` and the complete `images` or `games` array.
 Image items expose `path`, `mount_point`, `size`, modification time, `unit_id`,

@@ -87,6 +87,38 @@ paths:
         "501":
           $ref: "#/components/responses/NotImplemented"
 
+  /api/v1/env:
+    options:
+      operationId: preflightEnv
+      summary: CORS preflight
+      tags: [Service]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: getEnvironment
+      summary: Get console environment and kstuff capabilities
+      tags: [Service]
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/EnvSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "411":
+          $ref: "#/components/responses/LengthRequired"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "431":
+          $ref: "#/components/responses/HeadersTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
   /api/v1/images:
     options:
       operationId: preflightImages
@@ -970,6 +1002,16 @@ components:
           schema:
             $ref: "#/components/schemas/VersionResponse"
 
+    EnvSuccess:
+      description: Console environment and kstuff capabilities
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvResponse"
+
     ImagesSuccess:
       description: Complete image snapshot
       headers:
@@ -1413,8 +1455,61 @@ components:
           type: array
           items:
             type: string
-            enum: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan]
-          example: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan]
+            enum: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan, environment]
+          example: [web_ui, storage_space, list_images, list_games, game_info, game_icon, mount_game, unmount_game, uninstall_game, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan, environment]
+
+    EnvResponse:
+      type: object
+      additionalProperties: false
+      required: [status, api_version, shadowmount_version, kstuff]
+      properties:
+        status:
+          type: integer
+          const: 0
+        api_version:
+          type: integer
+          const: 1
+        shadowmount_version:
+          type: string
+          description: >-
+            Build identity from git describe, the same string /api/v1/version
+            reports. A client that needs to order it reads the release tags as
+            they are written: MAJOR.MINOR[.PATCH], then the channel the tags use
+            (alpha, then beta and test, which share one sequence, then the bare
+            release), then any fixN, with git describe's -COUNT-gSHA[-dirty]
+            suffix ignored.
+          example: 1.7beta2-4-gcd0e11
+        kstuff:
+          $ref: "#/components/schemas/EnvKstuff"
+
+    EnvKstuff:
+      type: object
+      additionalProperties: false
+      required: [present, enabled, capabilities_valid, capabilities]
+      properties:
+        present:
+          type: boolean
+          description: Firmware-specific kstuff control is available.
+        enabled:
+          type: boolean
+          description: Both tracked kstuff sysentvecs are enabled.
+        capabilities_valid:
+          type: boolean
+          description: >-
+            The SceShellCore patches were read successfully. When false the
+            capabilities array is empty because nothing could be measured, which
+            is not the same as no patches being present: kstuff may not have
+            autoloaded yet, so a later request can return a different answer.
+        capabilities:
+          type: array
+          description: >-
+            Optional SceShellCore patches the loaded kstuff applied, measured
+            from its live text. Names rather than a bitmask, so a name an older
+            client does not recognise is ignorable rather than ambiguous.
+          items:
+            type: string
+            enum: [sysdirpath, trophy]
+          example: [sysdirpath, trophy]
 
     StorageMount:
       type: object
