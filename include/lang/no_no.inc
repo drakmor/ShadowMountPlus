@@ -96,8 +96,8 @@ static const char *const g_no_no[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nBruk en klyngestørrelse på maksimalt 64 KB for maksimal ytelse",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Ekstern disk %s frakoblet",
-    /* English: PS5SX2: close the running game first */
-    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: lukk spillet som kjører først",
-    /* English: PS5SX2 did not start (0x%08x) */
-    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 startet ikke (0x%08x)",
+    /* English: Shortcut: the running app did not close */
+    [SM_L10N_SHORTCUT_CLOSE_RUNNING_APP] = "Snarvei: appen som kjører, ble ikke lukket",
+    /* English: Shortcut: %s did not start (0x%08x) */
+    [SM_L10N_SHORTCUT_LAUNCH_FAILED] = "Snarvei: %s startet ikke (0x%08x)",
 };

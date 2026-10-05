@@ -96,8 +96,8 @@ static const char *const g_sv_se[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nAnvänd en klusterstorlek på högst 64 KB för maximal prestanda",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Extern enhet %s frånkopplad",
-    /* English: PS5SX2: close the running game first */
-    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: stäng spelet som körs först",
-    /* English: PS5SX2 did not start (0x%08x) */
-    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 startade inte (0x%08x)",
+    /* English: Shortcut: the running app did not close */
+    [SM_L10N_SHORTCUT_CLOSE_RUNNING_APP] = "Genväg: appen som körs stängdes inte",
+    /* English: Shortcut: %s did not start (0x%08x) */
+    [SM_L10N_SHORTCUT_LAUNCH_FAILED] = "Genväg: %s startade inte (0x%08x)",
 };

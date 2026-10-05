@@ -25,7 +25,7 @@ tags:
   - name: Manual sources
   - name: Images
   - name: Games
-  - name: PS5SX2
+  - name: Shortcuts
 
 paths:
   /:
@@ -855,24 +855,24 @@ paths:
         "501":
           $ref: "#/components/responses/NotImplemented"
 
-  /api/v1/ps5sx2/launch:
+  /api/v1/shortcuts/launch:
     options:
-      operationId: preflightLaunchPs5sx2
+      operationId: preflightLaunchShortcut
       summary: CORS preflight
-      tags: [PS5SX2]
+      tags: [Shortcuts]
       responses:
         "204":
           $ref: "#/components/responses/Preflight"
     post:
-      operationId: launchPs5sx2
-      summary: Start PS5SX2 straight into one PS2 disc image
-      description: For home screen shortcuts, which cannot start another app themselves. Answers before acting; a worker then names the image in /data/PCSX2/lastgame.txt, creates /data/PCSX2/flags/nomenu unless present, closes the running app and starts PPSA99203 with "--boot <image>" in argv. The flag is removed once PS5SX2 has picked the game (it writes lastgame.txt again) or after 180 seconds.
-      tags: [PS5SX2]
+      operationId: launchShortcut
+      summary: Start what the running shortcut app declares
+      description: Called by the shortcut launcher, since an app cannot start another app itself. The request names nothing; the running big app must be an installed shortcut, whose smp-launch.json gives the target title_id, up to 8 string args and an optional adapter (ps5sx2). Answers before acting; a worker then closes the shortcut and starts the target with the arguments.
+      tags: [Shortcuts]
       requestBody:
-        $ref: "#/components/requestBodies/Ps5sx2LaunchRequest"
+        $ref: "#/components/requestBodies/EmptyRequest"
       responses:
         "200":
-          $ref: "#/components/responses/Ps5sx2LaunchSuccess"
+          $ref: "#/components/responses/ShortcutLaunchSuccess"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -921,12 +921,6 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ManualPathRequest"
-    Ps5sx2LaunchRequest:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Ps5sx2LaunchRequest"
     StorageDestinationRequest:
       required: true
       content:
@@ -1124,15 +1118,15 @@ components:
           schema:
             $ref: "#/components/schemas/UninstallResponse"
 
-    Ps5sx2LaunchSuccess:
-      description: PS5SX2 launch accepted; it runs after the response
+    ShortcutLaunchSuccess:
+      description: Shortcut launch accepted; it runs after the response
       headers:
         Access-Control-Allow-Origin:
           $ref: "#/components/headers/AllowOrigin"
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Ps5sx2LaunchResponse"
+            $ref: "#/components/schemas/ShortcutLaunchResponse"
 
     BadRequest:
       description: Invalid HTTP request, JSON body or title ID
@@ -1241,7 +1235,7 @@ components:
   schemas:
     TitleId:
       type: string
-      pattern: "^(CUSA|PPSA|LAPY|FAKE|PCSX)[0-9]{5}$"
+      pattern: "^(CUSA|PPSA|LAPY|FAKE|SHRT)[0-9]{5}$"
       examples: [PPSA12345]
 
     TitleRequest:
@@ -1285,16 +1279,6 @@ components:
         path:
           type: string
           pattern: "^/.+"
-          maxLength: 1023
-
-    Ps5sx2LaunchRequest:
-      type: object
-      required: [image]
-      properties:
-        image:
-          type: string
-          description: An .iso, .chd, .cso or .zso file directly in /data/PCSX2/games or /data/PCSX2.
-          pattern: "^/data/PCSX2/"
           maxLength: 1023
 
     StorageDestinationRequest:
@@ -1940,16 +1924,14 @@ components:
           type: string
           enum: ["", game_active, runtime_prepared, rest_mode]
 
-    Ps5sx2LaunchResponse:
+    ShortcutLaunchResponse:
       type: object
       additionalProperties: false
-      required: [status, image, launch_requested]
+      required: [status, launch_requested]
       properties:
         status:
           type: integer
           const: 0
-        image:
-          type: string
         launch_requested:
           type: boolean
           const: true
@@ -1993,4 +1975,4 @@ components:
     OperationErrorReason:
       type: string
       description: Stable reason code for localized operation errors; empty for generic errno failures.
-      enum: ["", rest_mode, game_active, install_pending, runtime_prepared, scanner_busy, runtime_busy, title_unmount_busy, image_unmount_busy, unpack_mounted, storage_busy, storage_unavailable, invalid_image_path, image_not_found, ps5sx2_not_installed, launch_in_progress]
+      enum: ["", rest_mode, game_active, install_pending, runtime_prepared, scanner_busy, runtime_busy, title_unmount_busy, image_unmount_busy, unpack_mounted, storage_busy, storage_unavailable, no_running_shortcut, invalid_shortcut, target_not_installed, launch_in_progress, invalid_image_path, image_not_found]

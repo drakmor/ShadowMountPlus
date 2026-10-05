@@ -96,8 +96,8 @@ static const char *const g_fr_fr[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nPour des performances maximales, utilisez une taille de cluster ne dépassant pas 64 Ko",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Lecteur externe %s déconnecté",
-    /* English: PS5SX2: close the running game first */
-    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2 : fermez d'abord le jeu en cours",
-    /* English: PS5SX2 did not start (0x%08x) */
-    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 n'a pas démarré (0x%08x)",
+    /* English: Shortcut: the running app did not close */
+    [SM_L10N_SHORTCUT_CLOSE_RUNNING_APP] = "Raccourci : l'application en cours ne s'est pas fermée",
+    /* English: Shortcut: %s did not start (0x%08x) */
+    [SM_L10N_SHORTCUT_LAUNCH_FAILED] = "Raccourci : %s n'a pas démarré (0x%08x)",
 };

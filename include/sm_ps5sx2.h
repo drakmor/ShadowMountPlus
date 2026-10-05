@@ -1,20 +1,36 @@
 #ifndef SM_PS5SX2_H
 #define SM_PS5SX2_H
 
+#include <limits.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <time.h>
 
-// Starts PS5SX2 (the PCSX2 port, title PPSA99203) straight into one PS2 disc
-// image, for home screen shortcuts. Released PS5SX2 builds take no launch
-// arguments, so the image is handed over the way PS5SX2 itself remembers a
-// game: /data/PCSX2/lastgame.txt names it, and the nomenu flag skips the shelf
-// until PS5SX2 has picked it up. The image also goes in argv ("--boot <path>")
-// for builds that read it.
+// The shortcut adapter for PS5SX2 (the PCSX2 port, title PPSA99203).
+// Released PS5SX2 builds take no launch arguments, so a shortcut's
+// "--boot <image>" is handed over the way PS5SX2 itself remembers a game:
+// /data/PCSX2/lastgame.txt names it, and the nomenu flag skips the shelf until
+// PS5SX2 has picked it up. The arguments still reach PS5SX2 for builds that
+// read them.
 
-// Checks the request and starts the launch on a worker thread, so the caller
-// (usually the shortcut app that is about to be closed) gets its answer first.
-// Returns 0, or an errno value; *reason_out is set to a reason code for
-// errors the caller can fix, and stays NULL otherwise.
-int sm_ps5sx2_request_launch(const char *image_path, const char **reason_out);
+typedef struct {
+  char file[NAME_MAX + 1];
+  struct timespec written;
+  bool flag_ours;
+} sm_ps5sx2_launch_t;
+
+// Checks a shortcut's target and arguments for this adapter. Returns 0, or an
+// errno value with *reason_out set to a reason code.
+int sm_ps5sx2_check(const char *target_title_id, const char *const *args,
+                    size_t arg_count, sm_ps5sx2_launch_t *launch,
+                    const char **reason_out);
+
+// Names the image in lastgame.txt and sets the nomenu flag, before the launch.
+bool sm_ps5sx2_prepare(sm_ps5sx2_launch_t *launch);
+
+// After the launch: waits for PS5SX2 to pick the game up, then removes the
+// flag; removes it at once when the launch failed.
+void sm_ps5sx2_finish(sm_ps5sx2_launch_t *launch, bool launched);
 
 // Removes a nomenu flag left behind by an interrupted launch.
 void sm_ps5sx2_recover(void);

@@ -96,8 +96,8 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n最大限のパフォーマンスを得るには、クラスターサイズを 64 KB 以下にしてください",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "外付けドライブ %s が切断されました",
-    /* English: PS5SX2: close the running game first */
-    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: 実行中のゲームを先に終了してください",
-    /* English: PS5SX2 did not start (0x%08x) */
-    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2を起動できませんでした (0x%08x)",
+    /* English: Shortcut: the running app did not close */
+    [SM_L10N_SHORTCUT_CLOSE_RUNNING_APP] = "ショートカット: 実行中のアプリが終了しませんでした",
+    /* English: Shortcut: %s did not start (0x%08x) */
+    [SM_L10N_SHORTCUT_LAUNCH_FAILED] = "ショートカット: %s を起動できませんでした (0x%08x)",
 };

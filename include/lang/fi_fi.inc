@@ -96,8 +96,8 @@ static const char *const g_fi_fi[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nSaat parhaan suorituskyvyn käyttämällä enintään 64 kt:n klusterikokoa",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Ulkoinen asema %s irrotettu",
-    /* English: PS5SX2: close the running game first */
-    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: sulje käynnissä oleva peli ensin",
-    /* English: PS5SX2 did not start (0x%08x) */
-    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 ei käynnistynyt (0x%08x)",
+    /* English: Shortcut: the running app did not close */
+    [SM_L10N_SHORTCUT_CLOSE_RUNNING_APP] = "Pikakuvake: käynnissä oleva sovellus ei sulkeutunut",
+    /* English: Shortcut: %s did not start (0x%08x) */
+    [SM_L10N_SHORTCUT_LAUNCH_FAILED] = "Pikakuvake: %s ei käynnistynyt (0x%08x)",
 };

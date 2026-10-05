@@ -394,31 +394,47 @@ Recommended folder structure:
   - `/mnt/ext0/etaHEN/games/backports/<TITLE_ID>/`
 
 
-## PS5SX2 home screen shortcuts
+## Home screen shortcuts
 
-[PS5SX2](https://github.com/Swordpdf/PS5SX2) (the PCSX2 port, `PPSA99203`)
-shows its PS2 games on a shelf of its own. A shortcut puts one PS2 game on the
-PS5 home screen: an app folder named `PCSX` plus the serial's digits
-(`SLUS-20946` -> `PCSX20946`), with the game's name and cover, a small launcher
-as `eboot.bin` and `ps5sx2-boot.txt` naming the disc image. ShadowMountPlus
-installs it like any other folder game. When it is started, the launcher asks
-ShadowMountPlus's local API (`/api/v1/ps5sx2/launch`, see `docs/api.md`) to
-start PS5SX2 straight into that image, since an app cannot start another app
-itself. The image has to be in `/data/PCSX2/games` or `/data/PCSX2`, and the
-PS5SX2 Helper payload still has to be loaded for PS5SX2 to run.
+A shortcut is a home screen icon that starts another installed app with
+arguments, for example an emulator straight into one game. It is a folder game
+with its own title ID (`SHRT` plus five digits), name and icon, and a
+`smp-launch.json` naming what to start:
 
-`tools/ps5sx2_shortcut` builds the launcher (`make NATIVE=<a built
-ps5-native-app-boilerplate checkout>`) and makes the folders:
+```json
+{"title_id": "PPSA99203", "args": ["--boot", "/data/PCSX2/games/Game.iso"], "adapter": "ps5sx2"}
+```
+
+ShadowMountPlus puts its launcher into the folder (`eboot.bin`, plus the
+`sce_module/libc.prx` loader shim it needs) and installs it like any other
+folder game. An app cannot start another app itself, so the launcher asks the
+local API (`/api/v1/shortcuts/launch`, see `docs/api.md`) to do it.
+ShadowMountPlus finds the running shortcut, reads its `smp-launch.json`, closes
+the shortcut and starts the target with the arguments. The request carries
+nothing, so a caller can only start what an installed shortcut declares.
+
+`args` (at most 8) and `adapter` are optional. The only adapter is `ps5sx2`,
+for [PS5SX2](https://github.com/Swordpdf/PS5SX2) (the PCSX2 port): released
+PS5SX2 builds ignore launch arguments, so it hands `--boot <image>` over through
+PS5SX2's own `/data/PCSX2/lastgame.txt` and `nomenu` flag. The image has to be
+in `/data/PCSX2/games` or `/data/PCSX2`, and the PS5SX2 Helper payload still has
+to be loaded for PS5SX2 to run.
+
+`tools/make_shortcut.py` makes the folders (it needs Pillow):
 
 ```sh
-python3 tools/ps5sx2_shortcut/make_shortcut.py --serial SLUS-20946 \
+# any app
+python3 tools/make_shortcut.py --title-id SHRT00001 --name "My game" \
+  --icon cover.png --target PPSA12345 --arg --some-option
+# a PS2 game in PS5SX2: title ID, cover, target and arguments from the serial
+python3 tools/make_shortcut.py --ps2-serial SLUS-20946 \
   --name "Grand Theft Auto: San Andreas" \
   --image "/data/PCSX2/games/Grand Theft Auto - San Andreas (USA) (v1.03).iso"
 ```
 
-Copy the folder it prints to `/data/homebrew/` (or another scan path). Settings
-and patches are PS5SX2's own: the game's file in `/data/PCSX2/settings/` applies
-as when it is started from the shelf.
+Copy the folder it prints to `/data/homebrew/` (or another scan path). The
+launcher's source is in `tools/shortcut_launcher` (built with
+ps5-native-app-boilerplate: `make NATIVE=<checkout>`).
 
 ## Creating an exFAT image
 

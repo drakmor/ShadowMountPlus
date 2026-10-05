@@ -96,8 +96,8 @@ static const char *const g_th_th[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nเพื่อประสิทธิภาพสูงสุด ให้ใช้ขนาดคลัสเตอร์ไม่เกิน 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "ตัดการเชื่อมต่อไดรฟ์ภายนอก %s แล้ว",
-    /* English: PS5SX2: close the running game first */
-    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: โปรดปิดเกมที่กำลังเล่นอยู่ก่อน",
-    /* English: PS5SX2 did not start (0x%08x) */
-    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "ไม่สามารถเริ่ม PS5SX2 ได้ (0x%08x)",
+    /* English: Shortcut: the running app did not close */
+    [SM_L10N_SHORTCUT_CLOSE_RUNNING_APP] = "ทางลัด: แอปที่กำลังทำงานอยู่ไม่ได้ปิด",
+    /* English: Shortcut: %s did not start (0x%08x) */
+    [SM_L10N_SHORTCUT_LAUNCH_FAILED] = "ทางลัด: ไม่สามารถเริ่ม %s ได้ (0x%08x)",
 };

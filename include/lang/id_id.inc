@@ -96,8 +96,8 @@ static const char *const g_id_id[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nUntuk performa maksimal, gunakan ukuran klaster tidak lebih dari 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Drive eksternal %s terputus",
-    /* English: PS5SX2: close the running game first */
-    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: tutup dulu game yang sedang berjalan",
-    /* English: PS5SX2 did not start (0x%08x) */
-    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 tidak dapat dimulai (0x%08x)",
+    /* English: Shortcut: the running app did not close */
+    [SM_L10N_SHORTCUT_CLOSE_RUNNING_APP] = "Pintasan: aplikasi yang berjalan tidak tertutup",
+    /* English: Shortcut: %s did not start (0x%08x) */
+    [SM_L10N_SHORTCUT_LAUNCH_FAILED] = "Pintasan: %s tidak dapat dimulai (0x%08x)",
 };

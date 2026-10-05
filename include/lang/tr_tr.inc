@@ -96,8 +96,8 @@ static const char *const g_tr_tr[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nMaksimum performans için en fazla 64 KB küme boyutu kullanın",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Harici sürücü %s çıkarıldı",
-    /* English: PS5SX2: close the running game first */
-    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: önce çalışan oyunu kapatın",
-    /* English: PS5SX2 did not start (0x%08x) */
-    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 başlatılamadı (0x%08x)",
+    /* English: Shortcut: the running app did not close */
+    [SM_L10N_SHORTCUT_CLOSE_RUNNING_APP] = "Kısayol: çalışan uygulama kapanmadı",
+    /* English: Shortcut: %s did not start (0x%08x) */
+    [SM_L10N_SHORTCUT_LAUNCH_FAILED] = "Kısayol: %s başlatılamadı (0x%08x)",
 };

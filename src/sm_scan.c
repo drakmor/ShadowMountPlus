@@ -22,6 +22,7 @@
 #include "sm_install_queue.h"
 #include "sm_manual.h"
 #include "sm_shellcore_service.h"
+#include "sm_shortcut.h"
 
 typedef struct {
   char discovered_param_roots[MAX_PENDING][MAX_PATH];
@@ -233,6 +234,7 @@ static directory_candidate_probe_t probe_directory_candidate(
     log_debug("  [SKIP] game info unavailable: %s", full_path);
     return DIRECTORY_CANDIDATE_SKIP_DESCEND;
   }
+  sm_shortcut_ensure_launcher(full_path);
 
   if (*discovered_param_root_count < MAX_PENDING &&
       !is_under_discovered_param_root(full_path, discovered_param_roots,

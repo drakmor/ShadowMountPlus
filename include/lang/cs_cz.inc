@@ -96,8 +96,8 @@ static const char *const g_cs_cz[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nPro maximální výkon použijte velikost clusteru nejvýše 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Externí disk %s odpojen",
-    /* English: PS5SX2: close the running game first */
-    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: nejprve ukončete spuštěnou hru",
-    /* English: PS5SX2 did not start (0x%08x) */
-    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 se nespustil (0x%08x)",
+    /* English: Shortcut: the running app did not close */
+    [SM_L10N_SHORTCUT_CLOSE_RUNNING_APP] = "Zástupce: spuštěná aplikace se neukončila",
+    /* English: Shortcut: %s did not start (0x%08x) */
+    [SM_L10N_SHORTCUT_LAUNCH_FAILED] = "Zástupce: %s se nespustil (0x%08x)",
 };

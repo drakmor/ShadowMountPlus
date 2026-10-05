@@ -71,7 +71,7 @@ device.
 | `/api/v1/games/storage/status` | `{"job_id":1}` | Get current or last storage job status; `job_id` is optional |
 | `/api/v1/games/storage/cancel` | `{"job_id":1}` | Request cancellation while the active job is still cancellable |
 | `/api/v1/games/delete` | `{"title_id":"PPSA12345","confirm":true}` | Start asynchronous permanent deletion of the physical source |
-| `/api/v1/ps5sx2/launch` | `{"image":"/data/PCSX2/games/Game.iso"}` | Close the running app and start PS5SX2 straight into one PS2 disc image (home screen shortcuts) |
+| `/api/v1/shortcuts/launch` | `{}` | Close the running shortcut app and start what its `smp-launch.json` names (called by the shortcut launcher) |
 
 Example:
 
@@ -284,21 +284,29 @@ game is active, another title owns a prepared runtime mount, or batch install
 work is pending. An unchanged discoverable source may be installed again by a
 later scan, so remove its manual entry or source first when that is not wanted.
 
-The PS5SX2 launch route is what home screen shortcuts for PS2 games call (see
-`tools/ps5sx2_shortcut`): an app cannot start another app itself, as the launch
-services answer `SCE_LNC_UTIL_ERROR_NOT_ALLOWED` to anything but ShellCore. The
-image must be an `.iso`, `.chd`, `.cso` or `.zso` file directly in
-`/data/PCSX2/games` or `/data/PCSX2`, where PS5SX2 looks for games, and PS5SX2
-(`PPSA99203`) must be installed. The route answers before it acts: a worker
-then writes the image's file name to `/data/PCSX2/lastgame.txt`, creates
-`/data/PCSX2/flags/nomenu` unless it is already there, closes the running app
-(normally the shortcut that made the request) and starts PS5SX2 with ShellCore's
-authid and `--boot <image>` in argv. Released PS5SX2 builds start the remembered
-game when `nomenu` is set and write `lastgame.txt` again once they have picked
-it; the flag is removed then, or after 180 seconds, so PS5SX2's own icon opens
-the shelf as usual. A flag left by an interrupted launch is removed at the next
-start. Refusals use the reason codes `invalid_image_path`, `image_not_found`,
-`ps5sx2_not_installed` and `launch_in_progress`.
+The shortcut route is what the launcher of a home screen shortcut calls (see
+"Home screen shortcuts" in the README): an app cannot start another app itself,
+as the launch services answer `SCE_LNC_UTIL_ERROR_NOT_ALLOWED` to anything but
+ShellCore. The request carries nothing. ShadowMountPlus takes the running big
+app, reads `smp-launch.json` from its source folder and checks it: a supported
+`title_id` that is installed, at most 8 string `args`, and an optional
+`adapter`. The route answers before it acts; a worker then closes the running
+app (the shortcut) and starts the target with ShellCore's authid, swapped in for
+each launch service call only.
+
+With the `ps5sx2` adapter the target must be `PPSA99203` and the arguments must
+hold `--boot` and an `.iso`, `.chd`, `.cso` or `.zso` file directly in
+`/data/PCSX2/games` or `/data/PCSX2`. Before the launch the worker writes the
+image's file name to `/data/PCSX2/lastgame.txt` and creates
+`/data/PCSX2/flags/nomenu` unless it is already there. Released PS5SX2 builds
+start the remembered game when `nomenu` is set and write `lastgame.txt` again
+once they have picked it; the flag is removed then, or after 180 seconds, so
+PS5SX2's own icon opens the shelf as usual. A flag left by an interrupted launch
+is removed at the next start.
+
+Refusals use the reason codes `no_running_shortcut`, `invalid_shortcut`,
+`target_not_installed`, `launch_in_progress`, and for the adapter
+`invalid_image_path` and `image_not_found`.
 
 ## Test client
 
