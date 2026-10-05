@@ -96,4 +96,8 @@ static const char *const g_nl_nl[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nGebruik voor maximale prestaties een clustergrootte van maximaal 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Externe schijf %s losgekoppeld",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: sluit eerst de actieve game",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 is niet gestart (0x%08x)",
 };

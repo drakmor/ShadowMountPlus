@@ -96,4 +96,8 @@ static const char *const g_uk_ua[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nДля максимальної продуктивності використовуйте кластер не більше 64 КБ",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Зовнішній диск %s відключено",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: спочатку закрийте запущену гру",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "Не вдалося запустити PS5SX2 (0x%08x)",
 };

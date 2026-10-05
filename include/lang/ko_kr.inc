@@ -96,4 +96,8 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n최대 성능을 위해 64 KB 이하의 클러스터 크기를 사용하세요",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "외장 드라이브 %s 연결 해제됨",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: 실행 중인 게임을 먼저 종료하세요",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2를 시작하지 못했습니다 (0x%08x)",
 };

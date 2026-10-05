@@ -96,4 +96,8 @@ static const char *const g_zh_tw[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n為獲得最佳效能，請使用不超過 64 KB 的叢集大小",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "外接磁碟機 %s 已中斷連接",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2：請先關閉正在執行的遊戲",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 未能啟動 (0x%08x)",
 };

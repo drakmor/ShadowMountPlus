@@ -96,4 +96,8 @@ static const char *const g_ar_sa[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nللحصول على أقصى أداء، استخدم حجم عنقود لا يزيد عن 64 كيلوبايت",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "تم فصل محرك الأقراص الخارجي %s",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: أغلق اللعبة قيد التشغيل أولاً",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "تعذر تشغيل PS5SX2 (0x%08x)",
 };

@@ -83,4 +83,6 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] =
         "\nFor maximum performance, use a cluster size of no more than 64 KB",
     [SM_L10N_USB_DISCONNECTED] = "External drive %s disconnected",
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: close the running game first",
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 did not start (0x%08x)",
 };

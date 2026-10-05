@@ -26,6 +26,7 @@
 #include "sm_mount_device.h"
 #include "sm_path_utils.h"
 #include "sm_paths.h"
+#include "sm_ps5sx2.h"
 #include "sm_runtime.h"
 #include "sm_scanner.h"
 #include "sm_shellcore_service.h"
@@ -1617,6 +1618,10 @@ static const char *operation_error_message(int status, const char *reason) {
       {"unpack_mounted", "image runtime is already mounted or prepared; unmount it before unpacking"},
       {"storage_busy", "a storage operation is already running; wait for it to finish"},
       {"storage_unavailable", "storage service is stopping or unavailable"},
+      {"invalid_image_path", "the disc image must be an .iso, .chd, .cso or .zso file in /data/PCSX2/games or /data/PCSX2"},
+      {"image_not_found", "the disc image was not found"},
+      {"ps5sx2_not_installed", "PS5SX2 (PPSA99203) is not installed"},
+      {"launch_in_progress", "another PS5SX2 launch is in progress; try again when it finishes"},
   };
   if (reason && reason[0] != '\0') {
     for (size_t i = 0; i < sizeof(messages) / sizeof(messages[0]); ++i) {
@@ -1655,6 +1660,39 @@ static bool add_scan_queue_fields(struct json_object *response, bool queued) {
   return add_json_bool(response, "scan_queued", queued) &&
          add_json_bool(response, "scan_deferred", reason[0] != '\0') &&
          add_json_string(response, "scan_deferred_reason", reason);
+}
+
+static void handle_ps5sx2_launch(struct MHD_Connection *fd,
+                                 struct json_object *request) {
+  struct json_object *value = NULL;
+  if (!json_object_object_get_ex(request, "image", &value) ||
+      !json_object_is_type(value, json_type_string)) {
+    send_error_response(fd, 400, EINVAL, "image must be a string");
+    return;
+  }
+  const char *image = json_object_get_string(value);
+  const char *reason = NULL;
+  int status = sm_ps5sx2_request_launch(image, &reason);
+  if (status != 0) {
+    log_debug("  [API] PS5SX2 launch refused: image=%s reason=%s", image,
+              reason ? reason : "");
+    send_operation_error_response(fd, status, reason);
+    return;
+  }
+
+  struct json_object *response = new_status_response(0);
+  if (!response) {
+    send_out_of_memory_response(fd);
+    return;
+  }
+  if (!add_json_string(response, "image", image) ||
+      !add_json_bool(response, "launch_requested", true)) {
+    json_object_put(response);
+    send_out_of_memory_response(fd);
+    return;
+  }
+  (void)send_json_object(fd, 200, response);
+  json_object_put(response);
 }
 
 static void handle_scan(struct MHD_Connection *fd,
@@ -2346,6 +2384,8 @@ static void dispatch_request(struct MHD_Connection *connection,
     handle_kernel_log(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_SCAN) == 0) {
     handle_scan(connection, json);
+  } else if (strcmp(route, SM_API_ROUTE_PS5SX2_LAUNCH) == 0) {
+    handle_ps5sx2_launch(connection, json);
   } else {
     send_error_response(connection, 404, ENOENT, "unknown API route");
   }

@@ -96,4 +96,8 @@ static const char *const g_it_it[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nPer prestazioni ottimali, usa una dimensione cluster non superiore a 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Unità esterna %s scollegata",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: chiudi prima il gioco in esecuzione",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 non si è avviato (0x%08x)",
 };

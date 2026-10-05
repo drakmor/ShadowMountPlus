@@ -394,6 +394,32 @@ Recommended folder structure:
   - `/mnt/ext0/etaHEN/games/backports/<TITLE_ID>/`
 
 
+## PS5SX2 home screen shortcuts
+
+[PS5SX2](https://github.com/Swordpdf/PS5SX2) (the PCSX2 port, `PPSA99203`)
+shows its PS2 games on a shelf of its own. A shortcut puts one PS2 game on the
+PS5 home screen: an app folder named `PCSX` plus the serial's digits
+(`SLUS-20946` -> `PCSX20946`), with the game's name and cover, a small launcher
+as `eboot.bin` and `ps5sx2-boot.txt` naming the disc image. ShadowMountPlus
+installs it like any other folder game. When it is started, the launcher asks
+ShadowMountPlus's local API (`/api/v1/ps5sx2/launch`, see `docs/api.md`) to
+start PS5SX2 straight into that image, since an app cannot start another app
+itself. The image has to be in `/data/PCSX2/games` or `/data/PCSX2`, and the
+PS5SX2 Helper payload still has to be loaded for PS5SX2 to run.
+
+`tools/ps5sx2_shortcut` builds the launcher (`make NATIVE=<a built
+ps5-native-app-boilerplate checkout>`) and makes the folders:
+
+```sh
+python3 tools/ps5sx2_shortcut/make_shortcut.py --serial SLUS-20946 \
+  --name "Grand Theft Auto: San Andreas" \
+  --image "/data/PCSX2/games/Grand Theft Auto - San Andreas (USA) (v1.03).iso"
+```
+
+Copy the folder it prints to `/data/homebrew/` (or another scan path). Settings
+and patches are PS5SX2's own: the game's file in `/data/PCSX2/settings/` applies
+as when it is started from the shelf.
+
 ## Creating an exFAT image
 
 Recommended only for titles that need external-drive-style compatibility. For general use, prefer `.ffpkg`.

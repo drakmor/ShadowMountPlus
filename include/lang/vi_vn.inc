@@ -96,4 +96,8 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nĐể đạt hiệu suất tối đa, hãy sử dụng kích thước cụm không quá 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Đã ngắt kết nối ổ đĩa ngoài %s",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: hãy đóng trò chơi đang chạy trước",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "Không thể khởi động PS5SX2 (0x%08x)",
 };

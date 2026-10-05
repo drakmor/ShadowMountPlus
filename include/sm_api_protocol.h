@@ -32,5 +32,6 @@
 #define SM_API_ROUTE_DEBUG_LOG "/api/v1/debug-log"
 #define SM_API_ROUTE_KERNEL_LOG "/api/v1/kernel-log"
 #define SM_API_ROUTE_SCAN "/api/v1/scan"
+#define SM_API_ROUTE_PS5SX2_LAUNCH "/api/v1/ps5sx2/launch"
 
 #endif

@@ -96,4 +96,8 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nΓια μέγιστη απόδοση, χρησιμοποιήστε μέγεθος συμπλέγματος έως 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Ο εξωτερικός δίσκος %s αποσυνδέθηκε",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: κλείστε πρώτα το παιχνίδι που εκτελείται",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "Το PS5SX2 δεν ξεκίνησε (0x%08x)",
 };

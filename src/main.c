@@ -32,6 +32,7 @@
 #include "sm_limits.h"
 #include "sm_mdbg.h"
 #include "sm_paths.h"
+#include "sm_ps5sx2.h"
 
 #ifndef SHADOWMOUNT_VERSION
 #define SHADOWMOUNT_VERSION "unknown"
@@ -662,6 +663,7 @@ int main(void) {
     goto shutdown;
   }
   log_debug("[STARTUP] scanner startup sync done");
+  sm_ps5sx2_recover();
   if (!sm_api_service_start())
     log_debug("  [API] HTTP/JSON service unavailable: %s", strerror(errno));
   sm_scanner_run_loop();

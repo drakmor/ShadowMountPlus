@@ -96,4 +96,8 @@ static const char *const g_de_de[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nVerwenden Sie für maximale Leistung eine Clustergröße von höchstens 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Externes Laufwerk %s getrennt",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: Bitte zuerst das laufende Spiel schließen",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "PS5SX2 wurde nicht gestartet (0x%08x)",
 };

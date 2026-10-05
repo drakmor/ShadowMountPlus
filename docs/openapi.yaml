@@ -25,6 +25,7 @@ tags:
   - name: Manual sources
   - name: Images
   - name: Games
+  - name: PS5SX2
 
 paths:
   /:
@@ -854,6 +855,33 @@ paths:
         "501":
           $ref: "#/components/responses/NotImplemented"
 
+  /api/v1/ps5sx2/launch:
+    options:
+      operationId: preflightLaunchPs5sx2
+      summary: CORS preflight
+      tags: [PS5SX2]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: launchPs5sx2
+      summary: Start PS5SX2 straight into one PS2 disc image
+      description: For home screen shortcuts, which cannot start another app themselves. Answers before acting; a worker then names the image in /data/PCSX2/lastgame.txt, creates /data/PCSX2/flags/nomenu unless present, closes the running app and starts PPSA99203 with "--boot <image>" in argv. The flag is removed once PS5SX2 has picked the game (it writes lastgame.txt again) or after 180 seconds.
+      tags: [PS5SX2]
+      requestBody:
+        $ref: "#/components/requestBodies/Ps5sx2LaunchRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/Ps5sx2LaunchSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   requestBodies:
     EmptyRequest:
@@ -893,6 +921,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ManualPathRequest"
+    Ps5sx2LaunchRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Ps5sx2LaunchRequest"
     StorageDestinationRequest:
       required: true
       content:
@@ -1090,6 +1124,16 @@ components:
           schema:
             $ref: "#/components/schemas/UninstallResponse"
 
+    Ps5sx2LaunchSuccess:
+      description: PS5SX2 launch accepted; it runs after the response
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: "#/components/headers/AllowOrigin"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Ps5sx2LaunchResponse"
+
     BadRequest:
       description: Invalid HTTP request, JSON body or title ID
       headers:
@@ -1241,6 +1285,16 @@ components:
         path:
           type: string
           pattern: "^/.+"
+          maxLength: 1023
+
+    Ps5sx2LaunchRequest:
+      type: object
+      required: [image]
+      properties:
+        image:
+          type: string
+          description: An .iso, .chd, .cso or .zso file directly in /data/PCSX2/games or /data/PCSX2.
+          pattern: "^/data/PCSX2/"
           maxLength: 1023
 
     StorageDestinationRequest:
@@ -1886,6 +1940,20 @@ components:
           type: string
           enum: ["", game_active, runtime_prepared, rest_mode]
 
+    Ps5sx2LaunchResponse:
+      type: object
+      additionalProperties: false
+      required: [status, image, launch_requested]
+      properties:
+        status:
+          type: integer
+          const: 0
+        image:
+          type: string
+        launch_requested:
+          type: boolean
+          const: true
+
     MissingSourceResponse:
       type: object
       additionalProperties: false
@@ -1925,4 +1993,4 @@ components:
     OperationErrorReason:
       type: string
       description: Stable reason code for localized operation errors; empty for generic errno failures.
-      enum: ["", rest_mode, game_active, install_pending, runtime_prepared, scanner_busy, runtime_busy, title_unmount_busy, image_unmount_busy, unpack_mounted, storage_busy, storage_unavailable]
+      enum: ["", rest_mode, game_active, install_pending, runtime_prepared, scanner_busy, runtime_busy, title_unmount_busy, image_unmount_busy, unpack_mounted, storage_busy, storage_unavailable, invalid_image_path, image_not_found, ps5sx2_not_installed, launch_in_progress]

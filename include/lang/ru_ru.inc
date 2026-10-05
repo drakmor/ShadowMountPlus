@@ -96,4 +96,8 @@ static const char *const g_ru_ru[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nДля максимальной производительности используйте кластер не более 64 КБ",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Внешний диск %s отключён.",
+    /* English: PS5SX2: close the running game first */
+    [SM_L10N_PS5SX2_CLOSE_RUNNING_GAME] = "PS5SX2: сначала закройте запущенную игру",
+    /* English: PS5SX2 did not start (0x%08x) */
+    [SM_L10N_PS5SX2_LAUNCH_FAILED] = "Не удалось запустить PS5SX2 (0x%08x)",
 };
