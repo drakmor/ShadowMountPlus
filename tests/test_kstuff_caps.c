@@ -7,6 +7,7 @@
 #define _GNU_SOURCE
 #define SM_PLATFORM_H
 #include <assert.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -25,8 +26,9 @@ static bool test_copyout_fails;
 #define TEST_SIG_MAX 6u
 static uint8_t test_sysdir[TEST_SIG_MAX];
 static uint8_t test_trophy[TEST_SIG_MAX];
-static uint32_t test_sysdir_off, test_trophy_off;
-static int test_copyouts;
+static _Atomic uint32_t test_sysdir_off, test_trophy_off;
+static uint32_t test_arm_sysdir_off, test_arm_trophy_off;
+static _Atomic int test_copyouts;
 
 uint32_t kernel_get_fw_version(void);
 uint32_t kernel_get_fw_version(void) { return test_fw; }
@@ -54,17 +56,18 @@ int kernel_proc_copyout(pid_t pid, intptr_t src, void *dst, size_t len) {
     return -1;
   test_copyouts++;
   assert(len <= TEST_SIG_MAX);
-  // Routed by call order, not by length: a patch the table describes in two
-  // bytes would otherwise be served the wrong buffer. run_probe reads the
-  // getSceSysDirPath site and then the trophy site, so an odd count is the
-  // first of a pair. The offsets are recorded so a case can assert the row the
-  // firmware selected.
-  if ((test_copyouts % 2) == 1u) {
-    test_sysdir_off = (uint32_t)(src - test_base);
+  // Routed by the offset asked for, so neither call order nor patch length
+  // decides which site is being read, and concurrent probes cannot cross. The
+  // offsets are recorded so a case can assert the row the firmware selected.
+  uint32_t off = (uint32_t)(src - test_base);
+  if (off == test_arm_sysdir_off) {
+    test_sysdir_off = off;
     memcpy(dst, test_sysdir, len);
-  } else {
-    test_trophy_off = (uint32_t)(src - test_base);
+  } else if (off == test_arm_trophy_off) {
+    test_trophy_off = off;
     memcpy(dst, test_trophy, len);
+  } else {
+    assert(0 && "copyout from an offset no row describes");
   }
   return 0;
 }
@@ -75,6 +78,14 @@ void log_debug(const char *fmt, ...) { (void)fmt; }
 #include "../src/sm_kstuff_caps.c"
 
 // --- helpers ---
+
+// The offsets the stubbed copyout will answer, taken from the row the current
+// firmware selects.
+static void arm_row(void) {
+  const shellcore_cap_row_t *row = find_cap_row();
+  test_arm_sysdir_off = row ? row->sysdir_off : UINT32_MAX;
+  test_arm_trophy_off = row ? row->trophy_off : UINT32_MAX;
+}
 
 // Every knob is restored, not just the cache: a case that left an unknown
 // firmware behind would decide the NEXT case for a reason it never set.
@@ -89,6 +100,7 @@ static void reset_probe_state(void) {
   test_copyouts = 0;
   memset(test_sysdir, 0, sizeof(test_sysdir));
   memset(test_trophy, 0, sizeof(test_trophy));
+  arm_row();
 }
 
 // The bytes the probe reads back, taken from the row the firmware under test
@@ -96,6 +108,7 @@ static void reset_probe_state(void) {
 // they look like on that firmware.
 static void set_patched(bool sysdir, bool trophy) {
   const shellcore_cap_row_t *row = find_cap_row();
+  arm_row();
   memset(test_sysdir, 0xcc, sizeof(test_sysdir));   // unrelated code
   memset(test_trophy, 0xcc, sizeof(test_trophy));
   if (row && sysdir)
@@ -273,6 +286,38 @@ static void test_signature_follows_firmware(void) {
   assert(caps == (SM_KSTUFF_CAP_SYSDIRPATH | SM_KSTUFF_CAP_TROPHY));
 }
 
+#define CONCURRENT_THREADS 8u
+#define CONCURRENT_ROUNDS 200u
+
+static void *probe_worker(void *unused) {
+  (void)unused;
+  for (unsigned round = 0; round < CONCURRENT_ROUNDS; round++) {
+    uint32_t caps = 0xdeadbeefu;
+    assert(sm_kstuff_probe_caps(&caps));
+    assert(caps == (SM_KSTUFF_CAP_SYSDIRPATH | SM_KSTUFF_CAP_TROPHY));
+  }
+  return NULL;
+}
+
+static void test_concurrent_probes_agree(void) {
+  // handle_env answers on MHD worker threads, so the cache is read, probed and
+  // written under concurrency. Run this under ThreadSanitizer.
+  reset_probe_state();
+  set_patched(true, true);
+
+  pthread_t workers[CONCURRENT_THREADS];
+  for (unsigned i = 0; i < CONCURRENT_THREADS; i++)
+    assert(pthread_create(&workers[i], NULL, probe_worker, NULL) == 0);
+  for (unsigned i = 0; i < CONCURRENT_THREADS; i++)
+    assert(pthread_join(workers[i], NULL) == 0);
+
+  // One probe served every thread: a complete reading is decided once, under
+  // the lock, rather than re-read per caller or per thread.
+  assert(test_copyouts == 2);
+  printf("  %u threads x %u probes, one probe between them\n",
+         CONCURRENT_THREADS, CONCURRENT_ROUNDS);
+}
+
 static void test_every_row_is_reachable(void) {
   // A duplicated or mistyped firmware stamp makes a row dead, and the console
   // it was measured on then silently reports "no patch offsets". A table
@@ -329,6 +374,7 @@ int main(void) {
   test_no_mapbase();
   test_signature_must_match_whole();
   test_signature_follows_firmware();
+  test_concurrent_probes_agree();
   test_every_row_is_reachable();
   test_a_firmware_revision_does_not_fall_through();
   printf("test_kstuff_caps: all cases passed\n");

@@ -18,7 +18,7 @@ If WSL reports `unexpected memory mapping`, run the instrumented binary with
 
 ```sh
 cc -std=gnu11 -O2 -Wall -Wextra -Werror -Iinclude -Isrc \
-  tests/test_kstuff_caps.c -o /tmp/shadowmount-test-kstuff-caps
+  tests/test_kstuff_caps.c -o /tmp/shadowmount-test-kstuff-caps -lpthread
 timeout 30s /tmp/shadowmount-test-kstuff-caps
 ```
 
@@ -34,7 +34,11 @@ its own row reads as patched while a neighbour's does not, so the 6-byte and
 2-byte getSceSysDirPath NOPs are each rejected on the wrong side of 7.00. And what may be cached: a
 zero or a one-bit reading must not latch, because kstuff may load after this
 payload, while a complete reading must not be re-read or downgraded by a later
-failed probe. A table regenerated against a newer kstuff-lite is checked by the
+failed probe. The last of those is also checked under concurrency, because the
+route answers on API worker threads: eight threads probing at once must all
+read the same complete answer, and one probe must serve them all. Run that case
+under `-fsanitize=thread`, where removing the cache lock reports a data race in
+`sm_kstuff_probe_caps`. A table regenerated against a newer kstuff-lite is checked by the
 same cases, so that is the whole review after running
 
 ```sh

@@ -650,9 +650,19 @@ static void handle_version(struct MHD_Connection *fd) {
 
 // capabilities_valid separates "measured" from "could not measure", which is
 // not "none present": an empty array may mean kstuff has not autoloaded yet.
+// The route's three readings all reach the kernel through the payload SDK's
+// read helpers, which are not reentrant, and the API answers on a worker pool.
+// Gathered under one lock: concurrent requests otherwise corrupt each other's
+// reads and report kstuff absent on a console where it is loaded.
+static pthread_mutex_t g_env_state_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static void handle_env(struct MHD_Connection *fd) {
   uint32_t caps = 0;
+  pthread_mutex_lock(&g_env_state_mutex);
   const bool caps_valid = sm_kstuff_probe_caps(&caps);
+  const bool kstuff_present = sm_kstuff_is_supported();
+  const bool kstuff_enabled = sm_kstuff_is_enabled();
+  pthread_mutex_unlock(&g_env_state_mutex);
 
   struct json_object *response = new_status_response(0);
   if (!response) {
@@ -689,8 +699,8 @@ static void handle_env(struct MHD_Connection *fd) {
 
   if (!add_json_value(kstuff, "capabilities", capabilities) ||
       !add_json_bool(kstuff, "capabilities_valid", caps_valid) ||
-      !add_json_bool(kstuff, "present", sm_kstuff_is_supported()) ||
-      !add_json_bool(kstuff, "enabled", sm_kstuff_is_enabled())) {
+      !add_json_bool(kstuff, "present", kstuff_present) ||
+      !add_json_bool(kstuff, "enabled", kstuff_enabled)) {
     json_object_put(kstuff);
     json_object_put(response);
     send_out_of_memory_response(fd);

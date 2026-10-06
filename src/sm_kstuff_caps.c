@@ -1,4 +1,5 @@
 #include "sm_platform.h"
+#include <pthread.h>
 
 #include "sm_kstuff_caps.h"
 #include "sm_log.h"
@@ -28,6 +29,9 @@ static const shellcore_cap_row_t g_cap_rows[] = {
 #include "sm_kstuff_caps_offsets.inc"
 };
 
+// Eight MHD workers can ask at once, and the cache is read, probed and written
+// as one decision.
+static pthread_mutex_t g_caps_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool g_caps_probed = false;
 static bool g_caps_valid = false;
 static uint32_t g_caps = 0;
@@ -91,6 +95,7 @@ bool sm_kstuff_probe_caps(uint32_t *caps) {
   // writes patch_shellcore() makes. Not throttled: a retry is one
   // find_pid_by_name and two small copyouts, and only until caps turn complete.
   const uint32_t kCapsAll = SM_KSTUFF_CAP_SYSDIRPATH | SM_KSTUFF_CAP_TROPHY;
+  pthread_mutex_lock(&g_caps_mutex);
   if (!g_caps_probed || !g_caps_valid || g_caps != kCapsAll) {
     uint32_t probed = 0;
     if (run_probe(&probed)) {
@@ -104,7 +109,11 @@ bool sm_kstuff_probe_caps(uint32_t *caps) {
     g_caps_probed = true;
   }
 
-  if (caps && g_caps_valid)
-    *caps = g_caps;
-  return g_caps_valid;
+  bool valid = g_caps_valid;
+  uint32_t reading = g_caps;
+  pthread_mutex_unlock(&g_caps_mutex);
+
+  if (caps && valid)
+    *caps = reading;
+  return valid;
 }

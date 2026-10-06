@@ -1,4 +1,5 @@
 #include "sm_platform.h"
+#include <pthread.h>
 
 #include "sm_config_mount.h"
 #include "sm_filesystem.h"
@@ -434,24 +435,27 @@ static bool read_kstuff_enabled_state(bool *ps5_out, bool *ps4_out) {
   return ps5_enabled && ps4_enabled;
 }
 
+// supported and loaded_observed are written here and nowhere else, and the
+// API answers on worker threads, so this is where they are serialized.
+static pthread_mutex_t g_kstuff_support_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static bool refresh_kstuff_support_state(void) {
+  pthread_mutex_lock(&g_kstuff_support_mutex);
+  bool supported = false;
   if (!g_kstuff.probe_available) {
     g_kstuff.supported = false;
-    return false;
-  }
-  if (!g_kstuff.loaded_observed) {
-    if (!sm_kstuff_is_loaded()) {
-      g_kstuff.supported = false;
-      return false;
-    }
+  } else if (!g_kstuff.loaded_observed && !sm_kstuff_is_loaded()) {
+    g_kstuff.supported = false;
+  } else {
     g_kstuff.loaded_observed = true;
+    uint16_t ps5_toggle = read_kstuff_sysentvec_toggle(g_kstuff.sysentvec_ps5);
+    uint16_t ps4_toggle = read_kstuff_sysentvec_toggle(g_kstuff.sysentvec_ps4);
+    g_kstuff.supported = kstuff_sysentvec_toggle_is_known(ps5_toggle) &&
+                         kstuff_sysentvec_toggle_is_known(ps4_toggle);
+    supported = g_kstuff.supported;
   }
-
-  uint16_t ps5_toggle = read_kstuff_sysentvec_toggle(g_kstuff.sysentvec_ps5);
-  uint16_t ps4_toggle = read_kstuff_sysentvec_toggle(g_kstuff.sysentvec_ps4);
-  g_kstuff.supported = kstuff_sysentvec_toggle_is_known(ps5_toggle) &&
-                       kstuff_sysentvec_toggle_is_known(ps4_toggle);
-  return g_kstuff.supported;
+  pthread_mutex_unlock(&g_kstuff_support_mutex);
+  return supported;
 }
 
 static bool kstuff_state_matches(bool enabled, bool ps5_enabled,
