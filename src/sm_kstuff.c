@@ -51,7 +51,7 @@ static _Atomic bool g_pending_app_focus_valid;
 static _Atomic bool g_pending_config_reload;
 static uint32_t get_effective_pause_delay_seconds(const kstuff_game_entry_t *entry);
 
-static bool refresh_kstuff_support_state(void);
+static bool refresh_kstuff_support_state_locked(void);
 static uint32_t get_pause_delay_seconds_for_title(const char *title_id,
                                                   bool *image_backed_out,
                                                   uint32_t *autopause_delay_out,
@@ -401,6 +401,13 @@ static bool resolve_kstuff_sysentvec_addrs(intptr_t *ps5_out, intptr_t *ps4_out)
   }
 }
 
+// Every sysentvec toggle read and write goes through the helpers below, and
+// supported and loaded_observed are written only by the refresh. The API
+// answers on worker threads while the game lifecycle runs on its own, so both
+// the kernel accesses and the state they decide are serialized here. Functions
+// named _locked expect it held.
+static pthread_mutex_t g_kstuff_support_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static bool kstuff_sysentvec_is_enabled(intptr_t sysentvec_addr) {
   return kernel_getshort(sysentvec_addr + KSTUFF_SYSENTVEC_TOGGLE_OFFSET) !=
          KSTUFF_SYSENTVEC_DISABLED;
@@ -422,8 +429,8 @@ static void set_kstuff_sysentvec_enabled(intptr_t sysentvec_addr, bool enabled) 
                                 : KSTUFF_SYSENTVEC_DISABLED);
 }
 
-static bool read_kstuff_enabled_state(bool *ps5_out, bool *ps4_out) {
-  if (!refresh_kstuff_support_state())
+static bool read_kstuff_enabled_state_locked(bool *ps5_out, bool *ps4_out) {
+  if (!refresh_kstuff_support_state_locked())
     return false;
 
   bool ps5_enabled = kstuff_sysentvec_is_enabled(g_kstuff.sysentvec_ps5);
@@ -435,12 +442,7 @@ static bool read_kstuff_enabled_state(bool *ps5_out, bool *ps4_out) {
   return ps5_enabled && ps4_enabled;
 }
 
-// supported and loaded_observed are written here and nowhere else, and the
-// API answers on worker threads, so this is where they are serialized.
-static pthread_mutex_t g_kstuff_support_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-static bool refresh_kstuff_support_state(void) {
-  pthread_mutex_lock(&g_kstuff_support_mutex);
+static bool refresh_kstuff_support_state_locked(void) {
   bool supported = false;
   if (!g_kstuff.probe_available) {
     g_kstuff.supported = false;
@@ -454,7 +456,6 @@ static bool refresh_kstuff_support_state(void) {
                          kstuff_sysentvec_toggle_is_known(ps4_toggle);
     supported = g_kstuff.supported;
   }
-  pthread_mutex_unlock(&g_kstuff_support_mutex);
   return supported;
 }
 
@@ -748,24 +749,33 @@ uint64_t sm_kstuff_game_next_wake_us(uint64_t now_us) {
 }
 
 bool sm_kstuff_is_supported(void) {
-  return refresh_kstuff_support_state();
+  pthread_mutex_lock(&g_kstuff_support_mutex);
+  bool supported = refresh_kstuff_support_state_locked();
+  pthread_mutex_unlock(&g_kstuff_support_mutex);
+  return supported;
 }
 
 bool sm_kstuff_is_enabled(void) {
-  return read_kstuff_enabled_state(NULL, NULL);
+  pthread_mutex_lock(&g_kstuff_support_mutex);
+  bool enabled = read_kstuff_enabled_state_locked(NULL, NULL);
+  pthread_mutex_unlock(&g_kstuff_support_mutex);
+  return enabled;
 }
 
-static bool apply_kstuff_enabled_state(bool enabled, bool notify_user,
-                                       bool *fully_applied_out) {
+// Reports kstuff's enabled state. *fully_applied_out says the request is
+// satisfied now; *applied_out says this call is what satisfied it, which is
+// what a notification would be about.
+static bool apply_kstuff_enabled_state_locked(bool enabled,
+                                              bool *fully_applied_out,
+                                              bool *applied_out) {
   bool ps5_enabled = false;
   bool ps4_enabled = false;
-  bool is_enabled = read_kstuff_enabled_state(&ps5_enabled, &ps4_enabled);
+  bool is_enabled = read_kstuff_enabled_state_locked(&ps5_enabled, &ps4_enabled);
   if (!g_kstuff.supported)
     return false;
   bool fully_applied = kstuff_state_matches(enabled, ps5_enabled, ps4_enabled);
   if (fully_applied) {
-    if (fully_applied_out)
-      *fully_applied_out = true;
+    *fully_applied_out = true;
     return is_enabled;
   }
 
@@ -774,21 +784,40 @@ static bool apply_kstuff_enabled_state(bool enabled, bool notify_user,
   if (ps4_enabled != enabled)
     set_kstuff_sysentvec_enabled(g_kstuff.sysentvec_ps4, enabled);
 
-  is_enabled = read_kstuff_enabled_state(&ps5_enabled, &ps4_enabled);
+  is_enabled = read_kstuff_enabled_state_locked(&ps5_enabled, &ps4_enabled);
   fully_applied = kstuff_state_matches(enabled, ps5_enabled, ps4_enabled);
-  if (fully_applied_out)
-    *fully_applied_out = fully_applied;
+  *fully_applied_out = fully_applied;
+  *applied_out = fully_applied;
 
   if (fully_applied) {
     log_debug("  [KSTUFF] %s both sysentvecs", enabled ? "enabled" : "disabled");
-    if (notify_user) {
-      notify_system_info_l10n(enabled ? SM_L10N_KSTUFF_ACTIVE
-                                      : SM_L10N_KSTUFF_PAUSED);
-    }
   } else {
     log_debug("  [KSTUFF] %s request incomplete (ps5=%s ps4=%s)",
               enabled ? "enable" : "disable", ps5_enabled ? "on" : "off",
               ps4_enabled ? "on" : "off");
+  }
+
+  return is_enabled;
+}
+
+static bool apply_kstuff_enabled_state(bool enabled, bool notify_user,
+                                       bool *fully_applied_out) {
+  bool fully_applied = false;
+  bool applied_now = false;
+
+  pthread_mutex_lock(&g_kstuff_support_mutex);
+  bool is_enabled =
+      apply_kstuff_enabled_state_locked(enabled, &fully_applied, &applied_now);
+  pthread_mutex_unlock(&g_kstuff_support_mutex);
+
+  if (fully_applied_out)
+    *fully_applied_out = fully_applied;
+
+  // Notified after the unlock: this reaches the notification service, and an
+  // API worker asking for the same state should not wait behind it.
+  if (applied_now && notify_user) {
+    notify_system_info_l10n(enabled ? SM_L10N_KSTUFF_ACTIVE
+                                    : SM_L10N_KSTUFF_PAUSED);
   }
 
   return is_enabled;
@@ -988,7 +1017,7 @@ void sm_kstuff_init(void) {
   }
   g_kstuff.probe_available = true;
 
-  if (!refresh_kstuff_support_state()) {
+  if (!sm_kstuff_is_supported()) {
     log_debug("  [KSTUFF] runtime control probe ready; kstuff not present at "
               "startup");
     return;
