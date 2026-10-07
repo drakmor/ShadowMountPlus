@@ -95,6 +95,28 @@ bool sm_kstuff_remote_mprotect(pid_t pid, uintptr_t address, size_t size,
   return !is_error && result == 0;
 }
 
+/* Hook writes on firmware 8.40+ use the physical mapping and do not dirty the
+ * executable's file-backed VM page. Retain it before writing, so pageout cannot
+ * reload the original signed instructions over the hook. */
+bool sm_kstuff_remote_mlock(pid_t pid, uintptr_t address, size_t size) {
+  uint64_t args[6] = {address, size, 0, 0, 0, 0};
+  register uint64_t r10 __asm__("r10") = 0;
+  register uint64_t r8 __asm__("r8") = 0;
+  register uint64_t r9 __asm__("r9") = 0;
+  uint64_t result;
+  unsigned char is_error;
+
+  __asm__ __volatile__("syscall"
+                       : "=a"(result), "=@ccc"(is_error), "+r"(r10),
+                         "+r"(r8), "+r"(r9)
+                       : "a"(SM_KSTUFF_KEKCALL_REMOTE_SYSCALL),
+                         "D"((uint64_t)(uint32_t)pid),
+                         "S"((uint64_t)SYS_mlock), "d"((uint64_t)args)
+                       : "rcx", "r11", "memory");
+
+  return !is_error && result == 0;
+}
+
 static char *trim_ascii_inplace(char *s) {
   while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
     s++;

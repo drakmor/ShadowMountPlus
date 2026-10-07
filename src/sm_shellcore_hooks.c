@@ -6,6 +6,7 @@
 #include <pthread.h>
 
 #include "sm_limits.h"
+#include "sm_kstuff.h"
 #include "sm_log.h"
 #include "sm_runtime.h"
 #include "sm_shellcore_hooks.h"
@@ -580,6 +581,24 @@ static bool install_hooks_for_pid(pid_t pid) {
   }
   bridge_address = hooks.remote.image_base +
                    hooks.remote.offsets->bridge_cave_offset;
+
+  /* Physical writes bypass the VM's copy-on-write/dirty accounting on 8.40+.
+   * Retain the cave and every patched text page before changing any bytes.
+   * Keep them for ShellCore's lifetime: shutdown retains an inactive cave that
+   * a thread may still be executing, and replacements reuse the same pages. */
+  if ((kernel_get_fw_version() >> 16) > 0x0820u) {
+    bool wired = sm_kstuff_remote_mlock(pid, bridge_address, blob_size);
+    for (size_t i = 0; wired && i < hook_count; ++i) {
+      sm_shellcore_target_t target = hooks.hooks[i].target;
+      wired = sm_kstuff_remote_mlock(pid, hooks.remote.targets[target],
+                                    hooks.remote.offsets->targets[target].patch_size);
+    }
+    if (!wired) {
+      log_debug("  [SHELLCORE] could not retain hook pages; hooks not installed");
+      goto done;
+    }
+    log_debug("  [SHELLCORE] hook pages retained: cave=1 sites=%zu", hook_count);
+  }
 
   if (!recover_stale_bridge(pid, &hooks.remote, hooks.hooks, hook_count,
                             bridge_address, blob_size)) {
