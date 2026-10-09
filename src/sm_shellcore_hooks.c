@@ -881,6 +881,32 @@ void sm_shellcore_hooks_stop(void) {
   pthread_mutex_unlock(&g_install_mutex);
 }
 
+// ShellCore can drop the AppInstallAll jump while our cave bridge stays in
+// place.  Re-apply the jump only when the cave is intact and the target holds
+// the original prologue again; never overwrite bytes that belong to someone
+// else.
+static bool repair_install_all_hook(pid_t pid, uintptr_t install_target,
+                                    uintptr_t install_hook) {
+  const shellcore_hook_record_t *hook = &g_hooks.hooks[2];
+  if (!verify_remote_bytes(pid, g_hooks.bridge_address,
+                           sm_shellcore_bridge_blob_start,
+                           BRIDGE_SIGNATURE_SIZE) ||
+      !verify_remote_bytes(pid, install_target, hook->original,
+                           hook->original_size)) {
+    log_debug("  [SHELLCORE] AppInstallAll hook cannot be restored safely");
+    return false;
+  }
+  if (!patch_remote_jump(pid, install_target, install_hook,
+                         hook->original_size)) {
+    (void)restore_remote_bytes(pid, install_target, hook->original,
+                               hook->original_size);
+    log_debug("  [SHELLCORE] AppInstallAll hook reinstall failed");
+    return false;
+  }
+  log_debug("  [SHELLCORE] AppInstallAll hook reinstalled");
+  return true;
+}
+
 bool sm_shellcore_install_title_dir(const char *title_id,
                                     const char *install_dir,
                                     int *result_out) {
@@ -921,10 +947,12 @@ bool sm_shellcore_install_title_dir(const char *title_id,
       g_hooks.remote.targets[SM_SHELLCORE_TARGET_INSTALL_ALL];
   if (!remote_hook_matches(pid, install_target, install_hook,
                            g_hooks.hooks[2].original_size)) {
-    g_hooks.status = SHELLCORE_HOOKS_STALE;
     log_debug("  [SHELLCORE] AppInstallAll hook is no longer installed");
-    pthread_mutex_unlock(&g_install_mutex);
-    return false;
+    if (!repair_install_all_hook(pid, install_target, install_hook)) {
+      g_hooks.status = SHELLCORE_HOOKS_STALE;
+      pthread_mutex_unlock(&g_install_mutex);
+      return false;
+    }
   }
 
   uint8_t remote_title[SM_SHELLCORE_BRIDGE_INSTALL_STRING_SIZE] = {0};
