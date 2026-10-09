@@ -1377,15 +1377,26 @@ static bool cleanup_ppr_backport_fakelib(const char *title_id,
   size_t removed = 0;
   for (size_t i = 0; i < sizeof(filenames) / sizeof(filenames[0]); ++i) {
     // Skip absent targets before requesting a write on the backing filesystem.
+    // A failed stat (absent file, or a failure without errno) must not block
+    // the backport fakelib mount: there is nothing to remove then.
     struct stat st;
-    if (fstatat(fakelib_fd, filenames[i], &st, AT_SYMLINK_NOFOLLOW) == 0 &&
-        unlinkat(fakelib_fd, filenames[i], 0) == 0) {
+    errno = 0;
+    if (fstatat(fakelib_fd, filenames[i], &st, AT_SYMLINK_NOFOLLOW) != 0) {
+      int stat_errno = errno;
+      if (stat_errno != 0 && stat_errno != ENOENT)
+        log_debug("  [FAKELIB] cannot stat PPR library %s/fakelib/%s: %s "
+                  "(skipped)",
+                  backport_path, filenames[i], strerror(stat_errno));
+      continue;
+    }
+    errno = 0;
+    if (unlinkat(fakelib_fd, filenames[i], 0) == 0) {
       removed++;
       continue;
     }
-    if (errno == ENOENT)
+    saved_errno = errno != 0 ? errno : EIO;
+    if (saved_errno == ENOENT)
       continue;
-    saved_errno = errno;
     close(fakelib_fd);
     log_debug("  [FAKELIB] cannot clean up PPR library %s/fakelib/%s: %s",
               backport_path, filenames[i], strerror(saved_errno));
