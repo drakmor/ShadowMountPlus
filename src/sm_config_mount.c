@@ -91,6 +91,7 @@ static bool web_managed_config_key(const char *key) {
   return strcasecmp(key, "debug") == 0 ||
          strcasecmp(key, "quiet_mode") == 0 ||
          strcasecmp(key, "update_emulators") == 0 ||
+         strcasecmp(key, "fakelib_default_mode") == 0 ||
          strcasecmp(key, "auto_update_ampr") == 0 ||
          strcasecmp(key, "auto_remove_missing_games") == 0 ||
          strcasecmp(key, "auto_remove_missing_delay_seconds") == 0 ||
@@ -236,6 +237,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.auto_remove_missing_games = false;
   state->cfg.auto_remove_games_with_dlc = false;
   state->cfg.backport_fakelib_enabled = true;
+  state->cfg.fakelib_default_mode = SM_FAKELIB_FULL;
   state->cfg.global_fakelib_enabled = true;
   state->cfg.global_fakelib_game_priority = true;
   state->cfg.update_emulators_enabled = true;
@@ -454,6 +456,8 @@ const char *sm_config_fakelib_mode_name(sm_fakelib_mode_t mode) {
     return "emulators";
   case SM_FAKELIB_DISABLED:
     return "disabled";
+  case SM_FAKELIB_DEFAULT:
+    return "default";
   default:
     return NULL;
   }
@@ -462,7 +466,7 @@ const char *sm_config_fakelib_mode_name(sm_fakelib_mode_t mode) {
 bool sm_config_parse_fakelib_mode(const char *value, sm_fakelib_mode_t *mode) {
   if (!value || !mode)
     return false;
-  for (int i = SM_FAKELIB_FULL; i <= SM_FAKELIB_DISABLED; ++i) {
+  for (int i = SM_FAKELIB_FULL; i <= SM_FAKELIB_DEFAULT; ++i) {
     if (strcasecmp(value, sm_config_fakelib_mode_name((sm_fakelib_mode_t)i)) == 0) {
       *mode = (sm_fakelib_mode_t)i;
       return true;
@@ -471,15 +475,21 @@ bool sm_config_parse_fakelib_mode(const char *value, sm_fakelib_mode_t *mode) {
   return false;
 }
 
-sm_fakelib_mode_t sm_config_title_fakelib_mode(const runtime_config_t *cfg,
-                                             const char *title_id) {
+sm_fakelib_mode_t sm_config_title_fakelib_override(const runtime_config_t *cfg,
+                                                 const char *title_id) {
   if (title_id) {
     for (uint32_t i = 0; i < cfg->fakelib_rule_count; ++i) {
       if (strcasecmp(cfg->fakelib_rules[i].title_id, title_id) == 0)
         return cfg->fakelib_rules[i].mode;
     }
   }
-  return SM_FAKELIB_FULL;
+  return SM_FAKELIB_DEFAULT;
+}
+
+sm_fakelib_mode_t sm_config_title_fakelib_mode(const runtime_config_t *cfg,
+                                             const char *title_id) {
+  sm_fakelib_mode_t mode = sm_config_title_fakelib_override(cfg, title_id);
+  return mode == SM_FAKELIB_DEFAULT ? cfg->fakelib_default_mode : mode;
 }
 
 sm_fakelib_mode_t get_fakelib_mode_for_title(const char *title_id) {
@@ -966,7 +976,7 @@ static bool set_title_fakelib_rule(sm_fakelib_rule_t *rules, uint32_t *count,
   for (uint32_t i = 0; i < *count; ++i) {
     if (strcmp(rules[i].title_id, title_id) != 0)
       continue;
-    if (mode == SM_FAKELIB_FULL) {
+    if (mode == SM_FAKELIB_DEFAULT) {
       --*count;
       memmove(&rules[i], &rules[i + 1u], (*count - i) * sizeof(*rules));
       memset(&rules[*count], 0, sizeof(*rules));
@@ -975,7 +985,7 @@ static bool set_title_fakelib_rule(sm_fakelib_rule_t *rules, uint32_t *count,
     }
     return true;
   }
-  if (mode == SM_FAKELIB_FULL)
+  if (mode == SM_FAKELIB_DEFAULT)
     return true;
   if (*count >= MAX_FAKELIB_EXCLUDE_RULES)
     return false;
@@ -1215,6 +1225,17 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
         continue;
       }
       state->cfg.backport_fakelib_enabled = bval;
+      continue;
+    }
+
+    if (strcasecmp(key, "fakelib_default_mode") == 0) {
+      sm_fakelib_mode_t mode;
+      if (sm_config_parse_fakelib_mode(value, &mode) && mode != SM_FAKELIB_DEFAULT) {
+        state->cfg.fakelib_default_mode = mode;
+      } else {
+        log_debug("  [CFG] invalid fakelib_default_mode at line %d: %s",
+                  line_no, value);
+      }
       continue;
     }
 
@@ -1491,7 +1512,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "auto_remove_games_with_dlc=%d auto_remove_missing_delay_s=%u "
             "api=%s:%u scan_depth=%u "
             "legacy_recursive_scan_forced=%d backport_fakelib=%d "
-            "fakelib_rules=%u "
+            "fakelib_default_mode=%s fakelib_rules=%u "
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
             "update_emulators=%d emulators_path=%s auto_update_ampr=%d "
@@ -1515,6 +1536,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.scan_depth,
             state->cfg.legacy_recursive_scan_forced ? 1 : 0,
             state->cfg.backport_fakelib_enabled ? 1 : 0,
+            sm_config_fakelib_mode_name(state->cfg.fakelib_default_mode),
             state->cfg.fakelib_rule_count,
             state->cfg.global_fakelib_enabled ? 1 : 0,
             state->cfg.global_fakelib_game_priority ? "game" : "global",
@@ -1670,11 +1692,11 @@ bool sm_config_set_title_fakelib_mode(const char *title_id, sm_fakelib_mode_t mo
   }
   if (in && ferror(in) && saved_errno == 0)
     saved_errno = config_io_error();
-  if (mode != SM_FAKELIB_FULL && count == MAX_FAKELIB_EXCLUDE_RULES && saved_errno == 0)
+  if (mode != SM_FAKELIB_DEFAULT && count == MAX_FAKELIB_EXCLUDE_RULES && saved_errno == 0)
     saved_errno = ENOSPC;
   if (saved_errno == 0 && last_written != '\n' && fputc('\n', out) == EOF)
     saved_errno = config_io_error();
-  if (mode != SM_FAKELIB_FULL && saved_errno == 0) {
+  if (mode != SM_FAKELIB_DEFAULT && saved_errno == 0) {
     int result = mode == SM_FAKELIB_DISABLED
                      ? fprintf(out, "fakelib_exclude=%s\n", normalized)
                      : fprintf(out, "fakelib_mode=%s:%s\n", normalized,
@@ -1729,7 +1751,8 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   bool allow_lan_access,
                                   uint32_t fan_target_temperature_c,
                                   const char *const *scan_paths,
-                                  size_t scan_path_count) {
+                                  size_t scan_path_count,
+                                  sm_fakelib_mode_t fakelib_default_mode) {
   if (auto_remove_missing_delay_seconds <
           MIN_AUTO_REMOVE_MISSING_DELAY_SECONDS ||
       auto_remove_missing_delay_seconds >
@@ -1738,7 +1761,9 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
        (fan_target_temperature_c < MIN_FAN_TARGET_TEMPERATURE_C ||
         fan_target_temperature_c > MAX_FAN_TARGET_TEMPERATURE_C)) ||
       scan_path_count > MAX_SCAN_PATHS ||
-      (scan_path_count > 0 && !scan_paths)) {
+      (scan_path_count > 0 && !scan_paths) ||
+      !sm_config_fakelib_mode_name(fakelib_default_mode) ||
+      fakelib_default_mode == SM_FAKELIB_DEFAULT) {
     errno = EINVAL;
     return false;
   }
@@ -1850,13 +1875,14 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
       fprintf(out,
               "\n# Managed by the ShadowMount web interface.\n"
               "debug=%u\nquiet_mode=%u\nupdate_emulators=%u\n"
-              "auto_update_ampr=%u\n"
+              "auto_update_ampr=%u\nfakelib_default_mode=%s\n"
               "auto_remove_missing_games=%u\n"
               "auto_remove_missing_delay_seconds=%u\n"
               "api_bind_address=%s\n",
               debug_enabled ? 1u : 0u, quiet_mode ? 1u : 0u,
               update_emulators_enabled ? 1u : 0u,
               auto_update_ampr_enabled ? 1u : 0u,
+              sm_config_fakelib_mode_name(fakelib_default_mode),
               auto_remove_missing_games ? 1u : 0u,
               auto_remove_missing_delay_seconds,
               allow_lan_access ? "0.0.0.0" : "127.0.0.1") < 0) {

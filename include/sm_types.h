@@ -131,6 +131,7 @@ typedef enum {
   SM_FAKELIB_FULL = 0,
   SM_FAKELIB_EMULATORS,
   SM_FAKELIB_DISABLED,
+  SM_FAKELIB_DEFAULT, // Per-title inheritance; never a global default.
 } sm_fakelib_mode_t;
 
 typedef struct {
@@ -159,6 +160,7 @@ typedef struct runtime_config {
   char global_fakelib_path[MAX_PATH];
   char emulators_path[MAX_PATH];
   char ampr_update_url[MAX_PATH];
+  sm_fakelib_mode_t fakelib_default_mode;
   uint32_t fakelib_rule_count;
   sm_fakelib_rule_t fakelib_rules[MAX_FAKELIB_EXCLUDE_RULES];
   uint32_t global_fakelib_exclude_title_count;

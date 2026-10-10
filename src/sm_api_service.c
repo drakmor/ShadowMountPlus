@@ -1130,6 +1130,11 @@ static struct json_object *game_to_json(
       !add_json_bool(item, "fakelib_enabled", fakelib_enabled) ||
       !add_json_string(item, "fakelib_mode",
                        sm_config_fakelib_mode_name(fakelib_mode)) ||
+      !add_json_string(item, "fakelib_default_mode",
+                       sm_config_fakelib_mode_name(cfg->fakelib_default_mode)) ||
+      !add_json_string(item, "fakelib_mode_override",
+                       sm_config_fakelib_mode_name(
+                           sm_config_title_fakelib_override(cfg, source->title_id))) ||
       !add_json_bool(item, "fakelib_effective_enabled",
                      fakelib_enabled && cfg->backport_fakelib_enabled)) {
     json_object_put(item);
@@ -1890,6 +1895,8 @@ static void handle_settings(struct MHD_Connection *connection) {
       !add_json_bool(response, "quiet_mode", cfg.quiet_mode) ||
       !add_json_bool(response, "update_emulators",
                      cfg.update_emulators_enabled) ||
+      !add_json_string(response, "fakelib_default_mode",
+                       sm_config_fakelib_mode_name(cfg.fakelib_default_mode)) ||
       !add_json_bool(response, "auto_update_ampr",
                      cfg.auto_update_ampr_enabled) ||
       !add_json_bool(response, "auto_remove_missing_games",
@@ -1916,6 +1923,8 @@ static void handle_settings_update(struct MHD_Connection *connection,
   bool auto_update_ampr = current_cfg.auto_update_ampr_enabled;
   bool auto_remove_missing_games = current_cfg.auto_remove_missing_games;
   bool allow_lan_access = false;
+  sm_fakelib_mode_t fakelib_default_mode = current_cfg.fakelib_default_mode;
+  struct json_object *mode_value = NULL;
   struct json_object *remove_delay_value = NULL;
   struct json_object *fan_value = NULL;
   struct json_object *paths_value = NULL;
@@ -1936,6 +1945,16 @@ static void handle_settings_update(struct MHD_Connection *connection,
       !json_object_is_type(paths_value, json_type_array)) {
     send_error_response(connection, 400, EINVAL,
                         "settings fields have invalid types");
+    return;
+  }
+
+  if (json_object_object_get_ex(request, "fakelib_default_mode", &mode_value) &&
+      (!json_object_is_type(mode_value, json_type_string) ||
+       !sm_config_parse_fakelib_mode(json_object_get_string(mode_value),
+                                    &fakelib_default_mode) ||
+       fakelib_default_mode == SM_FAKELIB_DEFAULT)) {
+    send_error_response(connection, 400, EINVAL,
+                        "fakelib_default_mode must be full, emulators or disabled");
     return;
   }
 
@@ -1993,7 +2012,8 @@ static void handle_settings_update(struct MHD_Connection *connection,
                     auto_update_ampr, auto_remove_missing_games,
                     (uint32_t)remove_delay_int,
                     allow_lan_access,
-                    (uint32_t)fan_value_int, paths, path_count)) {
+                    (uint32_t)fan_value_int, paths, path_count,
+                    fakelib_default_mode)) {
     int status = valid && errno != 0 ? errno : EINVAL;
     free(paths);
     send_error_response(connection, operation_http_status(status), status,
@@ -2254,10 +2274,9 @@ static void handle_game_fakelib(struct MHD_Connection *connection,
   }
   if (!title_id || !valid_mode) {
     send_error_response(connection, 400, EINVAL,
-                        "title_id and mode (full, emulators, disabled) are required");
+                        "title_id and mode (default, full, emulators, disabled) are required");
     return;
   }
-  bool enabled = mode != SM_FAKELIB_DISABLED;
   if (strncmp(title_id, "PPSA", 4u) != 0) {
     sm_app_db_game_info_t *metadata = NULL;
     size_t count = 0;
@@ -2291,12 +2310,20 @@ static void handle_game_fakelib(struct MHD_Connection *connection,
                         strerror(status));
     return;
   }
+  const runtime_config_t cfg = runtime_config();
+  sm_fakelib_mode_t effective_mode = sm_config_title_fakelib_mode(&cfg, title_id);
+  bool enabled = effective_mode != SM_FAKELIB_DISABLED;
   struct json_object *response = new_status_response(0);
   if (!response || !add_json_string(response, "title_id", title_id) ||
       !add_json_bool(response, "fakelib_enabled", enabled) ||
-      !add_json_string(response, "fakelib_mode", sm_config_fakelib_mode_name(mode)) ||
+      !add_json_string(response, "fakelib_mode",
+                       sm_config_fakelib_mode_name(effective_mode)) ||
+      !add_json_string(response, "fakelib_default_mode",
+                       sm_config_fakelib_mode_name(cfg.fakelib_default_mode)) ||
+      !add_json_string(response, "fakelib_mode_override",
+                       sm_config_fakelib_mode_name(mode)) ||
       !add_json_bool(response, "fakelib_effective_enabled",
-                     enabled && runtime_config().backport_fakelib_enabled) ||
+                     enabled && cfg.backport_fakelib_enabled) ||
       !add_json_bool(response, "saved", true) ||
       !add_json_bool(response, "applies_on_next_launch", true)) {
     if (response)

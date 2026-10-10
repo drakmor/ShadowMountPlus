@@ -23,7 +23,8 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   bool allow_lan_access,
                                   uint32_t fan_target_temperature_c,
                                   const char *const *scan_paths,
-                                  size_t scan_path_count);
+                                  size_t scan_path_count,
+                                  sm_fakelib_mode_t fakelib_default_mode);
 // Return a coherent caller-owned copy of the current runtime configuration.
 runtime_config_t runtime_config(void);
 // Return the number of configured scan roots.
@@ -52,7 +53,9 @@ bool upsert_image_sector_size_autotune(const char *filename,
 bool is_global_fakelib_excluded_for_title(const char *title_id);
 // Return true when all fakelib overlays are disabled for this title.
 bool is_fakelib_excluded_for_title(const char *title_id);
-// Resolve a mode from a snapshot or the live config; absent rules mean full.
+// Resolve a mode from a snapshot or live config; absent rules use the default.
+sm_fakelib_mode_t sm_config_title_fakelib_override(const runtime_config_t *cfg,
+                                                 const char *title_id);
 sm_fakelib_mode_t sm_config_title_fakelib_mode(const runtime_config_t *cfg,
                                              const char *title_id);
 sm_fakelib_mode_t get_fakelib_mode_for_title(const char *title_id);

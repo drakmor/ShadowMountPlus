@@ -12,6 +12,8 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: スキャン深度 %u が有効です。",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "バックポートオーバーレイのマウントに失敗しました: %s\n%s\n0x%08X",
+    /* English: Emulators applied to game: %s */
+    [SM_L10N_GAME_EMULATORS_APPLIED] = "ゲーム %s にエミュレーターを適用しました",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "ゲームにバックポートを適用しました: %s",
     /* English: Backport applied to game: %s\nEmulators updated */

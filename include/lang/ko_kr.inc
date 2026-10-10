@@ -12,6 +12,8 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: 스캔 깊이 %u 활성화됨.",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "백포트 오버레이 마운트 실패: %s\n%s\n0x%08X",
+    /* English: Emulators applied to game: %s */
+    [SM_L10N_GAME_EMULATORS_APPLIED] = "게임 %s에 에뮬레이터가 적용되었습니다",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "게임에 백포트 적용됨: %s",
     /* English: Backport applied to game: %s\nEmulators updated */

@@ -12,6 +12,8 @@ static const char *const g_uk_ua[SM_L10N_COUNT] = {
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: увімкнено глибину сканування %u.",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "Не вдалося змонтувати оверлей бекпорту: %s\n%s\n0x%08X",
+    /* English: Emulators applied to game: %s */
+    [SM_L10N_GAME_EMULATORS_APPLIED] = "До гри %s застосовано емулятори",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "До гри %s застосовано бекпорт",
     /* English: Backport applied to game: %s\nEmulators updated */

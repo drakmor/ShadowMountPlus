@@ -12,6 +12,8 @@ static const char *const g_ar_sa[SM_L10N_COUNT] = {
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: تم تمكين عمق المسح %u.",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "فشل تطبيق طبقة الدعم الرجعي: %s\n%s\n0x%08X",
+    /* English: Emulators applied to game: %s */
+    [SM_L10N_GAME_EMULATORS_APPLIED] = "تم تطبيق المحاكيات على اللعبة: %s",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "طُبّق الدعم الرجعي على اللعبة: %s",
     /* English: Backport applied to game: %s\nEmulators updated */

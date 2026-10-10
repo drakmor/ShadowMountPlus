@@ -12,6 +12,8 @@ static const char *const g_sv_se[SM_L10N_COUNT] = {
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: skanningsdjup %u aktiverat.",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "Backport-overlay misslyckades: %s\n%s\n0x%08X",
+    /* English: Emulators applied to game: %s */
+    [SM_L10N_GAME_EMULATORS_APPLIED] = "Emulatorer tillämpade på spelet: %s",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "Backport tillämpad på spelet: %s",
     /* English: Backport applied to game: %s\nEmulators updated */

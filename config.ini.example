@@ -123,9 +123,15 @@
 # Default: 1
 # backport_fakelib=1
 
-# Per-game fakelib mode: full (default), emulators, disabled.
+# Default fakelib mode for games without an individual override.
+# full (default), emulators, disabled; also configurable in the web interface.
+# Changes apply on the next launch; active mounts stay unchanged.
+# fakelib_default_mode=full
+
+# Per-game fakelib mode: default (inherit), full, emulators, disabled.
 # Applies to fakelib/fakelib2/global fakelib on the next launch; active mounts stay.
-# Repeatable, up to 128 non-default titles shared with fakelib_exclude.
+# Repeatable, up to 128 explicit title rules shared with fakelib_exclude.
+# An explicit full overrides the default; default removes the title override.
 # Last valid entry wins; invalid modes/title IDs and excess rules are logged/ignored.
 # fakelib_mode=PPSA12345:emulators
 # fakelib_mode=PPSA54321:disabled

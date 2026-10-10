@@ -351,7 +351,7 @@ paths:
           $ref: "#/components/responses/Preflight"
     post:
       operationId: setGameFakelib
-      summary: Enable or disable fakelib for a PS5 game on its next launch
+      summary: Set the fakelib mode for a PS5 game on its next launch
       tags: [Games]
       requestBody:
         required: true
@@ -359,13 +359,21 @@ paths:
           application/json:
             schema:
               type: object
-              required: [title_id, enabled]
+              required: [title_id]
+              anyOf:
+                - required: [mode]
+                - required: [enabled]
               properties:
                 title_id:
                   $ref: "#/components/schemas/TitleId"
                   description: Must identify a PS5 game; homebrew uses its app.db platform.
+                mode:
+                  type: string
+                  enum: [default, full, emulators, disabled]
+                  description: Default removes the title override; other modes override fakelib_default_mode. Takes precedence over enabled.
                 enabled:
                   type: boolean
+                  description: Legacy alternative selecting explicit full when true or disabled when false.
       responses:
         "200":
           description: Per-title policy saved; existing mounts are preserved
@@ -373,13 +381,22 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status, title_id, fakelib_enabled, fakelib_effective_enabled, saved, applies_on_next_launch]
+                required: [status, title_id, fakelib_mode, fakelib_mode_override, fakelib_default_mode, fakelib_enabled, fakelib_effective_enabled, saved, applies_on_next_launch]
                 properties:
                   status:
                     type: integer
                     const: 0
                   title_id:
                     $ref: "#/components/schemas/TitleId"
+                  fakelib_mode:
+                    type: string
+                    enum: [full, emulators, disabled]
+                  fakelib_mode_override:
+                    type: string
+                    enum: [default, full, emulators, disabled]
+                  fakelib_default_mode:
+                    type: string
+                    enum: [full, emulators, disabled]
                   fakelib_enabled:
                     type: boolean
                   fakelib_effective_enabled:
@@ -397,7 +414,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
         "507":
-          description: Exclusion list is full; configuration was not changed
+          description: Title override list is full; configuration was not changed
 
   /api/v1/games/icon:
     get:
@@ -1309,6 +1326,10 @@ components:
           type: boolean
         update_emulators:
           type: boolean
+        fakelib_default_mode:
+          type: string
+          enum: [full, emulators, disabled]
+          description: Mode inherited by games without an individual override. Initial default is full. Omission preserves the current value; changes apply on the next launch.
         auto_update_ampr:
           type: boolean
           description: Download libSceAmpr.sprx updates from the configured GitHub release URL. Omission preserves the current value for compatibility with older web clients.
@@ -1343,7 +1364,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/SettingsUpdateRequest"
         - type: object
-          required: [status, api_enabled, scan_path_count]
+          required: [status, api_enabled, scan_path_count, fakelib_default_mode]
           properties:
             status:
               type: integer
@@ -1592,6 +1613,9 @@ components:
         - can_uninstall
         - can_manage_source
         - can_toggle_fakelib
+        - fakelib_mode
+        - fakelib_mode_override
+        - fakelib_default_mode
         - fakelib_enabled
         - fakelib_effective_enabled
       properties:
@@ -1652,9 +1676,21 @@ components:
         can_toggle_fakelib:
           type: boolean
           description: True for PS5 games in PKGs, images and folders.
+        fakelib_mode:
+          type: string
+          enum: [full, emulators, disabled]
+          description: Resolved title mode after inheritance.
+        fakelib_mode_override:
+          type: string
+          enum: [default, full, emulators, disabled]
+          description: Explicit title mode or default to inherit fakelib_default_mode.
+        fakelib_default_mode:
+          type: string
+          enum: [full, emulators, disabled]
+          description: Current mode inherited by titles without an override.
         fakelib_enabled:
           type: boolean
-          description: Per-title policy; changes apply on the next launch.
+          description: Whether the resolved title mode enables fakelib; changes apply on the next launch.
         fakelib_effective_enabled:
           type: boolean
           description: Per-title policy combined with the global backport_fakelib switch.

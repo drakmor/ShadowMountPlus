@@ -12,6 +12,8 @@ static const char *const g_zh_cn[SM_L10N_COUNT] = {
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: 已启用扫描深度 %u。",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "向下兼容覆盖层挂载失败：%s\n%s\n0x%08X",
+    /* English: Emulators applied to game: %s */
+    [SM_L10N_GAME_EMULATORS_APPLIED] = "已为游戏 %s 应用模拟器",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "已为游戏应用向下兼容补丁：%s",
     /* English: Backport applied to game: %s\nEmulators updated */

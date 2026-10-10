@@ -55,12 +55,12 @@ device.
 | `/api/v1/manual/add` | `{"path":"/mnt/usb0/games/PPSA12345"}` | Idempotently add one game source to `manual.lst` |
 | `/api/v1/manual/remove` | `{"path":"/mnt/usb0/games/PPSA12345"}` | Remove matching source lines from `manual.lst` |
 | `/api/v1/settings` | `{}` | Read web-managed runtime settings and scan paths |
-| `/api/v1/settings/update` | `{"debug":true,"quiet_mode":false,"update_emulators":true,"auto_update_ampr":false,"auto_remove_missing_games":false,"auto_remove_missing_delay_seconds":300,"allow_lan_access":true,"fan_target_temperature":0,"scan_paths":["/mnt/usb0/games"]}` | Atomically update the web-managed part of `config.ini` |
+| `/api/v1/settings/update` | `{"debug":true,"quiet_mode":false,"update_emulators":true,"fakelib_default_mode":"full","auto_update_ampr":false,"auto_remove_missing_games":false,"auto_remove_missing_delay_seconds":300,"allow_lan_access":true,"fan_target_temperature":0,"scan_paths":["/mnt/usb0/games"]}` | Atomically update the web-managed part of `config.ini` |
 | `/api/v1/debug-log` | `{"max_bytes":131072}` | Read a bounded tail of `debug.log` for the web log dialog |
 | `/api/v1/kernel-log` | `{"max_bytes":131072}` | Read a bounded tail of the SDK kernel-log stream used by crash detection |
 | `/api/v1/games` | `{"include_size":false}` | Detailed game snapshot; optional physical source-size calculation |
 | `/api/v1/games/info` | `{"title_id":"PPSA12345"}` | Detailed app.db and source information for one game; size is always calculated |
-| `/api/v1/games/fakelib` | `{"title_id":"PPSA12345","enabled":false}` | Persist the PS5 game's fakelib policy for its next launch |
+| `/api/v1/games/fakelib` | `{"title_id":"PPSA12345","mode":"emulators"}` | Persist the PS5 game's fakelib policy for its next launch |
 | `/api/v1/games/icon?title_id=PPSA12345[&size=thumb]` | GET | Stream the full PNG or a cached 128x128 thumbnail |
 | `/api/v1/games/mount` | `{"title_id":"PPSA12345","mode":"ro"}` | Mount a managed game, optionally overriding its image mode with `ro`/`rw` |
 | `/api/v1/games/unmount` | `{"title_id":"PPSA12345"}` | Unmount a managed game |
@@ -216,15 +216,22 @@ package file size; folder/image measurement remains unchanged.
 
 Game responses also provide `can_uninstall`, `can_manage_source`,
 `can_toggle_fakelib`, `fakelib_enabled` and `fakelib_effective_enabled`.
+`fakelib_mode` is the resolved mode (`full`, `emulators`, `disabled`),
+`fakelib_mode_override` is the title's explicit mode or `default`, and
+`fakelib_default_mode` is the current global default.
 The fakelib route accepts only known PS5 games, including PKGs, images and
 folders. `PPSA` identifies PS5; `LAPY`/`FAKE` homebrew uses its `app.db` platform.
-Disabling adds the title to `fakelib_exclude`; enabling removes
-all matching entries. Unrelated config lines, other exclusions and global
-settings are preserved. The response includes `saved: true` and
+Send `mode: "full"`, `"emulators"` or `"disabled"` to persist an explicit override,
+or `mode: "default"` to remove it and inherit `fakelib_default_mode`.
+Legacy `enabled: true|false` requests remain supported and select explicit
+`full` or `disabled`; `mode` takes precedence when both fields are present.
+Unrelated config lines, other title overrides and global settings are preserved.
+The response includes the three mode fields, `saved: true` and
 `applies_on_next_launch: true`. Existing mounts stay until game exit.
-`fakelib_enabled` is the per-title policy; `fakelib_effective_enabled` also
-respects the global `backport_fakelib` switch. Reaching the 128-title exclusion
-limit fails without modifying the file.
+`fakelib_enabled` is false when the resolved mode is `disabled`;
+`fakelib_effective_enabled` also respects the global `backport_fakelib` switch.
+Reaching the 128-title override limit fails without modifying the file;
+removing an override remains possible at the limit.
 
 Mount mutations remain conservative. They return HTTP 409 with `status` set to
 `EBUSY` while a game is active, while ShellCore owns another prepared title,
@@ -260,7 +267,7 @@ trailing-slash normalization as the scanner; comments and empty lines are not
 included. A missing `manual.lst` is reported as an empty list.
 
 The settings update owns only `debug`, `quiet_mode`, `update_emulators`,
-`auto_update_ampr`, `auto_remove_missing_games`,
+`fakelib_default_mode`, `auto_update_ampr`, `auto_remove_missing_games`,
 `auto_remove_missing_delay_seconds`,
 `api_bind_address`, `fan_target_temperature`, and repeated `scanpath` keys. The
 `allow_lan_access` field maps to `0.0.0.0` when enabled and `127.0.0.1` when
@@ -273,6 +280,12 @@ values must be 50 through 91 degrees Celsius. Unlike `manual.lst`, `scan_paths`
 are recursive library roots. The settings response contains only explicit
 custom roots, never compile-time defaults or internal image-mount roots. Saving
 an empty array removes the custom override and restores compile-time defaults.
+
+`GET /api/v1/settings` returns `fakelib_default_mode` (`full`, `emulators`, or
+`disabled`; initial default `full`). The settings update accepts the same
+optional field; omission preserves its current value for older clients.
+Per-title overrides take priority, and mode changes apply on the next launch.
+
 The debug-log route returns at most 256 KiB and never modifies or rotates the log.
 The kernel-log route reads a `sceKernelDebugGetSdkLogText` snapshot.
 

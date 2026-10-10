@@ -12,6 +12,8 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: ενεργό βάθος σάρωσης %u.",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "Αποτυχία backport overlay: %s\n%s\n0x%08X",
+    /* English: Emulators applied to game: %s */
+    [SM_L10N_GAME_EMULATORS_APPLIED] = "Εφαρμόστηκαν εξομοιωτές στο παιχνίδι: %s",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "Εφαρμόστηκε backport στο παιχνίδι: %s",
     /* English: Backport applied to game: %s\nEmulators updated */

@@ -12,6 +12,8 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: đã bật độ sâu quét %u.",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "Backport overlay thất bại: %s\n%s\n0x%08X",
+    /* English: Emulators applied to game: %s */
+    [SM_L10N_GAME_EMULATORS_APPLIED] = "Đã áp dụng trình giả lập cho trò chơi: %s",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "Đã áp dụng backport cho game: %s",
     /* English: Backport applied to game: %s\nEmulators updated */
