@@ -38,6 +38,8 @@ typedef struct {
   const char *label;
   bool created_mount_path;
   bool source_detached;
+  // Identify the source volume, rather than its sandbox nullfs alias.
+  fsid_t source_fsid;
 } fakelib_layer_t;
 
 typedef struct {
@@ -288,6 +290,59 @@ static bool mount_sandbox_fonts(const char *title_id, const char *app0_path) {
   return false;
 }
 
+static bool sync_sandbox_storage_root(const char *title_id,
+                                       const char *app0_path,
+                                       const char *source_path, bool mounted) {
+  struct statfs source_fs = {0};
+  if (mounted) {
+    // A removed volume may leave its empty mount directory behind.
+    if (statfs(source_path, &source_fs) != 0) {
+      if (errno != ENOENT)
+        return false;
+      mounted = false;
+    } else {
+      mounted = strcmp(source_fs.f_mntonname, source_path) == 0;
+    }
+  }
+
+  for (size_t i = 0; i < g_fakelib_mount.layer_count; ++i) {
+    fakelib_layer_t *layer = &g_fakelib_mount.layers[i];
+    if (strcmp(layer->source_path, source_path) != 0 ||
+        !layer->label || strcmp(layer->label, "directory") != 0)
+      continue;
+    if (mounted && !layer->source_detached &&
+        memcmp(&layer->source_fsid, &source_fs.f_fsid,
+               sizeof(layer->source_fsid)) == 0)
+      return true;
+
+    // Never reuse a busy alias when a different volume occupies this path.
+    layer->source_detached = true;
+    if (!unmount_sandbox_layer(layer))
+      return false;
+    --g_fakelib_mount.layer_count;
+    memmove(layer, layer + 1u,
+            (g_fakelib_mount.layer_count - i) * sizeof(*layer));
+    memset(&g_fakelib_mount.layers[g_fakelib_mount.layer_count], 0,
+           sizeof(*layer));
+    break;
+  }
+
+  if (!mounted)
+    return true;
+  if (mount_sandbox_directory(title_id, app0_path, source_path, 0)) {
+    g_fakelib_mount.layers[g_fakelib_mount.layer_count - 1u].source_fsid =
+        source_fs.f_fsid;
+    return true;
+  }
+  int mount_errno = errno;
+  struct stat source_st;
+  if (mount_errno == ENOENT && stat(source_path, &source_st) != 0 &&
+      errno == ENOENT)
+    return true;
+  errno = mount_errno;
+  return false;
+}
+
 static bool mount_sandbox_storage_roots(const char *title_id,
                                         const char *app0_path) {
   struct statfs *mounts = NULL;
@@ -298,6 +353,7 @@ static bool mount_sandbox_storage_roots(const char *title_id,
     return false;
   }
 
+  int sync_errno = 0;
   // Keep sandbox /mnt local and expose only mounted storage volumes.
   for (unsigned slot = 0;
        slot <= SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT; ++slot) {
@@ -317,36 +373,24 @@ static bool mount_sandbox_storage_roots(const char *title_id,
         break;
       }
     }
-    if (!mounted)
-      continue;
-
-    // A removed volume can leave an empty directory after the snapshot.
-    struct statfs current;
-    if (statfs(source_path, &current) != 0) {
-      int stat_errno = errno;
-      if (stat_errno == ENOENT)
-        continue;
-      free(mounts);
-      errno = stat_errno;
-      return false;
-    }
-    if (strcmp(current.f_mntonname, source_path) != 0)
-      continue;
-
-    if (!mount_sandbox_directory(title_id, app0_path, source_path, 0)) {
-      int mount_errno = errno;
-      // Removal between the snapshot and lookup is an optional-source skip.
-      struct stat st;
-      if (mount_errno == ENOENT && stat(source_path, &st) != 0 &&
-          errno == ENOENT)
-        continue;
-      free(mounts);
-      errno = mount_errno;
-      return false;
+    if (!sync_sandbox_storage_root(title_id, app0_path, source_path, mounted)) {
+      if (!g_fakelib_mount.mounts_ready) {
+        int mount_errno = errno;
+        free(mounts);
+        errno = mount_errno;
+        return false;
+      }
+      // One failed/busy alias must not prevent updating the other volumes.
+      if (sync_errno == 0)
+        sync_errno = errno;
     }
   }
 
   free(mounts);
+  if (sync_errno != 0) {
+    errno = sync_errno;
+    return false;
+  }
   return true;
 }
 
@@ -1857,35 +1901,22 @@ void sm_fakelib_game_on_usb_mount_change(const char *source_path, bool mounted) 
     return;
   }
 
-  for (size_t i = 0; i < g_fakelib_mount.layer_count; ++i) {
-    fakelib_layer_t *layer = &g_fakelib_mount.layers[i];
-    if (strcmp(layer->source_path, source_path) != 0 ||
-        !layer->label || strcmp(layer->label, "directory") != 0)
-      continue;
-    if (mounted && !layer->source_detached) {
-      pthread_mutex_unlock(&g_fakelib_mutex);
-      return;
-    }
-    // A busy old alias must not be reused when a new disk occupies this slot.
-    layer->source_detached = true;
-    if (!unmount_sandbox_layer(layer)) {
-      pthread_mutex_unlock(&g_fakelib_mutex);
-      return;
-    }
-    --g_fakelib_mount.layer_count;
-    memmove(layer, layer + 1u,
-            (g_fakelib_mount.layer_count - i) * sizeof(*layer));
-    memset(&g_fakelib_mount.layers[g_fakelib_mount.layer_count], 0,
-           sizeof(*layer));
-    break;
-  }
-
-  if (mounted && usb_storage_root_mounted(source_path) &&
-      !mount_sandbox_directory(g_fakelib_mount.title_id,
-                               g_fakelib_mount.sandbox_app0_path,
-                               source_path, 0) && errno != ENOENT) {
+  if (!sync_sandbox_storage_root(g_fakelib_mount.title_id,
+                                  g_fakelib_mount.sandbox_app0_path,
+                                  source_path, mounted)) {
     log_debug("  [FAKELIB] USB sandbox update failed for %s (%s): %s",
               g_fakelib_mount.title_id, source_path, strerror(errno));
+  }
+  pthread_mutex_unlock(&g_fakelib_mutex);
+}
+
+void sm_fakelib_game_refresh_storage(void) {
+  pthread_mutex_lock(&g_fakelib_mutex);
+  if (g_fakelib_mount.mounts_ready &&
+      !mount_sandbox_storage_roots(g_fakelib_mount.title_id,
+                                    g_fakelib_mount.sandbox_app0_path)) {
+    log_debug("  [FAKELIB] sandbox storage refresh failed for %s: %s",
+              g_fakelib_mount.title_id, strerror(errno));
   }
   pthread_mutex_unlock(&g_fakelib_mutex);
 }

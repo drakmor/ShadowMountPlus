@@ -18,6 +18,8 @@ void sm_fakelib_cleanup_caches(void);
 bool sm_fakelib_game_on_sandbox_ready(const char *title_id);
 // Update one USB alias in the prepared or running game's sandbox on hotplug.
 void sm_fakelib_game_on_usb_mount_change(const char *source_path, bool mounted);
+// Reconcile USB, extended storage and disc aliases after filesystem events.
+void sm_fakelib_game_refresh_storage(void);
 // Roll back unbound pre-spawn mounts when ShellCore rejects the launch.
 void sm_fakelib_game_on_launch_failed(const char *title_id);
 // Bind pre-spawn mounts to the process, or mount as a NOTE_EXEC fallback.

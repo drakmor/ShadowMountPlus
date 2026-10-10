@@ -44,6 +44,7 @@
 #define SCANNER_MANUAL_PROBE_INTERVAL_US 10000000ull
 #define SCANNER_USB_SLOT_COUNT 8
 #define SCANNER_USB_MOUNT_PROBE_DELAY_US 1000000ull
+#define SCANNER_STORAGE_FALLBACK_PROBE_US 5000000ull
 #define SCANNER_MAX_RECOMMENDED_CLUSTER_SIZE_BYTES (64ull * 1024ull)
 #define SCANNER_GIB_BYTES (1024ull * 1024ull * 1024ull)
 #define SCANNER_FAKELIB_CACHE_CLEANUP_INTERVAL_US                         \
@@ -933,6 +934,18 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
   return true;
 }
 
+static bool register_scanner_storage_watch(int kq) {
+  struct kevent event;
+  // Mounting an existing directory need not generate a parent vnode write.
+  EV_SET(&event, 0, EVFILT_FS, EV_ADD | EV_ENABLE | EV_CLEAR,
+         VQ_MOUNT | VQ_UNMOUNT | VQ_DEAD, 0, NULL);
+  if (kevent(kq, &event, 1, NULL, 0, NULL) == 0)
+    return true;
+  log_debug("  [SCAN] filesystem watch unavailable; using active-game "
+            "storage probes: %s", strerror(errno));
+  return false;
+}
+
 static bool rebuild_scanner_usb_watches(int kq) {
   // These subscriptions stay current while game activity defers scan work,
   // and do not depend on USB roots being present in the scan configuration.
@@ -1074,6 +1087,7 @@ static bool process_due_scanner_usb_mount_probes(int kq, uint64_t now_us) {
   }
 
   g_scanner_usb_mount_probe_due_us = 0;
+  sm_fakelib_game_refresh_storage();
   for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; slot++) {
     char usb_root[sizeof("/mnt/usb0")];
     build_scanner_usb_root_path(slot, usb_root);
@@ -1674,12 +1688,19 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
   uint64_t now_us = monotonic_time_us();
 
   bool refresh_usb_watches = false;
+  bool storage_mounts_changed = false;
   uint8_t refreshed_usb_slots = 0;
   for (int i = 0; i < nev; i++) {
     const struct kevent *event = &events[i];
 
-    if (handle_scanner_control_event(kq, event, now_us) ||
-        event->filter != EVFILT_VNODE)
+    if (handle_scanner_control_event(kq, event, now_us))
+      continue;
+    if (event->filter == EVFILT_FS) {
+      storage_mounts_changed |=
+          (event->fflags & (VQ_MOUNT | VQ_UNMOUNT | VQ_DEAD)) != 0;
+      continue;
+    }
+    if (event->filter != EVFILT_VNODE)
       continue;
 
     scanner_watch_entry_t *watch_owner =
@@ -1783,6 +1804,20 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
     }
   }
 
+  if (storage_mounts_changed) {
+    sm_fakelib_game_refresh_storage();
+    for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; ++slot) {
+      if ((refreshed_usb_slots & (uint8_t)(1u << slot)) != 0)
+        continue;
+      char usb_root[sizeof("/mnt/usb0")];
+      build_scanner_usb_root_path(slot, usb_root);
+      if (notify_scanner_usb_mount_change(usb_root, false)) {
+        schedule_scan_roots_for_usb_slot(slot, now_us);
+        refresh_usb_watches = true;
+      }
+    }
+  }
+
   // Keep vnode descriptors stable until every event in this batch is read.
   // Closing/reopening them earlier can deliver an old event to a reused fd.
   return !refresh_usb_watches || rebuild_scanner_usb_watches(kq);
@@ -1807,6 +1842,7 @@ static bool discard_scanner_events_nowait(int kq) {
   struct kevent events[SCANNER_EVENT_BATCH];
   struct timespec timeout;
   memset(&timeout, 0, sizeof(timeout));
+  bool storage_mounts_changed = false;
 
   // Leave remaining events queued so continuous activity cannot starve the
   // main loop's stop, reload and scheduling checks.
@@ -1819,11 +1855,17 @@ static bool discard_scanner_events_nowait(int kq) {
       return false;
     }
     if (nev == 0)
-      return true;
+      break;
     uint64_t now_us = monotonic_time_us();
-    for (int i = 0; i < nev; ++i)
+    for (int i = 0; i < nev; ++i) {
       (void)handle_scanner_control_event(kq, &events[i], now_us);
+      if (events[i].filter == EVFILT_FS &&
+          (events[i].fflags & (VQ_MOUNT | VQ_UNMOUNT | VQ_DEAD)) != 0)
+        storage_mounts_changed = true;
+    }
   }
+  if (storage_mounts_changed)
+    sm_fakelib_game_refresh_storage();
   return true;
 }
 
@@ -1961,6 +2003,7 @@ void sm_scanner_run_loop(void) {
     return;
   }
 
+  bool storage_watch_active = register_scanner_storage_watch(kq);
   register_config_file_watch(kq, monotonic_time_us());
   register_manual_file_watch(kq, monotonic_time_us());
   atomic_store_explicit(&g_usb_watches_suspended, false,
@@ -1975,6 +2018,7 @@ void sm_scanner_run_loop(void) {
     request_scanner_shutdown("scanner watcher initialization failed");
     return;
   }
+  sm_fakelib_game_refresh_storage();
   uint64_t next_full_resync_us =
       monotonic_time_us() + scanner_full_resync_interval_us();
   uint64_t next_fakelib_cache_cleanup_us = monotonic_time_us();
@@ -2100,6 +2144,11 @@ void sm_scanner_run_loop(void) {
     }
     game_mount_busy = sm_game_lifecycle_has_active_game() ||
                       sm_shellcore_service_has_prepared_mount();
+    if (!storage_watch_active && game_mount_busy &&
+        g_scanner_usb_mount_probe_due_us == 0) {
+      g_scanner_usb_mount_probe_due_us =
+          now_us + SCANNER_STORAGE_FALLBACK_PROBE_US;
+    }
     if (game_mount_busy) {
       next_full_resync_us = 0;
       scan_work_blocked = true;
