@@ -7,6 +7,9 @@
 bool sm_shellcore_hooks_start(void);
 void sm_shellcore_hooks_stop(void);
 
+// Check/repair previously installed hooks; disabled hooks remain disabled.
+bool sm_shellcore_hooks_refresh(void);
+
 // Return whether this firmware uses the internal TitleDir bridge.
 bool sm_shellcore_install_bridge_enabled(void);
 

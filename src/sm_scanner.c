@@ -29,6 +29,7 @@
 #include "sm_scan.h"
 #include "sm_scan_tree.h"
 #include "sm_scanner.h"
+#include "sm_shellcore_hooks.h"
 #include "sm_shellcore_service.h"
 #include "sm_time.h"
 #include "sm_title_state.h"
@@ -1952,6 +1953,8 @@ void sm_scanner_run_loop(void) {
       next_full_resync_us =
           monotonic_time_us() + RUNTIME_RESUME_GRACE_US;
       log_debug("[SLEEP] USB scanner watches resumed");
+      // One check per resume. Registration also repairs hooks on demand.
+      (void)sm_shellcore_hooks_refresh();
     }
 
     bool game_mount_busy = sm_game_lifecycle_has_active_game() ||
