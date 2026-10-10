@@ -53,6 +53,8 @@ typedef enum {
   SCANNER_WATCH_SCAN_ROOT = 0,
   SCANNER_WATCH_SCAN_ROOT_PARENT,
   SCANNER_WATCH_SCAN_SUBDIR,
+  SCANNER_WATCH_USB_PARENT,
+  SCANNER_WATCH_USB_ROOT,
 } scanner_watch_kind_t;
 
 typedef struct {
@@ -215,7 +217,24 @@ static uint64_t bytes_to_gib_tenths(uint64_t bytes) {
              SCANNER_GIB_BYTES;
 }
 
-static bool notify_scanner_usb_mount_change(const char *path) {
+static bool scanner_usb_root_identity_changed(const char *usb_root) {
+  for (size_t i = 0; i < g_scanner_watch_count; ++i) {
+    const scanner_watch_entry_t *entry = &g_scanner_watch_entries[i];
+    if (entry->kind != SCANNER_WATCH_USB_ROOT ||
+        strcmp(entry->path, usb_root) != 0)
+      continue;
+    struct stat watched_st, current_st;
+    // A revoked vnode can reject fstat even though the slot is mounted again.
+    if (fstat(entry->fd, &watched_st) != 0)
+      return true;
+    return stat(usb_root, &current_st) == 0 &&
+           (watched_st.st_dev != current_st.st_dev ||
+            watched_st.st_ino != current_st.st_ino);
+  }
+  return false;
+}
+
+static bool notify_scanner_usb_mount_change(const char *path, bool force_refresh) {
   int slot = scanner_usb_slot_for_path(path);
   if (slot < 0)
     return false;
@@ -225,7 +244,9 @@ static bool notify_scanner_usb_mount_change(const char *path) {
   uint8_t slot_mask = (uint8_t)(1u << slot);
   bool mounted = usb_storage_root_mounted(usb_root);
   bool was_mounted = (g_scanner_usb_mounted_mask & slot_mask) != 0;
-  if (mounted == was_mounted)
+  bool replaced = mounted && was_mounted &&
+                  (force_refresh || scanner_usb_root_identity_changed(usb_root));
+  if (mounted == was_mounted && !replaced)
     return false;
 
   if (mounted) {
@@ -249,6 +270,9 @@ static bool notify_scanner_usb_mount_change(const char *path) {
     g_scanner_usb_info[slot].available_tenths = available_tenths;
     g_scanner_usb_info[slot].capacity_tenths = capacity_tenths;
     g_scanner_usb_info[slot].block_size_bytes = block_size;
+    if (replaced)
+      sm_fakelib_game_on_usb_mount_change(usb_root, false);
+    sm_fakelib_game_on_usb_mount_change(usb_root, true);
     log_debug("[SCAN] USB storage connected; scan scheduled: %s "
               "capacity=%lluB available=%lluB block_size=%lluB",
               usb_root, (unsigned long long)capacity_bytes,
@@ -261,6 +285,7 @@ static bool notify_scanner_usb_mount_change(const char *path) {
   g_scanner_usb_scan_result_pending_mask &= (uint8_t)~slot_mask;
   reset_scanner_usb_scan_counts(slot);
   memset(&g_scanner_usb_info[slot], 0, sizeof(g_scanner_usb_info[slot]));
+  sm_fakelib_game_on_usb_mount_change(usb_root, false);
   log_debug("[SCAN] USB storage disconnected: %s", usb_root);
   notify_system_info_l10n(SM_L10N_USB_DISCONNECTED, usb_root);
   return false;
@@ -467,6 +492,8 @@ static bool rebuild_scanner_watch_fd_index(void) {
 
 static void link_scanner_watch_entry_to_root(size_t index) {
   scanner_watch_entry_t *entry = &g_scanner_watch_entries[index];
+  if (entry->scan_root_index < 0)
+    return;
   size_t head = g_scanner_root_watch_heads[entry->scan_root_index];
   entry->prev_root_watch_index = SCANNER_WATCH_INDEX_NONE;
   entry->next_root_watch_index = head;
@@ -477,6 +504,8 @@ static void link_scanner_watch_entry_to_root(size_t index) {
 
 static void unlink_scanner_watch_entry_from_root(size_t index) {
   scanner_watch_entry_t *entry = &g_scanner_watch_entries[index];
+  if (entry->scan_root_index < 0)
+    return;
   if (entry->prev_root_watch_index != SCANNER_WATCH_INDEX_NONE) {
     g_scanner_watch_entries[entry->prev_root_watch_index].next_root_watch_index =
         entry->next_root_watch_index;
@@ -495,6 +524,8 @@ static void unlink_scanner_watch_entry_from_root(size_t index) {
 static void rebind_scanner_watch_entry_root_index(size_t old_index,
                                                   size_t new_index) {
   scanner_watch_entry_t *entry = &g_scanner_watch_entries[new_index];
+  if (entry->scan_root_index < 0)
+    return;
   if (g_scanner_root_watch_heads[entry->scan_root_index] == old_index)
     g_scanner_root_watch_heads[entry->scan_root_index] = new_index;
   if (entry->prev_root_watch_index != SCANNER_WATCH_INDEX_NONE) {
@@ -902,16 +933,45 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
   return true;
 }
 
-static bool rebuild_all_scan_root_watch_trees(int kq) {
-  for (int i = 0; i < get_scan_path_count(); i++) {
-    if (!rebuild_scan_root_watch_tree(kq, i))
+static bool rebuild_scanner_usb_watches(int kq) {
+  // These subscriptions stay current while game activity defers scan work,
+  // and do not depend on USB roots being present in the scan configuration.
+  for (size_t i = 0; i < g_scanner_watch_count;) {
+    if (g_scanner_watch_entries[i].scan_root_index < 0)
+      remove_scanner_watch_entry_at(i);
+    else
+      ++i;
+  }
+  if (!rebuild_scanner_watch_fd_index() ||
+      !register_scanner_watch_entry(kq, -1, "/mnt", SCANNER_WATCH_USB_PARENT, 0))
+    return false;
+  for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; ++slot) {
+    char usb_root[sizeof("/mnt/usb0")];
+    build_scanner_usb_root_path(slot, usb_root);
+    if (!register_scanner_watch_entry(kq, -1, usb_root, SCANNER_WATCH_USB_ROOT, 0))
       return false;
   }
   return true;
 }
 
+static bool rebuild_all_scan_root_watch_trees(int kq) {
+  for (int i = 0; i < get_scan_path_count(); i++) {
+    if (!rebuild_scan_root_watch_tree(kq, i))
+      return false;
+  }
+  return rebuild_scanner_usb_watches(kq);
+}
+
 static bool suspend_usb_scan_root_watch_trees(void) {
   bool removed_any = false;
+  for (size_t i = 0; i < g_scanner_watch_count;) {
+    if (g_scanner_watch_entries[i].scan_root_index < 0) {
+      remove_scanner_watch_entry_at(i);
+      removed_any = true;
+    } else {
+      ++i;
+    }
+  }
   for (int i = 0; i < get_scan_path_count(); i++) {
     char scan_path[MAX_PATH];
     if (!get_scan_path(i, scan_path))
@@ -1007,19 +1067,20 @@ static void schedule_pending_scanner_usb_scans(uint64_t now_us) {
   }
 }
 
-static void process_due_scanner_usb_mount_probes(uint64_t now_us) {
+static bool process_due_scanner_usb_mount_probes(int kq, uint64_t now_us) {
   if (g_scanner_usb_mount_probe_due_us == 0 ||
       g_scanner_usb_mount_probe_due_us > now_us) {
-    return;
+    return true;
   }
 
   g_scanner_usb_mount_probe_due_us = 0;
   for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; slot++) {
     char usb_root[sizeof("/mnt/usb0")];
     build_scanner_usb_root_path(slot, usb_root);
-    if (notify_scanner_usb_mount_change(usb_root))
+    if (notify_scanner_usb_mount_change(usb_root, false))
       schedule_scan_roots_for_usb_slot(slot, now_us);
   }
+  return rebuild_scanner_usb_watches(kq);
 }
 
 static bool resume_usb_scan_root_watch_trees(int kq) {
@@ -1037,7 +1098,7 @@ static bool resume_usb_scan_root_watch_trees(int kq) {
     if (usb_storage_root_mounted(scan_root))
       schedule_scan_root_dirty(i, now_us, true);
   }
-  return true;
+  return rebuild_scanner_usb_watches(kq);
 }
 
 static void clear_all_dirty_scan_roots(void) {
@@ -1298,7 +1359,7 @@ static bool run_full_scan_cycle_impl(bool startup_sync, const char *reason,
     for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; slot++) {
       char usb_root[sizeof("/mnt/usb0")];
       build_scanner_usb_root_path(slot, usb_root);
-      (void)notify_scanner_usb_mount_change(usb_root);
+      (void)notify_scanner_usb_mount_change(usb_root, false);
     }
   }
 
@@ -1364,7 +1425,7 @@ static bool run_targeted_scan_cycle_impl(int scan_root_index,
     return false;
 
   int usb_slot = scanner_usb_slot_for_path(scan_root);
-  if (notify_scanner_usb_mount_change(scan_root)) {
+  if (notify_scanner_usb_mount_change(scan_root, false)) {
     schedule_scan_roots_for_usb_slot_except(usb_slot, scan_root_index,
                                             monotonic_time_us());
   }
@@ -1624,7 +1685,7 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
     if (!watch_owner)
       continue;
 
-    scanner_event_subscription_t subscriptions[MAX_SCAN_PATHS];
+    scanner_event_subscription_t subscriptions[MAX_SCAN_PATHS + 1u];
     size_t subscription_count = 0;
     char watched_path[MAX_PATH];
     (void)strlcpy(watched_path, watch_owner->path, sizeof(watched_path));
@@ -1638,7 +1699,7 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
         continue;
       if (immediate)
         entry->fd_shareable = false;
-      if (subscription_count >= MAX_SCAN_PATHS) {
+      if (subscription_count >= sizeof(subscriptions) / sizeof(subscriptions[0])) {
         log_debug("  [SCAN] too many watcher subscriptions for %s",
                   watched_path);
         return false;
@@ -1652,10 +1713,36 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
     }
 
     uint8_t checked_usb_slots = 0;
+    bool refresh_usb_watches = false;
+    for (size_t j = 0; j < subscription_count; ++j) {
+      if (subscriptions[j].scan_root_index >= 0)
+        continue;
+      bool parent = subscriptions[j].kind == SCANNER_WATCH_USB_PARENT;
+      int event_slot = scanner_usb_slot_for_path(watched_path);
+      for (int slot = 0; slot < SCANNER_USB_SLOT_COUNT; ++slot) {
+        if (!parent && slot != event_slot)
+          continue;
+        char usb_root[sizeof("/mnt/usb0")];
+        build_scanner_usb_root_path(slot, usb_root);
+        // A revoke and reattach can coalesce with the host already mounted.
+        if (notify_scanner_usb_mount_change(usb_root, !parent && immediate)) {
+          schedule_scan_roots_for_usb_slot(slot, now_us);
+          refresh_usb_watches = true;
+        }
+        if (parent)
+          schedule_scanner_usb_mount_probe(usb_root, now_us);
+        checked_usb_slots |= (uint8_t)(1u << slot);
+      }
+      refresh_usb_watches |= parent || immediate;
+    }
+    if (refresh_usb_watches && !rebuild_scanner_usb_watches(kq))
+      return false;
     for (size_t subscription_index = 0;
          subscription_index < subscription_count; subscription_index++) {
       const scanner_event_subscription_t *subscription =
           &subscriptions[subscription_index];
+      if (subscription->scan_root_index < 0)
+        continue;
       char scan_root[MAX_PATH];
       if (!get_scan_path(subscription->scan_root_index, scan_root))
         continue;
@@ -1664,7 +1751,7 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
         uint8_t slot_mask = (uint8_t)(1u << usb_slot);
         if ((checked_usb_slots & slot_mask) == 0) {
           checked_usb_slots |= slot_mask;
-          if (notify_scanner_usb_mount_change(scan_root))
+          if (notify_scanner_usb_mount_change(scan_root, false))
             schedule_scan_roots_for_usb_slot(usb_slot, now_us);
         }
       }
@@ -1998,7 +2085,12 @@ void sm_scanner_run_loop(void) {
     }
 
     uint64_t now_us = monotonic_time_us();
-    process_due_scanner_usb_mount_probes(now_us);
+    if (!process_due_scanner_usb_mount_probes(kq, now_us)) {
+      close(kq);
+      clear_scanner_watch_entries();
+      request_scanner_shutdown("USB watcher refresh failed");
+      return;
+    }
     game_mount_busy = sm_game_lifecycle_has_active_game() ||
                       sm_shellcore_service_has_prepared_mount();
     if (game_mount_busy) {

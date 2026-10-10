@@ -31,6 +31,7 @@ typedef struct {
   char mount_path[MAX_PATH];
   const char *label;
   bool created_mount_path;
+  bool source_detached;
 } fakelib_layer_t;
 
 typedef struct {
@@ -1655,6 +1656,52 @@ bool sm_fakelib_game_on_sandbox_ready(const char *title_id) {
   bool ready = mount_fakelib_for_game_locked(0, title_id, false);
   pthread_mutex_unlock(&g_fakelib_mutex);
   return ready;
+}
+
+void sm_fakelib_game_on_usb_mount_change(const char *source_path, bool mounted) {
+  if (!source_path || strncmp(source_path, "/mnt/usb", 8u) != 0 ||
+      source_path[8] < '0' ||
+      source_path[8] >= '0' + (int)SANDBOX_USB_ROOT_COUNT ||
+      source_path[9] != '\0')
+    return;
+
+  pthread_mutex_lock(&g_fakelib_mutex);
+  if (!g_fakelib_mount.mounts_ready) {
+    pthread_mutex_unlock(&g_fakelib_mutex);
+    return;
+  }
+
+  for (size_t i = 0; i < g_fakelib_mount.layer_count; ++i) {
+    fakelib_layer_t *layer = &g_fakelib_mount.layers[i];
+    if (strcmp(layer->source_path, source_path) != 0 ||
+        !layer->label || strcmp(layer->label, "directory") != 0)
+      continue;
+    if (mounted && !layer->source_detached) {
+      pthread_mutex_unlock(&g_fakelib_mutex);
+      return;
+    }
+    // A busy old alias must not be reused when a new disk occupies this slot.
+    layer->source_detached = true;
+    if (!unmount_sandbox_layer(layer)) {
+      pthread_mutex_unlock(&g_fakelib_mutex);
+      return;
+    }
+    --g_fakelib_mount.layer_count;
+    memmove(layer, layer + 1u,
+            (g_fakelib_mount.layer_count - i) * sizeof(*layer));
+    memset(&g_fakelib_mount.layers[g_fakelib_mount.layer_count], 0,
+           sizeof(*layer));
+    break;
+  }
+
+  if (mounted && usb_storage_root_mounted(source_path) &&
+      !mount_sandbox_directory(g_fakelib_mount.title_id,
+                               g_fakelib_mount.sandbox_app0_path,
+                               source_path, 0) && errno != ENOENT) {
+    log_debug("  [FAKELIB] USB sandbox update failed for %s (%s): %s",
+              g_fakelib_mount.title_id, source_path, strerror(errno));
+  }
+  pthread_mutex_unlock(&g_fakelib_mutex);
 }
 
 void sm_fakelib_game_on_launch_failed(const char *title_id) {

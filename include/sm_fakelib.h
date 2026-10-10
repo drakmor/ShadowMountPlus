@@ -13,9 +13,11 @@ void sm_fakelib_prepare_title_cache(const char *title_id,
                                     const char *game_path);
 // Remove invalid and unused fakelib caches during the scanner's rare cycle.
 void sm_fakelib_cleanup_caches(void);
-// Mount /mnt, /data and an optional prepared fakelib overlay after ShellCore
+// Mount sandbox directories and an optional prepared fakelib overlay after ShellCore
 // creates the sandbox but before it spawns the application process.
 bool sm_fakelib_game_on_sandbox_ready(const char *title_id);
+// Update one USB alias in the prepared or running game's sandbox on hotplug.
+void sm_fakelib_game_on_usb_mount_change(const char *source_path, bool mounted);
 // Roll back unbound pre-spawn mounts when ShellCore rejects the launch.
 void sm_fakelib_game_on_launch_failed(const char *title_id);
 // Bind pre-spawn mounts to the process, or mount as a NOTE_EXEC fallback.
