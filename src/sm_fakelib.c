@@ -45,8 +45,8 @@ typedef struct {
   char title_id[MAX_TITLE_ID];
   char sandbox_app0_path[MAX_PATH];
   char mount_path[MAX_PATH];
-  // fakelib, /mnt, /data, fonts, and up to two created font parents.
-  fakelib_layer_t layers[6u + SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT];
+  // fakelib, /data, /mnt/disc, fonts, and up to three created parents.
+  fakelib_layer_t layers[7u + SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT];
   size_t layer_count;
   sm_l10n_key_t notification;
   bool notify_pending;
@@ -229,6 +229,42 @@ static bool mount_sandbox_directory(const char *title_id,
   return true;
 }
 
+// Own only directories we create; cleanup removes them after their children.
+static bool ensure_sandbox_parent(const char *app0_path, const char *parent) {
+  size_t app0_len = strlen(app0_path);
+  if (app0_len < 5u || strcmp(app0_path + app0_len - 5u, "/app0") != 0) {
+    errno = ENOENT;
+    return false;
+  }
+  if (g_fakelib_mount.layer_count >=
+      sizeof(g_fakelib_mount.layers) / sizeof(g_fakelib_mount.layers[0])) {
+    errno = ENOSPC;
+    return false;
+  }
+  char path[MAX_PATH];
+  int written = snprintf(path, sizeof(path), "%.*s%s",
+                         (int)(app0_len - 5u), app0_path, parent);
+  if (written < 0 || (size_t)written >= sizeof(path)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  if (mkdir(path, 0777) != 0) {
+    struct stat st;
+    if (errno != EEXIST || lstat(path, &st) != 0)
+      return false;
+    if (!S_ISDIR(st.st_mode)) {
+      errno = ENOTDIR;
+      return false;
+    }
+    return true;
+  }
+  fakelib_layer_t *layer =
+      &g_fakelib_mount.layers[g_fakelib_mount.layer_count++];
+  layer->created_mount_path = true;
+  (void)strlcpy(layer->mount_path, path, sizeof(layer->mount_path));
+  return true;
+}
+
 static bool mount_sandbox_fonts(const char *title_id, const char *app0_path) {
   const char *source_path = "/preinst/common/font";
   struct stat st;
@@ -239,42 +275,9 @@ static bool mount_sandbox_fonts(const char *title_id, const char *app0_path) {
     return false;
   }
 
-  size_t app0_len = strlen(app0_path);
-  if (app0_len < 5u || strcmp(app0_path + app0_len - 5u, "/app0") != 0) {
-    errno = ENOENT;
+  if (!ensure_sandbox_parent(app0_path, "/preinst") ||
+      !ensure_sandbox_parent(app0_path, "/preinst/common"))
     return false;
-  }
-
-  // Track only parents we create, so rollback and shutdown remove them after
-  // the read-only font mount. Empty source paths represent directory ownership.
-  const char *parents[] = {"/preinst", "/preinst/common"};
-  for (size_t i = 0; i < sizeof(parents) / sizeof(parents[0]); ++i) {
-    if (g_fakelib_mount.layer_count >=
-        sizeof(g_fakelib_mount.layers) / sizeof(g_fakelib_mount.layers[0])) {
-      errno = ENOSPC;
-      return false;
-    }
-    char path[MAX_PATH];
-    int written = snprintf(path, sizeof(path), "%.*s%s",
-                           (int)(app0_len - 5u), app0_path, parents[i]);
-    if (written < 0 || (size_t)written >= sizeof(path)) {
-      errno = ENAMETOOLONG;
-      return false;
-    }
-    if (mkdir(path, 0777) != 0) {
-      if (errno != EEXIST || lstat(path, &st) != 0)
-        return false;
-      if (!S_ISDIR(st.st_mode)) {
-        errno = ENOTDIR;
-        return false;
-      }
-      continue;
-    }
-    fakelib_layer_t *layer =
-        &g_fakelib_mount.layers[g_fakelib_mount.layer_count++];
-    layer->created_mount_path = true;
-    (void)strlcpy(layer->mount_path, path, sizeof(layer->mount_path));
-  }
 
   if (mount_sandbox_directory(title_id, app0_path, source_path, MNT_RDONLY))
     return true;
@@ -295,16 +298,17 @@ static bool mount_sandbox_storage_roots(const char *title_id,
     return false;
   }
 
-  // nullfs aliases one filesystem; /mnt's tmpfs does not expose the mounted
-  // USB/external filesystems below it. Bind each connected storage root itself.
+  // Keep sandbox /mnt local and expose only mounted storage volumes.
   for (unsigned slot = 0;
-       slot < SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT; ++slot) {
+       slot <= SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT; ++slot) {
     char source_path[MAX_PATH];
     if (slot < SANDBOX_USB_ROOT_COUNT)
       (void)snprintf(source_path, sizeof(source_path), "/mnt/usb%u", slot);
-    else
+    else if (slot < SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT)
       (void)snprintf(source_path, sizeof(source_path), "/mnt/ext%u",
                      slot - SANDBOX_USB_ROOT_COUNT);
+    else
+      (void)strlcpy(source_path, "/mnt/disc", sizeof(source_path));
 
     bool mounted = false;
     for (int i = 0; i < mount_count; ++i) {
@@ -314,6 +318,19 @@ static bool mount_sandbox_storage_roots(const char *title_id,
       }
     }
     if (!mounted)
+      continue;
+
+    // A removed volume can leave an empty directory after the snapshot.
+    struct statfs current;
+    if (statfs(source_path, &current) != 0) {
+      int stat_errno = errno;
+      if (stat_errno == ENOENT)
+        continue;
+      free(mounts);
+      errno = stat_errno;
+      return false;
+    }
+    if (strcmp(current.f_mntonname, source_path) != 0)
       continue;
 
     if (!mount_sandbox_directory(title_id, app0_path, source_path, 0)) {
@@ -1801,7 +1818,7 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
                           : (has_game ? "game" : "global");
   if ((has_source && !track_sandbox_layer(title_id, source_path, mount_path,
                                         label, true, 0)) ||
-      !mount_sandbox_directory(title_id, sandbox_app0_path, "/mnt", 0) ||
+      !ensure_sandbox_parent(sandbox_app0_path, "/mnt") ||
       !mount_sandbox_directory(title_id, sandbox_app0_path, "/data", 0) ||
       !mount_sandbox_storage_roots(title_id, sandbox_app0_path) ||
       !mount_sandbox_fonts(title_id, sandbox_app0_path)) {
