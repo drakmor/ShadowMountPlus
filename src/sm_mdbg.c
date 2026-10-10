@@ -24,10 +24,16 @@ int mdbg_call(void *cmd, void *req, void *res);
 #define MDBG_MONITOR_WINDOW_US (60ull * 1000000ull)
 #define MDBG_LOG_LINE_BUFFER_SIZE 512u
 #define MDBG_RTLD_ERROR_PREFIX_SIZE 32u
-#define MDBG_FATAL_ERROR_BUFFER_SIZE 256u
+#define MDBG_FATAL_ERROR_BUFFER_SIZE 512u
+#define MDBG_FATAL_DETAIL_LIMIT 96
 #define MDBG_FATAL_EXCEPTION_PREFIX "# exception: "
+#define MDBG_FATAL_SIGNAL_PREFIX "# signal: "
+#define MDBG_FATAL_SIGNAL_HEADER "# A user thread receives a fatal signal"
 #define MDBG_FATAL_THREAD_NAME_PREFIX "# thread name: "
 #define MDBG_FATAL_PROCESS_ID_PREFIX "# proc ID: "
+#define MDBG_FATAL_REASON_PREFIX "# reason: "
+#define MDBG_FATAL_FAULT_ADDRESS_PREFIX "# fault address: "
+#define MDBG_FATAL_RIP_PREFIX "# rip: "
 #ifndef MDBG_USE_PRIVATE_LOG_TEXT
 #define MDBG_USE_PRIVATE_LOG_TEXT 0
 #endif
@@ -65,6 +71,13 @@ typedef enum {
   MDBG_FAILURE_FATAL_SIGNAL,
 } mdbg_failure_kind_t;
 
+typedef enum {
+  MDBG_FATAL_NONE = 0,
+  MDBG_FATAL_LEGACY,
+  MDBG_FATAL_SIGNAL,
+  MDBG_FATAL_BACKTRACE,
+} mdbg_fatal_section_t;
+
 typedef struct {
   bool active;
   pid_t pid;
@@ -82,7 +95,7 @@ typedef struct {
   size_t log_line_length;
   size_t fatal_error_length;
   pid_t fatal_error_pid;
-  bool fatal_error_active;
+  mdbg_fatal_section_t fatal_section;
   char *log_snapshot;
   char *log_storage;
   char log_line[MDBG_LOG_LINE_BUFFER_SIZE];
@@ -160,7 +173,7 @@ static void reset_log_line_buffer(void) {
 }
 
 static void reset_fatal_error_buffer(void) {
-  g_mdbg.fatal_error_active = false;
+  g_mdbg.fatal_section = MDBG_FATAL_NONE;
   g_mdbg.fatal_error_length = 0;
   g_mdbg.fatal_error_pid = 0;
   g_mdbg.fatal_error[0] = '\0';
@@ -386,10 +399,11 @@ static void append_fatal_error_detail(const char *detail) {
   }
 
   size_t remaining = sizeof(g_mdbg.fatal_error) - g_mdbg.fatal_error_length;
+  // Bound header fields so the fault/RIP/backtrace addresses still fit.
   int written = snprintf(g_mdbg.fatal_error + g_mdbg.fatal_error_length,
-                         remaining, "%s%s",
+                         remaining, "%s%.*s",
                          g_mdbg.fatal_error_length != 0 ? "\n" : "",
-                         detail);
+                         MDBG_FATAL_DETAIL_LIMIT, detail);
   if (written < 0)
     return;
   if ((size_t)written >= remaining) {
@@ -415,10 +429,10 @@ static void parse_fatal_error_pid(const char *line) {
 }
 
 static void finish_fatal_error(uint64_t now_us) {
-  if (!g_mdbg.fatal_error_active)
+  if (g_mdbg.fatal_section == MDBG_FATAL_NONE)
     return;
 
-  g_mdbg.fatal_error_active = false;
+  g_mdbg.fatal_section = MDBG_FATAL_NONE;
   if (g_mdbg.fatal_error_length == 0) {
     reset_fatal_error_buffer();
     return;
@@ -435,35 +449,106 @@ static void finish_fatal_error(uint64_t now_us) {
                        MDBG_FAILURE_FATAL_SIGNAL);
 }
 
+static void start_fatal_error(mdbg_fatal_section_t section, const char *detail,
+                             uint64_t now_us) {
+  if (g_mdbg.fatal_section != MDBG_FATAL_NONE && g_mdbg.fatal_error_pid > 0)
+    finish_fatal_error(now_us);
+  if (!g_mdbg.game.active)
+    return;
+  reset_fatal_error_buffer();
+  g_mdbg.fatal_section = section;
+  append_fatal_error_detail(detail);
+}
+
+static bool parse_fatal_address(const char *text, bool trailing_fields,
+                                uint64_t *address_out) {
+  while (isspace((unsigned char)*text))
+    ++text;
+  if (!isxdigit((unsigned char)*text))
+    return false;
+  char *end;
+  errno = 0;
+  unsigned long long value = strtoull(text, &end, 16);
+  if (errno == ERANGE || end == text ||
+      (*end != '\0' && !isspace((unsigned char)*end))) {
+    return false;
+  }
+  while (isspace((unsigned char)*end))
+    ++end;
+  if (*end != '\0' && !trailing_fields)
+    return false;
+  *address_out = (uint64_t)value;
+  return true;
+}
+
+static void append_fatal_address(const char *name, uint64_t address) {
+  char detail[64];
+  snprintf(detail, sizeof(detail), "%s: 0x%016" PRIx64, name, address);
+  append_fatal_error_detail(detail);
+}
+
 static void process_log_line(const char *line, uint64_t now_us) {
   if (matches_tracked_rtld_error(line)) {
     handle_game_failure(line, now_us, MDBG_FAILURE_RTLD);
     return;
   }
 
+  if (!strcmp(line, MDBG_FATAL_SIGNAL_HEADER)) {
+    start_fatal_error(MDBG_FATAL_SIGNAL, NULL, now_us);
+    return;
+  }
+  if (!strncmp(line, MDBG_FATAL_SIGNAL_PREFIX,
+               strlen(MDBG_FATAL_SIGNAL_PREFIX))) {
+    start_fatal_error(MDBG_FATAL_SIGNAL, line + 2, now_us);
+    return;
+  }
   if (!strncmp(line, MDBG_FATAL_EXCEPTION_PREFIX,
                strlen(MDBG_FATAL_EXCEPTION_PREFIX))) {
-    reset_fatal_error_buffer();
-    g_mdbg.fatal_error_active = true;
-    append_fatal_error_detail(line + strlen(MDBG_FATAL_EXCEPTION_PREFIX));
+    start_fatal_error(MDBG_FATAL_LEGACY,
+                      line + strlen(MDBG_FATAL_EXCEPTION_PREFIX), now_us);
     return;
   }
 
-  if (g_mdbg.fatal_error_active) {
+  if (g_mdbg.fatal_section != MDBG_FATAL_NONE) {
     if (line[0] != '#')
       return;
 
     if (!strcmp(line, "#")) {
-      finish_fatal_error(now_us);
+      // The signal format separates its header, registers and backtrace
+      // with blank comment lines. Wait until location details are available.
+      if (g_mdbg.fatal_section == MDBG_FATAL_LEGACY ||
+          g_mdbg.fatal_section == MDBG_FATAL_BACKTRACE)
+        finish_fatal_error(now_us);
       return;
     }
 
+    uint64_t address;
     if (!strncmp(line, MDBG_FATAL_THREAD_NAME_PREFIX,
-                 strlen(MDBG_FATAL_THREAD_NAME_PREFIX))) {
+                 strlen(MDBG_FATAL_THREAD_NAME_PREFIX)) ||
+        !strncmp(line, MDBG_FATAL_REASON_PREFIX,
+                 strlen(MDBG_FATAL_REASON_PREFIX))) {
       append_fatal_error_detail(line + 2);
     } else if (!strncmp(line, MDBG_FATAL_PROCESS_ID_PREFIX,
                         strlen(MDBG_FATAL_PROCESS_ID_PREFIX))) {
       parse_fatal_error_pid(line);
+    } else if (!strncmp(line, MDBG_FATAL_FAULT_ADDRESS_PREFIX,
+                        strlen(MDBG_FATAL_FAULT_ADDRESS_PREFIX))) {
+      if (parse_fatal_address(line + strlen(MDBG_FATAL_FAULT_ADDRESS_PREFIX),
+                              false, &address))
+        append_fatal_address("fault address", address);
+    } else if (!strncmp(line, MDBG_FATAL_RIP_PREFIX,
+                        strlen(MDBG_FATAL_RIP_PREFIX))) {
+      if (parse_fatal_address(line + strlen(MDBG_FATAL_RIP_PREFIX), true,
+                              &address))
+        append_fatal_address("RIP", address);
+    } else if (!strcmp(line, "# backtrace:")) {
+      g_mdbg.fatal_section = MDBG_FATAL_BACKTRACE;
+    } else if (!strcmp(line, "# dynamic libraries:")) {
+      finish_fatal_error(now_us);
+    } else if (g_mdbg.fatal_section == MDBG_FATAL_BACKTRACE &&
+               line[1] == ' ' && parse_fatal_address(line + 2, false, &address)) {
+      append_fatal_address("backtrace[0]", address);
+      finish_fatal_error(now_us);
     }
     return;
   }
@@ -659,6 +744,24 @@ uint64_t sm_mdbg_next_wake_us(void) {
              : g_mdbg.game.monitor_deadline_us;
 }
 
+static bool fatal_log_line_pending(void) {
+  static const char *const prefixes[] = {
+      MDBG_FATAL_SIGNAL_HEADER,
+      MDBG_FATAL_SIGNAL_PREFIX,
+      MDBG_FATAL_EXCEPTION_PREFIX,
+  };
+  if (g_mdbg.log_line_length == 0)
+    return false;
+  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+    size_t length = strlen(prefixes[i]);
+    if (length > g_mdbg.log_line_length)
+      length = g_mdbg.log_line_length;
+    if (!strncmp(g_mdbg.log_line, prefixes[i], length))
+      return true;
+  }
+  return false;
+}
+
 void sm_mdbg_poll(bool process_active) {
   if (!g_mdbg.game.active)
     return;
@@ -676,8 +779,8 @@ void sm_mdbg_poll(bool process_active) {
   if (!g_mdbg.game.active)
     return;
   g_mdbg.game.next_poll_us = now_us + GAME_LIFECYCLE_POLL_INTERVAL_US;
-  if (!process_active ||
-      (g_mdbg.fatal_error_active &&
+  if (!process_active || fatal_log_line_pending() ||
+      (g_mdbg.fatal_section != MDBG_FATAL_NONE &&
        (g_mdbg.fatal_error_pid == 0 || g_mdbg.fatal_error_pid == g_mdbg.game.pid)))
     return;
 
