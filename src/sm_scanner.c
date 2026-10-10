@@ -1673,6 +1673,8 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
 
   uint64_t now_us = monotonic_time_us();
 
+  bool refresh_usb_watches = false;
+  uint8_t refreshed_usb_slots = 0;
   for (int i = 0; i < nev; i++) {
     const struct kevent *event = &events[i];
 
@@ -1713,7 +1715,6 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
     }
 
     uint8_t checked_usb_slots = 0;
-    bool refresh_usb_watches = false;
     for (size_t j = 0; j < subscription_count; ++j) {
       if (subscriptions[j].scan_root_index >= 0)
         continue;
@@ -1724,8 +1725,11 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
           continue;
         char usb_root[sizeof("/mnt/usb0")];
         build_scanner_usb_root_path(slot, usb_root);
+        uint8_t slot_mask = (uint8_t)(1u << slot);
         // A revoke and reattach can coalesce with the host already mounted.
-        if (notify_scanner_usb_mount_change(usb_root, !parent && immediate)) {
+        if ((refreshed_usb_slots & slot_mask) == 0 &&
+            notify_scanner_usb_mount_change(usb_root, !parent && immediate)) {
+          refreshed_usb_slots |= slot_mask;
           schedule_scan_roots_for_usb_slot(slot, now_us);
           refresh_usb_watches = true;
         }
@@ -1735,8 +1739,6 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
       }
       refresh_usb_watches |= parent || immediate;
     }
-    if (refresh_usb_watches && !rebuild_scanner_usb_watches(kq))
-      return false;
     for (size_t subscription_index = 0;
          subscription_index < subscription_count; subscription_index++) {
       const scanner_event_subscription_t *subscription =
@@ -1751,8 +1753,11 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
         uint8_t slot_mask = (uint8_t)(1u << usb_slot);
         if ((checked_usb_slots & slot_mask) == 0) {
           checked_usb_slots |= slot_mask;
-          if (notify_scanner_usb_mount_change(scan_root, false))
+          if ((refreshed_usb_slots & slot_mask) == 0 &&
+              notify_scanner_usb_mount_change(scan_root, false)) {
+            refreshed_usb_slots |= slot_mask;
             schedule_scan_roots_for_usb_slot(usb_slot, now_us);
+          }
         }
       }
       if (subscription->kind == SCANNER_WATCH_SCAN_ROOT_PARENT)
@@ -1778,7 +1783,9 @@ static bool process_scanner_events(int kq, const struct timespec *timeout,
     }
   }
 
-  return true;
+  // Keep vnode descriptors stable until every event in this batch is read.
+  // Closing/reopening them earlier can deliver an old event to a reused fd.
+  return !refresh_usb_watches || rebuild_scanner_usb_watches(kq);
 }
 
 static bool drain_scanner_events_nowait(int kq) {
