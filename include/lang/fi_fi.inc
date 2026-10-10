@@ -28,10 +28,6 @@ static const char *const g_fi_fi[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "Rekisteröinti epäonnistui: %s (%s)\nkoodi=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Asennetaan: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff on taas aktiivinen",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "KStuff keskeytetty pelin ollessa käynnissä",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Asennettu: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_fi_fi[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... ja %d lisää",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "Eräasennus epäonnistui %d sovellukselle.\nkoodi=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "Sovellus %s kaatui ennen KStuffin keskeytystä. KStuff ei ole syyllinen.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s kaatui ennen KStuffin keskeytystä:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "Sovellus %s kaatui KStuffin keskeytyksen jälkeen. Automaattinen säätö ohitettiin.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s kaatui KStuffin keskeytyksen jälkeen:\n%s\nAutomaattinen säätö ohitettiin.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "Moduulia ei voi ladata KStuff-tauon jälkeen",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "moduulia %.*s ei voi ladata KStuffin keskeytyksen jälkeen",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. Viive nostettu arvoon %u s.\nKäynnistä peli uudelleen.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "KStuffin keskeytyksen jälkeen havaittiin kaatuminen: kohteen %s viive nostettiin arvoon %u s. Käynnistä peli uudelleen.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s kaatui KStuffin keskeytyksen jälkeen:\n%s\nViive nostettiin arvoon %u s.\nKäynnistä peli uudelleen.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "KStuffin keskeytyksen jälkeen havaittiin kaatuminen: %s. Automaattisen säädön viivettä ei voitu päivittää.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s kaatui KStuffin keskeytyksen jälkeen:\n%s\nAutomaattisen säädön viivettä ei voitu päivittää.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json puuttuu tai on virheellinen:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_fi_fi[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nSaat parhaan suorituskyvyn käyttämällä enintään 64 kt:n klusterikokoa",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Ulkoinen asema %s irrotettu",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "Peli %s kaatui.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "Virhe pelissä %s:\n%s",
 };

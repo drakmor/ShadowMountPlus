@@ -142,8 +142,6 @@ typedef struct runtime_config {
   bool global_fakelib_game_priority;
   bool update_emulators_enabled;
   bool auto_update_ampr_enabled;
-  bool kstuff_game_auto_toggle;
-  bool kstuff_crash_detection_enabled;
   bool legacy_recursive_scan_forced;
   char api_bind_address[MAX_API_BIND_ADDRESS];
   uint32_t api_port;
@@ -158,8 +156,6 @@ typedef struct runtime_config {
   uint32_t scan_interval_us;
   uint32_t stability_wait_seconds;
   uint32_t auto_remove_missing_delay_seconds;
-  uint32_t kstuff_pause_delay_image_seconds;
-  uint32_t kstuff_pause_delay_direct_seconds;
   uint32_t fan_target_temperature_c;
   int32_t language_id;
   attach_backend_t exfat_backend;

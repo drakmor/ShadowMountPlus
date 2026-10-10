@@ -84,17 +84,8 @@ Supported keys (all optional):
 - `global_fakelib_path=<absolute_path>` (global fakelib folder; default: `/data/shadowmount/fakelib`)
 - `global_fakelib_priority=game|global` (overlay priority when both global and game fakelib exist; default: `game`)
 - `global_fakelib_exclude=<TITLE_ID>` (repeatable; disables the global fakelib overlay for matching titles)
-- `kstuff_game_auto_toggle=1|0` (`1` pauses kstuff after tracked game launches and resumes it on stop; default: `1`)
-- `kstuff_crash_detection=1|0` (`1` enables crash monitoring and pause-delay autotune updates; default: `1`)
 - `fan_target_temperature=system|<50..91>` (automatic fan-controller target in degrees Celsius, applied when a game starts; `system` leaves fan control to the console and is the default)
-- `kstuff_pause_delay_image_seconds=<0..3600>` (delay before pausing kstuff for image-backed launches; default: `25`)
-- `kstuff_pause_delay_direct_seconds=<0..3600>` (delay before pausing kstuff for direct/non-image launches; default: `15`)
-- `kstuff_no_pause=<TITLE_ID>` (repeatable; keeps kstuff enabled for matching titles)
-- `kstuff_delay=<TITLE_ID>:<0..3600>` (repeatable; per-title pause delay override, last matching rule wins)
-- `/data/shadowmount/autotune.ini` may also provide per-title pause-delay overrides with highest priority:
-  - `kstuff_delay=<TITLE_ID>:<0..3600>`
-  - `<TITLE_ID>=<0..3600>`
-  - `image_sector=<image_filename>:<sector_size>`
+- `/data/shadowmount/autotune.ini` can override `image_sector` rules from `config.ini` using `image_sector=<image_filename>:<sector_size>`.
 - `scanpath=<absolute_path>` (can be repeated on multiple lines; default: built-in scan path list below)
 - `lvd_exfat_sector_size=<value>` (default: `512`)
 - `lvd_ufs_sector_size=<value>` (default: `4096`)
@@ -199,25 +190,15 @@ Backport overlay behavior:
 - `backport_fakelib=0` disables the sandbox `fakelib` watcher, including global fakelib and emulator updates.
 - For `backport_fakelib` to work correctly, the standalone `BackPork` payload must be disabled. Running both at the same time will conflict.
 
-Kstuff game lifecycle behavior:
-- When `kstuff_game_auto_toggle=1`, ShadowMount watches game `exec/exit` events in the background.
-- Image-backed launches use `kstuff_pause_delay_image_seconds`; direct/non-image launches use `kstuff_pause_delay_direct_seconds`.
-- `kstuff_crash_detection=0` disables crash monitoring and the automatic pause-delay tuning logic, while leaving normal kstuff auto-pause/auto-resume behavior intact.
-- `kstuff_no_pause` skips auto-pause entirely for matching title IDs.
-- `kstuff_delay` overrides the pause delay for matching title IDs, regardless of image/direct launch type.
-- `/data/shadowmount/autotune.ini` overrides both `config.ini` and `autopause.txt` for matching title IDs.
-- `/data/shadowmount/autotune.ini` also overrides `image_sector` rules from `config.ini` for matching image file names.
-- A game source folder may optionally contain `autopause.txt`; it is read once at launch time.
-- Priority order is: `autotune.ini` -> `kstuff_delay` from `config.ini` -> `autopause.txt` -> global direct/image default delay.
-- If `autopause.txt` contains only a number, that value is used for direct launches and doubled for image-backed launches.
-- `autopause.txt` may also use:
-  - `direct=<seconds>`
-  - `image=<seconds>`
-- If both kinds of rule target the same title, `kstuff_no_pause` takes priority.
-- When crash monitoring detects an app crash before kstuff was paused, ShadowMountPlus only notifies that the app crashed.
-- When crash monitoring detects an app crash within 2 minutes after kstuff auto-pause, ShadowMountPlus doubles the applied pause delay for that title and upserts it into `/data/shadowmount/autotune.ini` (up to `3600` seconds), then prompts you to launch the game again.
-- When the last tracked game stops, ShadowMount immediately enables kstuff again if it was the component that disabled it.
+Game error monitoring:
 
+- Supported game launches are monitored for up to 60 seconds from the original
+  launch event. Same-game process replacements keep the original deadline.
+- Fatal signals and module-load errors are matched to the game's PID and shown
+  with their details. An exception-stop flag provides a generic crash notification
+  when no detailed error is available.
+- Monitoring stops after the first reported error, the deadline, game exit,
+  runtime sleep or watcher shutdown. It does not control kstuff or tune delays.
 
 Validation:
 - See `config.ini.example` for a ready-to-use template.

@@ -28,10 +28,6 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "Đăng ký thất bại: %s (%s)\nmã=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Đang cài đặt: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff hoạt động lại",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "KStuff tạm dừng khi game đang chạy",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Đã cài đặt: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... và thêm %d",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "Cài đặt hàng loạt thất bại cho %d ứng dụng.\nmã=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "Ứng dụng %s gặp sự cố trước khi KStuff tạm dừng. KStuff không phải là nguyên nhân.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s gặp sự cố trước khi tạm dừng KStuff:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "Ứng dụng %s gặp sự cố sau khi KStuff tạm dừng. Đã bỏ qua tinh chỉnh tự động.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s gặp sự cố sau khi tạm dừng KStuff:\n%s\nĐã bỏ qua tự động tinh chỉnh.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "Không thể tải module sau khi KStuff tạm dừng",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "không thể tải mô-đun %.*s sau khi tạm dừng KStuff",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. Độ trễ đã tăng lên %u giây.\nHãy khởi chạy lại trò chơi.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "Phát hiện sự cố sau khi KStuff tạm dừng: độ trễ của %s đã tăng lên %u giây. Hãy khởi chạy lại trò chơi.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s gặp sự cố sau khi tạm dừng KStuff:\n%s\nĐộ trễ đã tăng lên %u giây.\nHãy khởi chạy lại trò chơi.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "Phát hiện sự cố sau khi KStuff tạm dừng: %s. Không thể cập nhật độ trễ tinh chỉnh tự động.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s gặp sự cố sau khi tạm dừng KStuff:\n%s\nKhông thể cập nhật độ trễ tự động tinh chỉnh.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json thiếu hoặc không hợp lệ:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_vi_vn[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nĐể đạt hiệu suất tối đa, hãy sử dụng kích thước cụm không quá 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Đã ngắt kết nối ổ đĩa ngoài %s",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "Trò chơi %s bị lỗi và thoát.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "Lỗi trong trò chơi %s:\n%s",
 };

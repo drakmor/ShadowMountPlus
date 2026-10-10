@@ -23,8 +23,6 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
         "Register failed: %s (%s)\nTitleDir bridge unavailable",
     [SM_L10N_REGISTER_FAILED_CODE] = "Register failed: %s (%s)\ncode=0x%08X",
     [SM_L10N_INSTALLING] = "Installing: %s (%s)...",
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff active again",
-    [SM_L10N_KSTUFF_PAUSED] = "KStuff paused while the game is running",
     [SM_L10N_INSTALLED] = "Installed: %s",
     [SM_L10N_UNKNOWN] = "Unknown",
     [SM_L10N_IMAGE_MOUNT_FAILED] = "Image mount failed: 0x%08X (%s)\n%s",
@@ -41,30 +39,6 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... and %d more",
     [SM_L10N_BATCH_INSTALL_FAILED] =
         "Batch install failed for %d app(s).\ncode=0x%08X",
-    [SM_L10N_CRASH_BEFORE_KSTUFF] =
-        "%s crashed before KStuff was paused. KStuff is not the cause.",
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] =
-        "%s crashed before KStuff pause:\n%s",
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] =
-        "%s crashed after KStuff was paused. Automatic tuning skipped.",
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] =
-        "%s crashed after KStuff pause:\n%s\nAutotune skipped.",
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] =
-        "Can't load module after KStuff pause",
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] =
-        "can't load module %.*s after KStuff pause",
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] =
-        "%s: %s. Delay increased to %us.\nLaunch the game again.",
-    [SM_L10N_CRASH_DELAY_INCREASED] =
-        "Crash detected after KStuff pause: pause delay for %s increased to "
-        "%us. Launch the game again.",
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] =
-        "%s crashed after KStuff pause:\n%s\nDelay increased to %us.\n"
-        "Launch the game again.",
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] =
-        "Crash detected after KStuff pause: %s. Failed to update autotune delay.",
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] =
-        "%s crashed after KStuff pause:\n%s\nFailed to update autotune delay.",
     [SM_L10N_MISSING_PARAM] = "Missing/invalid param.json:\n%s",
     [SM_L10N_FOUND_NEW_GAMES] = "Found %d new games. Processing...",
     [SM_L10N_LIBRARY_SYNCED] = "Library synchronized.\nFound %d games.",
@@ -83,4 +57,6 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] =
         "\nFor maximum performance, use a cluster size of no more than 64 KB",
     [SM_L10N_USB_DISCONNECTED] = "External drive %s disconnected",
+    [SM_L10N_GAME_CRASHED] = "Game %s crashed.",
+    [SM_L10N_GAME_ERROR] = "Error in game %s:\n%s",
 };

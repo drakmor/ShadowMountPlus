@@ -28,10 +28,6 @@ static const char *const g_ro_ro[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "Înregistrare eșuată: %s (%s)\ncod=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Se instalează: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff este activ din nou",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "KStuff este pauzat cât timp jocul rulează",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Instalat: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_ro_ro[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... și încă %d",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "Instalarea în lot a eșuat pentru %d aplicații.\ncod=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "Aplicația %s s-a blocat înainte de suspendarea KStuff. KStuff nu este cauza.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s s-a blocat înainte de suspendarea KStuff:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "Aplicația %s s-a blocat după suspendarea KStuff. Reglarea automată a fost omisă.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s s-a blocat după suspendarea KStuff:\n%s\nReglarea automată a fost omisă.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "Nu se poate încărca modulul după pauza KStuff",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "modulul %.*s nu poate fi încărcat după suspendarea KStuff",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. Întârzierea a crescut la %u s.\nPorniți jocul din nou.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "Blocare detectată după suspendarea KStuff: întârzierea pentru %s a crescut la %u s. Porniți jocul din nou.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s s-a blocat după suspendarea KStuff:\n%s\nÎntârzierea a crescut la %u s.\nPorniți jocul din nou.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "Blocare detectată după suspendarea KStuff: %s. Întârzierea reglării automate nu a putut fi actualizată.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s s-a blocat după suspendarea KStuff:\n%s\nÎntârzierea reglării automate nu a putut fi actualizată.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json lipsește sau este invalid:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_ro_ro[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nPentru performanță maximă, utilizați o dimensiune a clusterului de cel mult 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Unitatea externă %s a fost deconectată",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "Jocul %s s-a blocat.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "Eroare în jocul %s:\n%s",
 };

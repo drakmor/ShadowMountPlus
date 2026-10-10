@@ -19,7 +19,6 @@
 #include "sm_shell_icon.h"
 #include "sm_config_mount.h"
 #include "sm_game_lifecycle.h"
-#include "sm_kstuff.h"
 #include "sm_mount_device.h"
 #include "sm_filesystem.h"
 #include "sm_image.h"
@@ -599,7 +598,6 @@ int main(void) {
   sm_notifications_init();
   stop_conflicting_backpork();
   sm_mdbg_init();
-  sm_kstuff_init();
   if (!sm_shellcore_service_start())
     log_debug("  [SHELLCORE] Unix socket service unavailable: %s",
               strerror(errno));
@@ -611,7 +609,7 @@ int main(void) {
     sm_shell_icon_install_if_missing();
   if (!refresh_game_lifecycle_watcher())
     log_debug("  [GAME] lifecycle watcher unavailable");
-  // Publish the initial AppFocus only after its lifecycle/kstuff consumers.
+  // Publish the initial AppFocus only after its lifecycle consumer.
   if (!sm_shellcore_flags_start())
     log_debug("  [SHELLFLAG] monitor unavailable");
   if (!sm_ampr_updater_start())
@@ -675,7 +673,6 @@ shutdown:
   stop_game_lifecycle_watcher();
   sm_shellcore_service_stop();
   sm_scanner_shutdown();
-  sm_kstuff_shutdown();
   sm_mdbg_shutdown();
   bool title_mounts_released = shutdown_title_mounts();
   bool image_mounts_released = false;

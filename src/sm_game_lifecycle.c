@@ -11,7 +11,6 @@
 #include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
 #include "sm_gameinfo.h"
-#include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_mdbg.h"
@@ -394,16 +393,13 @@ static bool try_game_process_handoff(int kq, pid_t pid, const char *title_id,
   sm_shellcore_service_bind_prepared_app(title_id, effective_app_id, pid);
   sm_pkg_backport_on_exec(pid, title_id);
   sm_fakelib_game_on_exec(pid, title_id, false);
-  bool kstuff_rebound =
-      sm_kstuff_game_handoff(old_pid, pid, title_id, effective_app_id);
+  sm_mdbg_game_handoff(old_pid, pid);
   publish_active_game(pid, title_id, effective_app_id);
   if (pending_exit)
     clear_pending_game_exit();
 
-  log_debug("  [GAME] process handoff: %s app_id=0x%08X pid=%ld -> pid=%ld "
-            "kstuff=%s",
-            title_id, effective_app_id, (long)old_pid, (long)pid,
-            kstuff_rebound ? "preserved" : "restarted/inactive");
+  log_debug("  [GAME] process handoff: %s app_id=0x%08X pid=%ld -> pid=%ld",
+            title_id, effective_app_id, (long)old_pid, (long)pid);
   return true;
 }
 
@@ -430,8 +426,10 @@ static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
 
   log_debug("  [GAME] started: %s pid=%ld app_id=0x%08X", title_id,
             (long)pid, app_id);
+  bool new_game_process = atomic_load(&g_active_game_pid) != pid;
   publish_active_game(pid, title_id, app_id);
-  sm_kstuff_game_on_exec(pid, title_id, app_id, exec_time_us);
+  if (new_game_process)
+    sm_mdbg_game_on_exec(pid, title_id, exec_time_us);
   sm_pkg_backport_on_exec(pid, title_id);
   sm_fakelib_game_on_exec(pid, title_id, true);
   return true;
@@ -637,12 +635,7 @@ static const struct timespec *compute_game_wait_timeout(
   next_wake_us = min_nonzero_u64(
       next_wake_us,
       next_pending_exit_wake_us(now_us, sandbox_watch_active));
-  if (!g_pending_game_exit.active) {
-    next_wake_us =
-        min_nonzero_u64(next_wake_us, sm_kstuff_game_next_wake_us(now_us));
-    next_wake_us =
-        min_nonzero_u64(next_wake_us, sm_mdbg_next_wake_us(now_us));
-  }
+  next_wake_us = min_nonzero_u64(next_wake_us, sm_mdbg_next_wake_us());
   if (next_wake_us == 0)
     return NULL;
 
@@ -708,14 +701,11 @@ static void poll_game_modules(int kq) {
   }
 
   maybe_finalize_pending_game_exit();
-  if (g_pending_game_exit.active) {
-    sm_kstuff_game_poll(false);
+  sm_mdbg_poll(!g_pending_game_exit.active);
+  if (g_pending_game_exit.active)
     return;
-  }
 
   handle_pending_app_focus();
-  sm_kstuff_game_poll(true);
-  sm_mdbg_poll();
 }
 
 static bool register_game_exit_watch(int kq, pid_t pid) {
@@ -755,12 +745,12 @@ static void handle_game_exec(int kq, pid_t pid) {
 }
 
 static void finalize_game_exit(pid_t pid, const char *fallback_title_id) {
+  sm_mdbg_game_on_exit(pid);
   char owned_title_id[MAX_TITLE_ID] = {0};
   bool owned_exit =
       sm_shellcore_service_note_game_exit(pid, owned_title_id);
   sm_pkg_backport_on_exit(pid);
   sm_fakelib_game_on_exit(pid);
-  sm_kstuff_game_on_exit(pid);
   if (owned_exit) {
     log_debug("  [SHELLCORE] runtime release awaiting sandbox removal: %s",
               owned_title_id);
@@ -851,7 +841,7 @@ static void handle_game_exit(pid_t pid) {
     // Match the 1.6 fakelib lifetime: release the overlay as soon as this PID
     // exits. Keeping common/lib covered can leave the old sandbox busy and
     // prevent it from being removed during ExitSpawn.
-    // ShellCore/KStuff ownership remains pending and may still be handed to a
+    // ShellCore ownership remains pending and may still be handed to a
     // replacement PID of the same title/app.
     sm_fakelib_game_on_exit(pid);
 
@@ -1059,6 +1049,7 @@ static void *game_lifecycle_watcher_main(void *arg) {
             title_uses_plaintext_ppr_package(suspended_game_title_id,
                                              plaintext_ppr_path);
         clear_all_pending_game_launches();
+        sm_mdbg_game_shutdown();
         sm_fakelib_game_shutdown();
         bool sleep_cleanup_complete = true;
         if (plaintext_ppr_pkg_game) {
@@ -1070,8 +1061,6 @@ static void *game_lifecycle_watcher_main(void *arg) {
           if (sleep_cleanup_complete)
             suspended_game_pid = 0;
         }
-        // Keep kstuff active until a plaintext-PPR package has unmounted.
-        sm_kstuff_sleep_enter();
         if (usb_game && !plaintext_ppr_pkg_game && sleep_cleanup_complete) {
           sleep_cleanup_complete = terminate_game_for_sleep(
               kq, suspended_game_pid, suspended_game_title_id, "USB-backed");
@@ -1120,7 +1109,6 @@ static void *game_lifecycle_watcher_main(void *arg) {
           is_process_alive(suspended_game_pid)) {
         handle_game_exec(kq, suspended_game_pid);
       }
-      sm_kstuff_sleep_leave();
       suspended_game_pid = 0;
     }
 
@@ -1161,7 +1149,7 @@ static void *game_lifecycle_watcher_main(void *arg) {
 
   clear_all_pending_game_launches();
   sm_fakelib_game_shutdown();
-  sm_kstuff_game_shutdown();
+  sm_mdbg_game_shutdown();
   publish_active_game(0, NULL, 0);
   clear_pending_game_exit();
   if (sandbox_watch_fd >= 0)
@@ -1261,7 +1249,6 @@ bool sm_game_lifecycle_has_active_game(void) {
 void sm_game_lifecycle_note_app_focus(uint32_t app_id) {
   atomic_store(&g_pending_app_focus_id, app_id);
   atomic_store(&g_pending_app_focus_valid, true);
-  sm_kstuff_note_app_focus(app_id);
   wake_game_lifecycle_watcher();
 }
 

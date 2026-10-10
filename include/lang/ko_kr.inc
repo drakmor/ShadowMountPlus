@@ -28,10 +28,6 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "등록 실패: %s (%s)\n코드=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "설치 중: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff 다시 활성화됨",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "게임 실행 중 KStuff 일시 중지됨",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "설치됨: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... 외 %d개",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "%d개 앱 일괄 설치 실패.\n코드=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "%s이(가) KStuff 일시 중지 전에 충돌했습니다. KStuff가 원인이 아닙니다.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s이(가) KStuff 일시 중지 전에 충돌했습니다:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "%s이(가) KStuff 일시 중지 후에 충돌했습니다. 자동 조정을 건너뛰었습니다.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s이(가) KStuff 일시 중지 후에 충돌했습니다:\n%s\n자동 조정을 건너뛰었습니다.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "KStuff 일시 중지 후 모듈을 로드할 수 없습니다",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "KStuff 일시 중지 후 모듈 %.*s을(를) 로드할 수 없음",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. 지연이 %u초로 증가했습니다.\n게임을 다시 실행하세요.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "KStuff 일시 중지 후 충돌을 감지했습니다: %s의 지연을 %u초로 늘렸습니다. 게임을 다시 실행하세요.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s이(가) KStuff 일시 중지 후에 충돌했습니다:\n%s\n지연을 %u초로 늘렸습니다.\n게임을 다시 실행하세요.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "KStuff 일시 중지 후 충돌을 감지했습니다: %s. 자동 조정 지연을 업데이트하지 못했습니다.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s이(가) KStuff 일시 중지 후에 충돌했습니다:\n%s\n자동 조정 지연을 업데이트하지 못했습니다.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json 누락 또는 잘못됨:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n최대 성능을 위해 64 KB 이하의 클러스터 크기를 사용하세요",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "외장 드라이브 %s 연결 해제됨",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "게임 %s이(가) 비정상 종료되었습니다.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "게임 %s 오류:\n%s",
 };

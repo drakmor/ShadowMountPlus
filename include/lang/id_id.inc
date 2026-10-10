@@ -28,10 +28,6 @@ static const char *const g_id_id[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "Registrasi gagal: %s (%s)\nkode=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Menginstal: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff aktif lagi",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "KStuff dijeda saat game berjalan",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Terinstal: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_id_id[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... dan %d lagi",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "Instalasi batch gagal untuk %d aplikasi.\nkode=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "Aplikasi %s berhenti mendadak sebelum KStuff dijeda. KStuff bukan penyebabnya.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s berhenti mendadak sebelum KStuff dijeda:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "Aplikasi %s berhenti mendadak setelah KStuff dijeda. Penyetelan otomatis dilewati.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s berhenti mendadak setelah KStuff dijeda:\n%s\nPenyetelan otomatis dilewati.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "Tidak dapat memuat module setelah KStuff dijeda",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "tidak dapat memuat modul %.*s setelah KStuff dijeda",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. Penundaan ditingkatkan menjadi %u dtk.\nJalankan game lagi.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "Aplikasi berhenti mendadak setelah KStuff dijeda: penundaan untuk %s ditingkatkan menjadi %u dtk. Jalankan game lagi.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s berhenti mendadak setelah KStuff dijeda:\n%s\nPenundaan ditingkatkan menjadi %u dtk.\nJalankan game lagi.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "Aplikasi berhenti mendadak setelah KStuff dijeda: %s. Gagal memperbarui penundaan penyetelan otomatis.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s berhenti mendadak setelah KStuff dijeda:\n%s\nGagal memperbarui penundaan penyetelan otomatis.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json hilang atau tidak valid:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_id_id[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nUntuk performa maksimal, gunakan ukuran klaster tidak lebih dari 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Drive eksternal %s terputus",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "Game %s mengalami crash.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "Kesalahan pada game %s:\n%s",
 };

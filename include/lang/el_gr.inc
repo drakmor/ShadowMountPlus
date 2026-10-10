@@ -28,10 +28,6 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "Αποτυχία εγγραφής: %s (%s)\nκωδικός=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Εγκατάσταση: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "Το KStuff είναι ξανά ενεργό",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "Το KStuff παύθηκε όσο τρέχει το παιχνίδι",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Εγκαταστάθηκε: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... και %d ακόμα",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "Η μαζική εγκατάσταση απέτυχε για %d app(s).\nκωδικός=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "Η εφαρμογή %s κατέρρευσε πριν από την παύση του KStuff. Δεν ευθύνεται το KStuff.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "Το %s κατέρρευσε πριν από την παύση του KStuff:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "Η εφαρμογή %s κατέρρευσε μετά την παύση του KStuff. Η αυτόματη ρύθμιση παραλείφθηκε.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "Το %s κατέρρευσε μετά την παύση του KStuff:\n%s\nΗ αυτόματη ρύθμιση παραλείφθηκε.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "Δεν μπορεί να φορτωθεί module μετά την παύση KStuff",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "δεν είναι δυνατή η φόρτωση της μονάδας %.*s μετά την παύση του KStuff",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. Η καθυστέρηση αυξήθηκε σε %u s.\nΕκκινήστε ξανά το παιχνίδι.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "Εντοπίστηκε κατάρρευση μετά την παύση του KStuff: η καθυστέρηση για το %s αυξήθηκε σε %u δ. Εκκινήστε ξανά το παιχνίδι.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "Το %s κατέρρευσε μετά την παύση του KStuff:\n%s\nΗ καθυστέρηση αυξήθηκε σε %u δ.\nΕκκινήστε ξανά το παιχνίδι.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "Εντοπίστηκε κατάρρευση μετά την παύση του KStuff: %s. Αποτυχία ενημέρωσης της καθυστέρησης αυτόματης ρύθμισης.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "Το %s κατέρρευσε μετά την παύση του KStuff:\n%s\nΑποτυχία ενημέρωσης της καθυστέρησης αυτόματης ρύθμισης.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "Λείπει ή είναι άκυρο το param.json:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_el_gr[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nΓια μέγιστη απόδοση, χρησιμοποιήστε μέγεθος συμπλέγματος έως 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Ο εξωτερικός δίσκος %s αποσυνδέθηκε",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "Το παιχνίδι %s κατέρρευσε.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "Σφάλμα στο παιχνίδι %s:\n%s",
 };

@@ -28,10 +28,6 @@ static const char *const g_zh_cn[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "注册失败: %s (%s)\n代码=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "正在安装: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff 已重新启用",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "游戏运行时 KStuff 已暂停",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "已安装: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_zh_cn[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... 以及另外 %d 个",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "%d 个应用批量安装失败。\n代码=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "%s 在暂停 KStuff 前崩溃。问题并非由 KStuff 引起。",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s 在暂停 KStuff 前崩溃：\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "%s 在暂停 KStuff 后崩溃。已跳过自动调节。",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s 在暂停 KStuff 后崩溃：\n%s\n已跳过自动调节。",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "KStuff 暂停后无法加载模块",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "暂停 KStuff 后无法加载模块 %.*s",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s。延迟已增加到 %u 秒。\n请重新启动游戏。",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "检测到暂停 KStuff 后发生崩溃：%s 的延迟已增加至 %u 秒。请重新启动游戏。",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s 在暂停 KStuff 后崩溃：\n%s\n延迟已增加至 %u 秒。\n请重新启动游戏。",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "检测到暂停 KStuff 后发生崩溃：%s。无法更新自动调节延迟。",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s 在暂停 KStuff 后崩溃：\n%s\n无法更新自动调节延迟。",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json 缺失或无效:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_zh_cn[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n为获得最佳性能，请使用不超过 64 KB 的簇大小",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "外部驱动器 %s 已断开",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "游戏 %s 崩溃了。",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "游戏 %s 出错:\n%s",
 };

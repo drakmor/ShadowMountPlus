@@ -274,8 +274,7 @@ are recursive library roots. The settings response contains only explicit
 custom roots, never compile-time defaults or internal image-mount roots. Saving
 an empty array removes the custom override and restores compile-time defaults.
 The debug-log route returns at most 256 KiB and never modifies or rotates the log.
-The kernel-log route reads the same `sceKernelDebugGetSdkLogText` snapshot used
-by `kstuff_crash_detection`.
+The kernel-log route reads a `sceKernelDebugGetSdkLogText` snapshot.
 
 Uninstall returns success after `sceAppInstUtilAppUnInstall` accepts the
 request; the on-disk removal itself is asynchronous. It returns `EBUSY` while a

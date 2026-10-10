@@ -19,7 +19,6 @@
 #include "sm_image.h"
 #include "sm_install.h"
 #include "sm_install_queue.h"
-#include "sm_kstuff.h"
 #include "sm_limits.h"
 #include "sm_l10n.h"
 #include "sm_log.h"
@@ -1251,8 +1250,6 @@ static bool apply_runtime_config_reload_effects(int kq,
 
   // The lifecycle watcher owns the running game's fakelib overlay. Keep it
   // until exit; the next launch/cache preparation reads the new settings.
-
-  sm_kstuff_on_config_reload();
 
   if (old_cfg->auto_remove_missing_games !=
       new_cfg->auto_remove_missing_games) {

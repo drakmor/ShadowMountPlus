@@ -28,10 +28,6 @@ static const char *const g_tr_tr[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "Kayıt başarısız: %s (%s)\nkod=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Yükleniyor: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff tekrar etkin",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "Oyun çalışırken KStuff duraklatıldı",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Yüklendi: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_tr_tr[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... ve %d tane daha",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "%d uygulama için toplu yükleme başarısız.\nkod=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "%s, KStuff duraklatılmadan önce çöktü. Sorunun nedeni KStuff değil.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s, KStuff duraklatılmadan önce çöktü:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "%s, KStuff duraklatıldıktan sonra çöktü. Otomatik ayarlama atlandı.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s, KStuff duraklatıldıktan sonra çöktü:\n%s\nOtomatik ayarlama atlandı.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "KStuff duraklamasından sonra modül yüklenemiyor",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "KStuff duraklatıldıktan sonra %.*s modülü yüklenemiyor",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. Gecikme %u s değerine çıkarıldı.\nOyunu tekrar başlatın.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "KStuff duraklatıldıktan sonra çökme algılandı: %s için gecikme %u sn. olarak artırıldı. Oyunu yeniden başlatın.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s, KStuff duraklatıldıktan sonra çöktü:\n%s\nGecikme %u sn. olarak artırıldı.\nOyunu yeniden başlatın.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "KStuff duraklatıldıktan sonra çökme algılandı: %s. Otomatik ayarlama gecikmesi güncellenemedi.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s, KStuff duraklatıldıktan sonra çöktü:\n%s\nOtomatik ayarlama gecikmesi güncellenemedi.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json eksik veya geçersiz:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_tr_tr[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nMaksimum performans için en fazla 64 KB küme boyutu kullanın",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Harici sürücü %s çıkarıldı",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "%s oyunu çöktü.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "%s oyununda hata:\n%s",
 };

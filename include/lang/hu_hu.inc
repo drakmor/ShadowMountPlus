@@ -28,10 +28,6 @@ static const char *const g_hu_hu[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "Regisztráció sikertelen: %s (%s)\nkód=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Telepítés: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "A KStuff újra aktív",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "A KStuff szünetel, amíg a játék fut",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Telepítve: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_hu_hu[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... és még %d",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "A kötegelt telepítés %d alkalmazásnál sikertelen.\nkód=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "A(z) %s összeomlott a KStuff szüneteltetése előtt. Nem a KStuff a hibás.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "A(z) %s összeomlott a KStuff szüneteltetése előtt:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "A(z) %s összeomlott a KStuff szüneteltetése után. Az automatikus hangolás kimaradt.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "A(z) %s összeomlott a KStuff szüneteltetése után:\n%s\nAz automatikus hangolás kihagyva.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "A modul nem tölthető be a KStuff szünet után",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "a(z) %.*s modul nem tölthető be a KStuff szüneteltetése után",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. Késleltetés %u s értékre növelve.\nIndítsd újra a játékot.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "Összeomlás történt a KStuff szüneteltetése után: a(z) %s késleltetése %u másodpercre nőtt. Indítsd újra a játékot.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "A(z) %s összeomlott a KStuff szüneteltetése után:\n%s\nA késleltetés %u másodpercre nőtt.\nIndítsd újra a játékot.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "Összeomlás történt a KStuff szüneteltetése után: %s. Az automatikus hangolás késleltetése nem frissíthető.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "A(z) %s összeomlott a KStuff szüneteltetése után:\n%s\nAz automatikus hangolás késleltetése nem frissíthető.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "Hiányzó vagy érvénytelen param.json:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_hu_hu[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nA maximális teljesítményhez használjon legfeljebb 64 KB-os klaszterméretet",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Külső meghajtó leválasztva: %s",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "A(z) %s játék összeomlott.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "Hiba a(z) %s játékban:\n%s",
 };

@@ -28,10 +28,6 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "登録に失敗しました: %s (%s)\nコード=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "インストール中: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff が再び有効です",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "ゲーム実行中のため KStuff を一時停止しました",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "インストール済み: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... 他 %d 件",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "%d 個のアプリの一括インストールに失敗しました。\nコード=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "%s は KStuff の一時停止前にクラッシュしました。KStuff が原因ではありません。",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s は KStuff の一時停止前にクラッシュしました:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "%s は KStuff の一時停止後にクラッシュしました。自動調整をスキップしました。",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s は KStuff の一時停止後にクラッシュしました:\n%s\n自動調整をスキップしました。",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "KStuff 一時停止後にモジュールを読み込めません",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "KStuff の一時停止後にモジュール %.*s を読み込めません",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s。遅延を %u 秒に増やしました。\nゲームをもう一度起動してください。",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "KStuff の一時停止後にクラッシュを検出しました: %s の遅延を %u 秒に増やしました。ゲームをもう一度起動してください。",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s は KStuff の一時停止後にクラッシュしました:\n%s\n遅延を %u 秒に増やしました。\nゲームをもう一度起動してください。",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "KStuff の一時停止後にクラッシュを検出しました: %s。自動調整の遅延を更新できませんでした。",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s は KStuff の一時停止後にクラッシュしました:\n%s\n自動調整の遅延を更新できませんでした。",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json が見つからないか無効です:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\n最大限のパフォーマンスを得るには、クラスターサイズを 64 KB 以下にしてください",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "外付けドライブ %s が切断されました",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "ゲーム %s がクラッシュしました。",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "ゲーム %s のエラー:\n%s",
 };

@@ -28,10 +28,6 @@ static const char *const g_es_es[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "Error al registrar: %s (%s)\ncódigo=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Instalando: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff activo de nuevo",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "KStuff pausado mientras el juego está en ejecución",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Instalado: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_es_es[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... y %d más",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "La instalación por lotes falló para %d aplicaciones.\ncódigo=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "%s se bloqueó antes de pausar KStuff. KStuff no es la causa.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s se bloqueó antes de pausar KStuff:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "%s se bloqueó después de pausar KStuff. Se omitió el ajuste automático.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s se bloqueó después de pausar KStuff:\n%s\nSe omitió el ajuste automático.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "No se puede cargar el módulo tras la pausa de KStuff",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "no se puede cargar el módulo %.*s después de pausar KStuff",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. Retardo aumentado a %u s.\nInicie el juego de nuevo.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "Se detectó un bloqueo después de pausar KStuff: el retardo de pausa de %s aumentó a %u s. Inicie el juego de nuevo.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s se bloqueó después de pausar KStuff:\n%s\nEl retraso aumentó a %u s.\nInicie el juego de nuevo.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "Se detectó un bloqueo después de pausar KStuff: %s. No se pudo actualizar el retardo del ajuste automático.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s se bloqueó después de pausar KStuff:\n%s\nNo se pudo actualizar el retraso del ajuste automático.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json ausente o no válido:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_es_es[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nPara obtener el máximo rendimiento, use un tamaño de clúster no superior a 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Unidad externa %s desconectada",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "El juego %s se ha cerrado inesperadamente.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "Error en el juego %s:\n%s",
 };

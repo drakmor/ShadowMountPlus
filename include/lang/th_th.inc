@@ -28,10 +28,6 @@ static const char *const g_th_th[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "ลงทะเบียนล้มเหลว: %s (%s)\nรหัส=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "กำลังติดตั้ง: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff ทำงานอีกครั้ง",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "พัก KStuff ขณะเกมกำลังทำงาน",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "ติดตั้งแล้ว: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_th_th[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... และอีก %d",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "การติดตั้งแบบชุดล้มเหลวสำหรับ %d แอป\nรหัส=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "แอป %s ขัดข้องก่อนพัก KStuff โดย KStuff ไม่ใช่สาเหตุ",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s ขัดข้องก่อนหยุด KStuff ชั่วคราว:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "แอป %s ขัดข้องหลังพัก KStuff จึงข้ามการปรับอัตโนมัติ",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s ขัดข้องหลังหยุด KStuff ชั่วคราว:\n%s\nข้ามการปรับอัตโนมัติ",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "โหลดโมดูลหลังพัก KStuff ไม่ได้",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "ไม่สามารถโหลดโมดูล %.*s หลังหยุด KStuff ชั่วคราว",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. เพิ่ม delay เป็น %u วินาที\nเปิดเกมอีกครั้ง",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "พบการขัดข้องหลังพัก KStuff: เพิ่มเวลาหน่วงของ %s เป็น %u วินาที เปิดเกมอีกครั้ง",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s ขัดข้องหลังหยุด KStuff ชั่วคราว:\n%s\nเพิ่มเวลาหน่วงเป็น %u วินาที\nเปิดเกมอีกครั้ง",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "พบการขัดข้องหลังพัก KStuff: %s ไม่สามารถอัปเดตเวลาหน่วงการปรับอัตโนมัติ",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s ขัดข้องหลังหยุด KStuff ชั่วคราว:\n%s\nไม่สามารถอัปเดตเวลาหน่วงการปรับอัตโนมัติ",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json หายไปหรือไม่ถูกต้อง:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_th_th[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nเพื่อประสิทธิภาพสูงสุด ให้ใช้ขนาดคลัสเตอร์ไม่เกิน 64 KB",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "ตัดการเชื่อมต่อไดรฟ์ภายนอก %s แล้ว",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "เกม %s หยุดทำงาน",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "ข้อผิดพลาดในเกม %s:\n%s",
 };

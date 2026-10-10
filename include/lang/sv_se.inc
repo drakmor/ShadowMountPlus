@@ -28,10 +28,6 @@ static const char *const g_sv_se[SM_L10N_COUNT] = {
     [SM_L10N_REGISTER_FAILED_CODE] = "Registrering misslyckades: %s (%s)\nkod=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Installerar: %s (%s)...",
-    /* English: KStuff active again */
-    [SM_L10N_KSTUFF_ACTIVE] = "KStuff aktivt igen",
-    /* English: KStuff paused while the game is running */
-    [SM_L10N_KSTUFF_PAUSED] = "KStuff pausat medan spelet körs",
     /* English: Installed: %s */
     [SM_L10N_INSTALLED] = "Installerat: %s",
     /* English: Unknown */
@@ -52,28 +48,6 @@ static const char *const g_sv_se[SM_L10N_COUNT] = {
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... och %d till",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
     [SM_L10N_BATCH_INSTALL_FAILED] = "Batchinstallationen misslyckades för %d appar.\nkod=0x%08X",
-    /* English: %s crashed before KStuff was paused. KStuff is not the cause. */
-    [SM_L10N_CRASH_BEFORE_KSTUFF] = "Appen %s kraschade innan KStuff pausades. KStuff är inte orsaken.",
-    /* English: %s crashed before KStuff pause:\n%s */
-    [SM_L10N_CRASH_BEFORE_KSTUFF_FATAL] = "%s kraschade innan KStuff pausades:\n%s",
-    /* English: %s crashed after KStuff was paused. Automatic tuning skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_SKIPPED] = "Appen %s kraschade efter att KStuff pausades. Automatisk justering hoppades över.",
-    /* English: %s crashed after KStuff pause:\n%s\nAutotune skipped. */
-    [SM_L10N_CRASH_AFTER_KSTUFF_FATAL_SKIPPED] = "%s kraschade efter att KStuff pausades:\n%s\nAutomatisk justering hoppades över.",
-    /* English: Can't load module after KStuff pause */
-    [SM_L10N_RTLD_AFTER_KSTUFF_FALLBACK] = "Kan inte läsa in modul efter KStuff-paus",
-    /* English: can't load module %.*s after KStuff pause */
-    [SM_L10N_RTLD_MODULE_AFTER_KSTUFF] = "det går inte att läsa in modulen %.*s efter KStuff-pausen",
-    /* English: %s: %s. Delay increased to %us.\nLaunch the game again. */
-    [SM_L10N_DELAY_INCREASED_RELAUNCH] = "%s: %s. Fördröjning ökad till %u s.\nStarta spelet igen.",
-    /* English: Crash detected after KStuff pause: pause delay for %s increased to %us. Launch the game again. */
-    [SM_L10N_CRASH_DELAY_INCREASED] = "Krasch upptäckt efter KStuff-pausen: pausfördröjningen för %s ökades till %u s. Starta spelet igen.",
-    /* English: %s crashed after KStuff pause:\n%s\nDelay increased to %us.\nLaunch the game again. */
-    [SM_L10N_CRASH_FATAL_DELAY_INCREASED] = "%s kraschade efter att KStuff pausades:\n%s\nFördröjningen ökades till %u s.\nStarta spelet igen.",
-    /* English: Crash detected after KStuff pause: %s. Failed to update autotune delay. */
-    [SM_L10N_CRASH_DELAY_UPDATE_FAILED] = "Krasch upptäckt efter KStuff-pausen: %s. Fördröjningen för automatisk justering kunde inte uppdateras.",
-    /* English: %s crashed after KStuff pause:\n%s\nFailed to update autotune delay. */
-    [SM_L10N_CRASH_FATAL_DELAY_UPDATE_FAILED] = "%s kraschade efter att KStuff pausades:\n%s\nDet gick inte att uppdatera fördröjningen för automatisk justering.",
     /* English: Missing/invalid param.json:\n%s */
     [SM_L10N_MISSING_PARAM] = "param.json saknas eller är ogiltig:\n%s",
     /* English: Found %d new games. Processing... */
@@ -96,4 +70,8 @@ static const char *const g_sv_se[SM_L10N_COUNT] = {
     [SM_L10N_USB_CLUSTER_RECOMMENDATION] = "\nAnvänd en klusterstorlek på högst 64 KB för maximal prestanda",
     /* English: External drive %s disconnected */
     [SM_L10N_USB_DISCONNECTED] = "Extern enhet %s frånkopplad",
+    /* English: Game %s crashed. */
+    [SM_L10N_GAME_CRASHED] = "Spelet %s kraschade.",
+    /* English: Error in game %s:\n%s */
+    [SM_L10N_GAME_ERROR] = "Fel i spelet %s:\n%s",
 };
