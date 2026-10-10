@@ -76,4 +76,6 @@ static const char *const g_zh_tw[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "遊戲 %s 當機了。",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "遊戲 %s 發生錯誤:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "外接磁碟機 %s 已連接。",
 };

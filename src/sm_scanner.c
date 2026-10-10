@@ -279,6 +279,7 @@ static bool notify_scanner_usb_mount_change(const char *path, bool force_refresh
               usb_root, (unsigned long long)capacity_bytes,
               (unsigned long long)available_bytes,
               (unsigned long long)block_size);
+    notify_system_info_l10n(SM_L10N_USB_CONNECTED, usb_root);
     return true;
   }
 

@@ -76,4 +76,6 @@ static const char *const g_uk_ua[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "Гра %s аварійно завершилася.",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "Помилка у грі %s:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "Зовнішній диск %s підключено.",
 };

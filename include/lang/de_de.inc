@@ -76,4 +76,6 @@ static const char *const g_de_de[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "Das Spiel %s ist abgestürzt.",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "Fehler im Spiel %s:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "Externes Laufwerk %s verbunden.",
 };

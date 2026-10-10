@@ -76,4 +76,6 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "게임 %s이(가) 비정상 종료되었습니다.",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "게임 %s 오류:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "외장 드라이브 %s 연결됨.",
 };

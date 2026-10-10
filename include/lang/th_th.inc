@@ -76,4 +76,6 @@ static const char *const g_th_th[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "เกม %s หยุดทำงาน",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "ข้อผิดพลาดในเกม %s:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "เชื่อมต่อไดรฟ์ภายนอก %s แล้ว",
 };

@@ -60,4 +60,5 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_USB_DISCONNECTED] = "External drive %s disconnected",
     [SM_L10N_GAME_CRASHED] = "Game %s crashed.",
     [SM_L10N_GAME_ERROR] = "Error in game %s:\n%s",
+    [SM_L10N_USB_CONNECTED] = "External drive %s connected",
 };

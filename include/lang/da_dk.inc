@@ -76,4 +76,6 @@ static const char *const g_da_dk[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "Spillet %s gik ned.",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "Fejl i spillet %s:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "Eksternt drev %s tilsluttet.",
 };

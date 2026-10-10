@@ -76,4 +76,6 @@ static const char *const g_ro_ro[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "Jocul %s s-a blocat.",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "Eroare în jocul %s:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "Unitatea externă %s a fost conectată.",
 };

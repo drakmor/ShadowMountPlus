@@ -14,6 +14,7 @@ static const char *const g_ru_ru[SM_L10N_COUNT] = {
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "Не удалось смонтировать оверлей бэкпорта: %s\n%s\n0x%08X",
     /* English: Backport applied to game: %s */
     [SM_L10N_GAME_BACKPORTED] = "К игре %s применён бэкпорт",
+    /* English: Emulators applied to game: %s */
     [SM_L10N_GAME_EMULATORS_APPLIED] = "К игре %s применены эмуляторы",
     /* English: Backport applied to game: %s\nEmulators updated */
     [SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED] = "К игре %s применён бэкпорт\nЭмуляторы обновлены",
@@ -75,4 +76,6 @@ static const char *const g_ru_ru[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "Игра %s аварийно завершилась.",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "Ошибка в игре %s:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "Внешний диск %s подключён.",
 };

@@ -76,4 +76,6 @@ static const char *const g_ja_jp[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "ゲーム %s がクラッシュしました。",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "ゲーム %s のエラー:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "外付けドライブ %s が接続されました。",
 };

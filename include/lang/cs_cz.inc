@@ -76,4 +76,6 @@ static const char *const g_cs_cz[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "Hra %s spadla.",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "Chyba ve hře %s:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "Externí disk %s připojen.",
 };

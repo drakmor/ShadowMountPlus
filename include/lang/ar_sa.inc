@@ -76,4 +76,6 @@ static const char *const g_ar_sa[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "تعطّلت اللعبة %s.",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "خطأ في اللعبة %s:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "تم توصيل محرك الأقراص الخارجي %s",
 };

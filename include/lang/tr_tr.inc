@@ -76,4 +76,6 @@ static const char *const g_tr_tr[SM_L10N_COUNT] = {
     [SM_L10N_GAME_CRASHED] = "%s oyunu çöktü.",
     /* English: Error in game %s:\n%s */
     [SM_L10N_GAME_ERROR] = "%s oyununda hata:\n%s",
+    /* English: External drive %s connected */
+    [SM_L10N_USB_CONNECTED] = "Harici sürücü %s bağlandı.",
 };
