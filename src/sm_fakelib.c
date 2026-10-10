@@ -26,6 +26,7 @@
   (FAKELIB_CACHE_HAS_GLOBAL | FAKELIB_CACHE_GLOBAL_PRIORITY)
 
 typedef struct {
+  // An empty source records a created parent directory without a mount.
   char source_path[MAX_PATH];
   char mount_path[MAX_PATH];
   const char *label;
@@ -37,7 +38,8 @@ typedef struct {
   char title_id[MAX_TITLE_ID];
   char sandbox_app0_path[MAX_PATH];
   char mount_path[MAX_PATH];
-  fakelib_layer_t layers[3u + SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT];
+  // fakelib, /mnt, /data, fonts, and up to two created font parents.
+  fakelib_layer_t layers[6u + SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT];
   size_t layer_count;
   size_t emulator_file_count;
   bool notify_pending;
@@ -94,9 +96,9 @@ bool sm_fakelib_game_feature_enabled(void) {
 }
 
 static bool mount_sandbox_layer(const char *title_id,
-                                  const char *source_path,
-                                  const char *mount_path,
-                                  const char *label, bool overlay) {
+                                const char *source_path,
+                                const char *mount_path,
+                                const char *label, bool overlay, int flags) {
   struct iovec directory_iov[] = {
       IOVEC_ENTRY("fstype"), IOVEC_ENTRY("nullfs"),
       IOVEC_ENTRY("from"),   IOVEC_ENTRY(source_path),
@@ -111,7 +113,7 @@ static bool mount_sandbox_layer(const char *title_id,
 
   if (nmount(overlay ? overlay_iov : directory_iov,
              overlay ? IOVEC_SIZE(overlay_iov) : IOVEC_SIZE(directory_iov),
-             0) == 0) {
+             flags) == 0) {
     log_debug("  [FAKELIB] %s mounted for %s: %s -> %s", label,
               title_id, source_path, mount_path);
     return true;
@@ -124,15 +126,16 @@ static bool mount_sandbox_layer(const char *title_id,
 
 static bool unmount_sandbox_layer(const fakelib_layer_t *layer) {
   const char *mount_path = layer->mount_path;
-  if (unmount(mount_path, 0) == 0 || errno == ENOENT ||
+  if (!layer->source_path[0] || unmount(mount_path, 0) == 0 || errno == ENOENT ||
       errno == EINVAL) {
     if (layer->created_mount_path && rmdir(mount_path) != 0 &&
         errno != ENOENT) {
       log_debug("  [FAKELIB] mount directory cleanup skipped for %s: %s",
                 mount_path, strerror(errno));
     }
-    log_debug("  [FAKELIB] %s unmounted: %s -> %s", layer->label,
-              layer->source_path, mount_path);
+    if (layer->source_path[0])
+      log_debug("  [FAKELIB] %s unmounted: %s -> %s", layer->label,
+                layer->source_path, mount_path);
     return true;
   }
 
@@ -146,15 +149,16 @@ static bool unmount_sandbox_layer(const fakelib_layer_t *layer) {
 }
 
 static bool track_sandbox_layer(const char *title_id,
-                                  const char *source_path,
-                                  const char *mount_path,
-                                  const char *label, bool overlay) {
+                                const char *source_path,
+                                const char *mount_path,
+                                const char *label, bool overlay, int flags) {
   if (g_fakelib_mount.layer_count >=
       sizeof(g_fakelib_mount.layers) / sizeof(g_fakelib_mount.layers[0])) {
     errno = ENOSPC;
     return false;
   }
-  if (!mount_sandbox_layer(title_id, source_path, mount_path, label, overlay))
+  if (!mount_sandbox_layer(title_id, source_path, mount_path, label, overlay,
+                         flags))
     return false;
 
   fakelib_layer_t *layer =
@@ -166,8 +170,8 @@ static bool track_sandbox_layer(const char *title_id,
 }
 
 static bool mount_sandbox_directory(const char *title_id,
-                                    const char *app0_path,
-                                    const char *source_path) {
+                                   const char *app0_path,
+                                   const char *source_path, int flags) {
   size_t app0_len = strlen(app0_path);
   if (app0_len < 5u || strcmp(app0_path + app0_len - 5u, "/app0") != 0) {
     errno = ENOENT;
@@ -206,7 +210,7 @@ static bool mount_sandbox_directory(const char *title_id,
   }
 
   if (!track_sandbox_layer(title_id, source_path, mount_path, "directory",
-                             false)) {
+                           false, flags)) {
     int mount_errno = errno;
     if (created)
       (void)rmdir(mount_path);
@@ -216,6 +220,62 @@ static bool mount_sandbox_directory(const char *title_id,
   g_fakelib_mount.layers[g_fakelib_mount.layer_count - 1u].created_mount_path =
       created;
   return true;
+}
+
+static bool mount_sandbox_fonts(const char *title_id, const char *app0_path) {
+  const char *source_path = "/preinst/common/font";
+  struct stat st;
+  if (stat(source_path, &st) != 0)
+    return errno == ENOENT;
+  if (!S_ISDIR(st.st_mode)) {
+    errno = ENOTDIR;
+    return false;
+  }
+
+  size_t app0_len = strlen(app0_path);
+  if (app0_len < 5u || strcmp(app0_path + app0_len - 5u, "/app0") != 0) {
+    errno = ENOENT;
+    return false;
+  }
+
+  // Track only parents we create, so rollback and shutdown remove them after
+  // the read-only font mount. Empty source paths represent directory ownership.
+  const char *parents[] = {"/preinst", "/preinst/common"};
+  for (size_t i = 0; i < sizeof(parents) / sizeof(parents[0]); ++i) {
+    if (g_fakelib_mount.layer_count >=
+        sizeof(g_fakelib_mount.layers) / sizeof(g_fakelib_mount.layers[0])) {
+      errno = ENOSPC;
+      return false;
+    }
+    char path[MAX_PATH];
+    int written = snprintf(path, sizeof(path), "%.*s%s",
+                           (int)(app0_len - 5u), app0_path, parents[i]);
+    if (written < 0 || (size_t)written >= sizeof(path)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    if (mkdir(path, 0777) != 0) {
+      if (errno != EEXIST || lstat(path, &st) != 0)
+        return false;
+      if (!S_ISDIR(st.st_mode)) {
+        errno = ENOTDIR;
+        return false;
+      }
+      continue;
+    }
+    fakelib_layer_t *layer =
+        &g_fakelib_mount.layers[g_fakelib_mount.layer_count++];
+    layer->created_mount_path = true;
+    (void)strlcpy(layer->mount_path, path, sizeof(layer->mount_path));
+  }
+
+  if (mount_sandbox_directory(title_id, app0_path, source_path, MNT_RDONLY))
+    return true;
+  int mount_errno = errno;
+  if (mount_errno == ENOENT && stat(source_path, &st) != 0 && errno == ENOENT)
+    return true;
+  errno = mount_errno;
+  return false;
 }
 
 static bool mount_sandbox_storage_roots(const char *title_id,
@@ -249,7 +309,7 @@ static bool mount_sandbox_storage_roots(const char *title_id,
     if (!mounted)
       continue;
 
-    if (!mount_sandbox_directory(title_id, app0_path, source_path)) {
+    if (!mount_sandbox_directory(title_id, app0_path, source_path, 0)) {
       int mount_errno = errno;
       // Removal between the snapshot and lookup is an optional-source skip.
       struct stat st;
@@ -1566,10 +1626,11 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
                           ? "fakelib2"
                           : (has_game ? "game" : "global");
   if ((has_source && !track_sandbox_layer(title_id, source_path, mount_path,
-                                           label, true)) ||
-      !mount_sandbox_directory(title_id, sandbox_app0_path, "/mnt") ||
-      !mount_sandbox_directory(title_id, sandbox_app0_path, "/data") ||
-      !mount_sandbox_storage_roots(title_id, sandbox_app0_path)) {
+                                        label, true, 0)) ||
+      !mount_sandbox_directory(title_id, sandbox_app0_path, "/mnt", 0) ||
+      !mount_sandbox_directory(title_id, sandbox_app0_path, "/data", 0) ||
+      !mount_sandbox_storage_roots(title_id, sandbox_app0_path) ||
+      !mount_sandbox_fonts(title_id, sandbox_app0_path)) {
     int mount_errno = errno;
     (void)cleanup_fakelib_mount();
     errno = mount_errno;
