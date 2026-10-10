@@ -1082,13 +1082,9 @@ static struct json_object *game_to_json(
   const char *install_time = metadata ? metadata->install_time : "";
   const char *platform = game_platform_name(source->title_id, metadata);
   bool can_toggle_fakelib = strcmp(platform, "ps5") == 0;
-  bool fakelib_enabled = true;
-  for (uint32_t i = 0; i < cfg->fakelib_exclude_title_count; ++i) {
-    if (strcmp(cfg->fakelib_exclude_title_ids[i], source->title_id) == 0) {
-      fakelib_enabled = false;
-      break;
-    }
-  }
+  sm_fakelib_mode_t fakelib_mode =
+      sm_config_title_fakelib_mode(cfg, source->title_id);
+  bool fakelib_enabled = fakelib_mode != SM_FAKELIB_DISABLED;
   char icon_url[SM_API_ROUTE_SIZE + MAX_TITLE_ID + 32u];
   char icon_path[MAX_PATH];
   icon_url[0] = '\0';
@@ -1132,6 +1128,8 @@ static struct json_object *game_to_json(
       !add_json_bool(item, "can_manage_source", !installed_pkg) ||
       !add_json_bool(item, "can_toggle_fakelib", can_toggle_fakelib) ||
       !add_json_bool(item, "fakelib_enabled", fakelib_enabled) ||
+      !add_json_string(item, "fakelib_mode",
+                       sm_config_fakelib_mode_name(fakelib_mode)) ||
       !add_json_bool(item, "fakelib_effective_enabled",
                      fakelib_enabled && cfg->backport_fakelib_enabled)) {
     json_object_put(item);
@@ -2242,12 +2240,24 @@ static void handle_uninstall(struct MHD_Connection *fd,
 static void handle_game_fakelib(struct MHD_Connection *connection,
                                  struct json_object *request) {
   const char *title_id = get_title_id(request);
-  bool enabled = false;
-  if (!title_id || !get_required_bool(request, "enabled", &enabled)) {
+  sm_fakelib_mode_t mode;
+  struct json_object *mode_value = NULL;
+  bool valid_mode;
+  if (json_object_object_get_ex(request, "mode", &mode_value)) {
+    valid_mode = json_object_is_type(mode_value, json_type_string) &&
+                 sm_config_parse_fakelib_mode(
+                     json_object_get_string(mode_value), &mode);
+  } else {
+    bool enabled = false;
+    valid_mode = get_required_bool(request, "enabled", &enabled);
+    mode = enabled ? SM_FAKELIB_FULL : SM_FAKELIB_DISABLED;
+  }
+  if (!title_id || !valid_mode) {
     send_error_response(connection, 400, EINVAL,
-                        "title_id must be a PS5 title ID and enabled a boolean");
+                        "title_id and mode (full, emulators, disabled) are required");
     return;
   }
+  bool enabled = mode != SM_FAKELIB_DISABLED;
   if (strncmp(title_id, "PPSA", 4u) != 0) {
     sm_app_db_game_info_t *metadata = NULL;
     size_t count = 0;
@@ -2275,7 +2285,7 @@ static void handle_game_fakelib(struct MHD_Connection *connection,
                         strerror(status));
     return;
   }
-  if (!sm_config_set_title_fakelib_enabled(title_id, enabled)) {
+  if (!sm_config_set_title_fakelib_mode(title_id, mode)) {
     int status = errno != 0 ? errno : EIO;
     send_error_response(connection, operation_http_status(status), status,
                         strerror(status));
@@ -2284,6 +2294,7 @@ static void handle_game_fakelib(struct MHD_Connection *connection,
   struct json_object *response = new_status_response(0);
   if (!response || !add_json_string(response, "title_id", title_id) ||
       !add_json_bool(response, "fakelib_enabled", enabled) ||
+      !add_json_string(response, "fakelib_mode", sm_config_fakelib_mode_name(mode)) ||
       !add_json_bool(response, "fakelib_effective_enabled",
                      enabled && runtime_config().backport_fakelib_enabled) ||
       !add_json_bool(response, "saved", true) ||

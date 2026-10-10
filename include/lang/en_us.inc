@@ -9,6 +9,7 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_BACKPORT_OVERLAY_FAILED] =
         "Backport overlay failed: %s\n%s\n0x%08X",
     [SM_L10N_GAME_BACKPORTED] = "Backport applied to game: %s",
+    [SM_L10N_GAME_EMULATORS_APPLIED] = "Emulators applied to game: %s",
     [SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED] =
         "Backport applied to game: %s\nEmulators updated",
     [SM_L10N_IMAGE_REJECTED_CLUSTER_AUTOTUNED] =

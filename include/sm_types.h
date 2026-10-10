@@ -127,6 +127,17 @@ typedef struct {
   uint64_t node_rdev;
 } attached_unit_detach_state_t;
 
+typedef enum {
+  SM_FAKELIB_FULL = 0,
+  SM_FAKELIB_EMULATORS,
+  SM_FAKELIB_DISABLED,
+} sm_fakelib_mode_t;
+
+typedef struct {
+  char title_id[MAX_TITLE_ID];
+  sm_fakelib_mode_t mode;
+} sm_fakelib_rule_t;
+
 typedef struct runtime_config {
   bool api_enabled;
   bool debug_enabled;
@@ -148,8 +159,8 @@ typedef struct runtime_config {
   char global_fakelib_path[MAX_PATH];
   char emulators_path[MAX_PATH];
   char ampr_update_url[MAX_PATH];
-  uint32_t fakelib_exclude_title_count;
-  char fakelib_exclude_title_ids[MAX_FAKELIB_EXCLUDE_RULES][MAX_TITLE_ID];
+  uint32_t fakelib_rule_count;
+  sm_fakelib_rule_t fakelib_rules[MAX_FAKELIB_EXCLUDE_RULES];
   uint32_t global_fakelib_exclude_title_count;
   char global_fakelib_exclude_title_ids[MAX_FAKELIB_EXCLUDE_RULES][MAX_TITLE_ID];
   uint32_t scan_depth;

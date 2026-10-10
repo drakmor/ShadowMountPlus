@@ -52,7 +52,15 @@ bool upsert_image_sector_size_autotune(const char *filename,
 bool is_global_fakelib_excluded_for_title(const char *title_id);
 // Return true when all fakelib overlays are disabled for this title.
 bool is_fakelib_excluded_for_title(const char *title_id);
-// Persist a supported title's fakelib policy without changing its active mounts.
+// Resolve a mode from a snapshot or the live config; absent rules mean full.
+sm_fakelib_mode_t sm_config_title_fakelib_mode(const runtime_config_t *cfg,
+                                             const char *title_id);
+sm_fakelib_mode_t get_fakelib_mode_for_title(const char *title_id);
+const char *sm_config_fakelib_mode_name(sm_fakelib_mode_t mode);
+bool sm_config_parse_fakelib_mode(const char *value, sm_fakelib_mode_t *mode);
+// Persist the mode atomically without changing active mounts.
+bool sm_config_set_title_fakelib_mode(const char *title_id, sm_fakelib_mode_t mode);
+// Compatibility API: enabled selects full, false selects disabled.
 bool sm_config_set_title_fakelib_enabled(const char *title_id, bool enabled);
 
 #endif

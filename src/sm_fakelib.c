@@ -15,15 +15,21 @@
 #include <sys/time.h>
 #include <time.h>
 
-#define FAKELIB_CACHE_VERSION 3u
+#define FAKELIB_CACHE_VERSION 4u
 #define FAKELIB_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
 #define FAKELIB_CACHE_MAGIC 0x534D4643u
 #define SANDBOX_USB_ROOT_COUNT 8u
 #define SANDBOX_EXT_ROOT_COUNT 2u
 #define FAKELIB_CACHE_HAS_GLOBAL (1u << 0)
 #define FAKELIB_CACHE_GLOBAL_PRIORITY (1u << 1)
+#define FAKELIB_CACHE_EMULATORS_ONLY (1u << 2)
+#define FAKELIB_CACHE_PACKAGE (1u << 3)
+#define FAKELIB_CACHE_EXCLUSIVE (1u << 4)
+#define FAKELIB_CACHE_FILTERED (1u << 5)
 #define FAKELIB_CACHE_FLAG_MASK                                               \
-  (FAKELIB_CACHE_HAS_GLOBAL | FAKELIB_CACHE_GLOBAL_PRIORITY)
+  (FAKELIB_CACHE_HAS_GLOBAL | FAKELIB_CACHE_GLOBAL_PRIORITY | \
+   FAKELIB_CACHE_EMULATORS_ONLY | FAKELIB_CACHE_PACKAGE | \
+   FAKELIB_CACHE_EXCLUSIVE | FAKELIB_CACHE_FILTERED)
 
 typedef struct {
   // An empty source records a created parent directory without a mount.
@@ -42,7 +48,7 @@ typedef struct {
   // fakelib, /mnt, /data, fonts, and up to two created font parents.
   fakelib_layer_t layers[6u + SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT];
   size_t layer_count;
-  size_t emulator_file_count;
+  sm_l10n_key_t notification;
   bool notify_pending;
   bool mounts_ready;
 } fakelib_session_t;
@@ -613,15 +619,56 @@ static int directory_entry_exists(const char *directory, const char *name) {
     return -1;
   }
   struct stat st;
+  errno = 0;
   if (lstat(path, &st) == 0)
     return 1;
-  return errno == ENOENT ? 0 : -1;
+  return errno == 0 || errno == ENOENT ? 0 : -1;
+}
+
+static const char *const fakelib_emulator_names[] = {
+    "libSceAppContent.sprx", "libSceGameUpdate.sprx",
+    "libSceNpEntitlementAccess.sprx", "libSceAmpr.sprx", "libScePlayGo.sprx"};
+
+static bool fakelib_emulator_allowed(const char *name, uint32_t flags) {
+  size_t count = flags & FAKELIB_CACHE_PACKAGE ? 3u : 5u;
+  for (size_t i = 0; i < count; ++i)
+    if (strcmp(name, fakelib_emulator_names[i]) == 0)
+      return true;
+  return false;
+}
+
+static bool compute_fakelib_signature(const char *source_path, uint32_t flags,
+                                      fakelib_cache_signature_t *signature) {
+  if (!(flags & FAKELIB_CACHE_EMULATORS_ONLY))
+    return compute_source_signature(source_path, signature);
+  memset(signature, 0, sizeof(*signature));
+  size_t count = flags & FAKELIB_CACHE_PACKAGE ? 3u : 5u;
+  for (size_t i = 0; i < count; ++i) {
+    char path[MAX_PATH];
+    int written = snprintf(path, sizeof(path), "%s/%s", source_path,
+                           fakelib_emulator_names[i]);
+    if (written < 0 || (size_t)written >= sizeof(path)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    struct stat st;
+    errno = 0;
+    if (stat(path, &st) != 0) {
+      if (errno == 0 || errno == ENOENT)
+        continue;
+      return false;
+    }
+    if (S_ISREG(st.st_mode))
+      cache_signature_add(signature, fakelib_emulator_names[i], &st);
+  }
+  return true;
 }
 
 static bool compute_emulator_files_signature(
     const char *emulators_path, const char *source_path,
     const char *higher_priority_path,
-    fakelib_cache_signature_t *signature, size_t *matching_count_out) {
+    uint32_t flags, fakelib_cache_signature_t *signature,
+    size_t *matching_count_out) {
   memset(signature, 0, sizeof(*signature));
   *matching_count_out = 0;
 
@@ -643,6 +690,11 @@ static bool compute_emulator_files_signature(
          (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
       continue;
     }
+
+    if (strcmp(entry->d_name, "libkernel.sprx") == 0 ||
+        ((flags & FAKELIB_CACHE_EMULATORS_ONLY) &&
+         !fakelib_emulator_allowed(entry->d_name, flags)))
+      continue;
 
     char emulator_file[MAX_PATH];
     char source_file[MAX_PATH];
@@ -841,7 +893,8 @@ static bool read_cache_manifest(const char *cache_root,
          manifest->game_path[0] == '/' &&
          (has_global ? manifest->global_path[0] == '/'
                      : manifest->global_path[0] == '\0') &&
-         (has_global || manifest->emulator_file_count > 0);
+         (has_global || manifest->emulator_file_count > 0 ||
+          (manifest->flags & FAKELIB_CACHE_FILTERED));
   }
   if (ok && last_used_out)
     *last_used_out = manifest_st.st_mtime;
@@ -911,6 +964,7 @@ static bool copy_emulator_files_to_cache(const char *emulators_path,
                                          const char *source_path,
                                          const char *higher_priority_path,
                                          const char *cache_fakelib_path,
+                                         uint32_t flags,
                                          size_t *copied_count_out) {
   *copied_count_out = 0;
   DIR *d = opendir(emulators_path);
@@ -935,6 +989,10 @@ static bool copy_emulator_files_to_cache(const char *emulators_path,
     char emulator_file[MAX_PATH];
     char source_file[MAX_PATH];
     char cache_file[MAX_PATH];
+    if (strcmp(entry->d_name, "libkernel.sprx") == 0 ||
+        ((flags & FAKELIB_CACHE_EMULATORS_ONLY) &&
+         !fakelib_emulator_allowed(entry->d_name, flags)))
+      continue;
     int emulator_len = snprintf(emulator_file, sizeof(emulator_file), "%s/%s",
                                 emulators_path, entry->d_name);
     int source_len = snprintf(source_file, sizeof(source_file), "%s/%s",
@@ -1078,19 +1136,26 @@ void sm_fakelib_cleanup_caches(void) {
   pthread_mutex_unlock(&g_fakelib_cache_mutex);
 }
 
-static void init_cache_context(const char *title_id, const char *game_path,
+static bool init_cache_context(const char *title_id, const char *game_path,
                                bool allow_emulator_updates,
+                               bool exclusive,
                                fakelib_cache_context_t *context) {
   memset(context, 0, sizeof(*context));
   (void)strlcpy(context->game_path, game_path, sizeof(context->game_path));
 
   const runtime_config_t cfg = runtime_config();
-  if (allow_emulator_updates && cfg.update_emulators_enabled) {
+  if (!allow_emulator_updates)
+    context->flags |= FAKELIB_CACHE_PACKAGE;
+  if (exclusive)
+    context->flags |= FAKELIB_CACHE_EXCLUSIVE;
+  if (sm_config_title_fakelib_mode(&cfg, title_id) == SM_FAKELIB_EMULATORS)
+    context->flags |= FAKELIB_CACHE_EMULATORS_ONLY | FAKELIB_CACHE_FILTERED;
+  if (!exclusive && allow_emulator_updates && cfg.update_emulators_enabled) {
     (void)strlcpy(context->emulators_path, cfg.emulators_path,
                   sizeof(context->emulators_path));
   }
 
-  if (resolve_global_fakelib_source(title_id, context->global_path) &&
+  if (!exclusive && resolve_global_fakelib_source(title_id, context->global_path) &&
       strcmp(context->global_path, game_path) != 0) {
     context->flags |= FAKELIB_CACHE_HAS_GLOBAL;
     if (!cfg.global_fakelib_game_priority)
@@ -1098,16 +1163,24 @@ static void init_cache_context(const char *title_id, const char *game_path,
   } else {
     context->global_path[0] = '\0';
   }
+  int game_kernel = directory_entry_exists(game_path, "libkernel.sprx");
+  int global_kernel = directory_entry_exists(
+      context->global_path[0] ? context->global_path : NULL, "libkernel.sprx");
+  if (game_kernel < 0 || global_kernel < 0)
+    return false;
+  if (game_kernel || global_kernel)
+    context->flags |= FAKELIB_CACHE_FILTERED;
+  return true;
 }
 
 static bool compute_cache_context_signatures(
     fakelib_cache_context_t *context) {
-  if (!compute_source_signature(context->game_path,
+  if (!compute_fakelib_signature(context->game_path, context->flags,
                                 &context->game_signature)) {
     return false;
   }
   if ((context->flags & FAKELIB_CACHE_HAS_GLOBAL) &&
-      !compute_source_signature(context->global_path,
+      !compute_fakelib_signature(context->global_path, context->flags,
                                 &context->global_signature)) {
     return false;
   }
@@ -1117,6 +1190,7 @@ static bool compute_cache_context_signatures(
           context->flags & FAKELIB_CACHE_GLOBAL_PRIORITY
               ? context->global_path
               : NULL,
+          context->flags,
           &context->emulator_files_signature,
           &context->emulator_file_count)) {
     return false;
@@ -1127,7 +1201,99 @@ static bool compute_cache_context_signatures(
 static bool cache_context_requires_cache(
     const fakelib_cache_context_t *context) {
   return (context->flags & FAKELIB_CACHE_HAS_GLOBAL) ||
-         context->emulator_file_count > 0;
+         context->emulator_file_count > 0 ||
+         (context->flags & FAKELIB_CACHE_FILTERED);
+}
+
+static bool remove_fakelib_kernel(const char *source_path) {
+  int exists = directory_entry_exists(source_path, "libkernel.sprx");
+  if (exists <= 0)
+    return exists == 0;
+  char path[MAX_PATH];
+  int written = snprintf(path, sizeof(path), "%s/libkernel.sprx", source_path);
+  if (written < 0 || (size_t)written >= sizeof(path)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  if (unlink(path) == 0 || errno == ENOENT)
+    return true;
+  log_debug("  [FAKELIB] cannot remove %s: %s", path, strerror(errno));
+  return false;
+}
+
+static bool copy_fakelib_source(const char *source_path, const char *destination,
+                                uint32_t flags) {
+  if (!(flags & FAKELIB_CACHE_EMULATORS_ONLY)) {
+    if (copy_dir_with_mode(source_path, destination, 0777) != 0)
+      return false;
+    char kernel_path[MAX_PATH];
+    int written = snprintf(kernel_path, sizeof(kernel_path),
+                           "%s/libkernel.sprx", destination);
+    if (written < 0 || (size_t)written >= sizeof(kernel_path)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    return remove_cache_tree(kernel_path);
+  }
+  if (mkdir(destination, 0777) != 0 && errno != EEXIST)
+    return false;
+  size_t count = flags & FAKELIB_CACHE_PACKAGE ? 3u : 5u;
+  for (size_t i = 0; i < count; ++i) {
+    char source[MAX_PATH];
+    char target[MAX_PATH];
+    int source_len = snprintf(source, sizeof(source), "%s/%s", source_path,
+                              fakelib_emulator_names[i]);
+    int target_len = snprintf(target, sizeof(target), "%s/%s", destination,
+                              fakelib_emulator_names[i]);
+    if (source_len < 0 || (size_t)source_len >= sizeof(source) ||
+        target_len < 0 || (size_t)target_len >= sizeof(target)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    struct stat st;
+    errno = 0;
+    if (stat(source, &st) != 0) {
+      if (errno == 0 || errno == ENOENT)
+        continue;
+      return false;
+    }
+    if (S_ISREG(st.st_mode) && copy_file_with_mode(source, target, 0777) != 0)
+      return false;
+  }
+  return true;
+}
+
+static bool fakelib_content_profile(const char *path, bool *has_files,
+                                    bool *emulators_only) {
+  *has_files = false;
+  *emulators_only = true;
+  DIR *dir = opendir(path);
+  if (!dir)
+    return false;
+  bool ok = true;
+  for (;;) {
+    errno = 0;
+    struct dirent *entry = readdir(dir);
+    if (!entry) {
+      ok = errno == 0;
+      break;
+    }
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      continue;
+    struct stat st;
+    if (fstatat(dirfd(dir), entry->d_name, &st, 0) != 0) {
+      ok = false;
+      break;
+    }
+    *has_files = true;
+    if (!S_ISREG(st.st_mode) || !fakelib_emulator_allowed(entry->d_name, 0))
+      *emulators_only = false;
+  }
+  int saved_errno = errno;
+  if (closedir(dir) != 0)
+    return false;
+  errno = saved_errno;
+  return ok;
 }
 
 static bool rebuild_fakelib_cache(
@@ -1157,9 +1323,9 @@ static bool rebuild_fakelib_cache(
                               ? context->global_path
                               : context->game_path;
   bool built = written > 0 && (size_t)written < sizeof(temp_fakelib) &&
-               copy_dir_with_mode(base_path, temp_fakelib, 0777) == 0;
+               copy_fakelib_source(base_path, temp_fakelib, context->flags);
   if (built && has_global && !global_priority) {
-    built = copy_dir_with_mode(context->game_path, temp_fakelib, 0777) == 0;
+    built = copy_fakelib_source(context->game_path, temp_fakelib, context->flags);
   }
   size_t copied_emulator_files = 0;
   if (built && context->emulator_file_count > 0) {
@@ -1168,12 +1334,12 @@ static bool rebuild_fakelib_cache(
                                          global_priority
                                              ? context->global_path
                                              : NULL,
-                                         temp_fakelib,
+                                         temp_fakelib, context->flags,
                                          &copied_emulator_files) &&
             copied_emulator_files == context->emulator_file_count;
   }
   if (built && has_global && global_priority) {
-    built = copy_dir_with_mode(context->global_path, temp_fakelib, 0777) == 0;
+    built = copy_fakelib_source(context->global_path, temp_fakelib, context->flags);
   }
 
   fakelib_cache_context_t current = *context;
@@ -1244,7 +1410,9 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
   char game_source_path[MAX_PATH];
   fakelib_source_kind_t source_kind = resolve_game_fakelib_source_for_path(
       title_id, game_path, include_backport, game_source_path);
-  if (source_kind != FAKELIB_SOURCE_COMPOSABLE) {
+  bool exclusive = source_kind == FAKELIB_SOURCE_FAKELIB2;
+  if (source_kind == FAKELIB_SOURCE_NONE &&
+      !resolve_global_fakelib_source(title_id, game_source_path)) {
     remove_title_cache(title_id);
     return;
   }
@@ -1254,15 +1422,18 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
     remove_title_cache(title_id);
     return;
   }
-
-  fakelib_cache_context_t context;
-  init_cache_context(title_id, game_source_path, allow_emulator_updates,
-                     &context);
-  if (context.emulators_path[0] == '\0' &&
-      !(context.flags & FAKELIB_CACHE_HAS_GLOBAL)) {
-    remove_title_cache(title_id);
-    return;
+  if (allow_emulator_updates && !is_under_image_mount_base(game_path)) {
+    if (!remove_fakelib_kernel(game_source_path))
+      return;
+    char global_path[MAX_PATH];
+    if (!exclusive && resolve_global_fakelib_source(title_id, global_path) &&
+        !remove_fakelib_kernel(global_path))
+      return;
   }
+  fakelib_cache_context_t context;
+  if (!init_cache_context(title_id, game_source_path, allow_emulator_updates,
+                          exclusive, &context))
+    return;
   if (!compute_cache_context_signatures(&context)) {
     log_debug("  [FAKELIB] cache fingerprint failed for %s", title_id);
     remove_title_cache(title_id);
@@ -1313,14 +1484,19 @@ void sm_fakelib_prepare_title_cache(const char *title_id,
 static bool resolve_cached_fakelib_locked(
     const char *title_id, const char *game_path, bool allow_emulator_updates,
     char cache_path[MAX_PATH],
-    size_t *emulator_file_count_out, bool *includes_global_out) {
+    size_t *emulator_file_count_out, bool *includes_global_out,
+    bool exclusive, bool *required_out) {
   *emulator_file_count_out = 0;
   *includes_global_out = false;
+  *required_out = true;
   if (!is_supported_game_title_id(title_id))
     return false;
 
   fakelib_cache_context_t context;
-  init_cache_context(title_id, game_path, allow_emulator_updates, &context);
+  if (!init_cache_context(title_id, game_path, allow_emulator_updates,
+                          exclusive, &context))
+    return false;
+  *required_out = (context.flags & FAKELIB_CACHE_FILTERED) != 0;
 
   char cache_root[MAX_PATH];
   if (!build_cache_path(title_id, "", cache_root))
@@ -1354,12 +1530,13 @@ static bool resolve_cached_fakelib(const char *title_id,
                                     bool allow_emulator_updates,
                                     char cache_path[MAX_PATH],
                                     size_t *emulator_file_count_out,
-                                    bool *includes_global_out) {
+                                    bool *includes_global_out,
+                                    bool exclusive, bool *required_out) {
   pthread_mutex_lock(&g_fakelib_cache_mutex);
   bool resolved = resolve_cached_fakelib_locked(
       title_id, game_path, allow_emulator_updates, cache_path,
       emulator_file_count_out,
-      includes_global_out);
+      includes_global_out, exclusive, required_out);
   pthread_mutex_unlock(&g_fakelib_cache_mutex);
   return resolved;
 }
@@ -1434,7 +1611,7 @@ static bool cleanup_ppr_backport_fakelib(const char *title_id,
   }
 
   static const char *const filenames[] = {
-      "libSceAmpr.sprx", "libScePlayGo.sprx", "libkernel.sprx"};
+      "libSceAmpr.sprx", "libScePlayGo.sprx"};
   size_t removed = 0;
   for (size_t i = 0; i < sizeof(filenames) / sizeof(filenames[0]); ++i) {
     // Skip absent targets before requesting a write on the backing filesystem.
@@ -1493,8 +1670,7 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
   // Sandbox-ready mounts the overlay before the game process exists.  The
   // subsequent NOTE_EXEC only needs to attach the PID to that session; avoid
   // fingerprinting and rebuilding the package cache a second time.
-  if (pid > 0 && fakelib_session_active() && g_fakelib_mount.mounts_ready &&
-      g_fakelib_mount.pid <= 0 &&
+  if (fakelib_session_active() && g_fakelib_mount.mounts_ready &&
       strcmp(g_fakelib_mount.title_id, title_id) == 0) {
     if (!sandbox_resolved) {
       sandbox_resolved =
@@ -1503,32 +1679,30 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
     if (sandbox_resolved && sandbox_app0_path[0] != '\0' &&
         strcmp(g_fakelib_mount.sandbox_app0_path, sandbox_app0_path) == 0 &&
         strcmp(g_fakelib_mount.mount_path, mount_path) == 0) {
-      g_fakelib_mount.pid = pid;
-      bool notify = notify_user && g_fakelib_mount.notify_pending;
-      g_fakelib_mount.notify_pending = false;
+      if (pid > 0)
+        g_fakelib_mount.pid = pid;
+      bool notify = pid > 0 && notify_user && g_fakelib_mount.notify_pending;
+      if (pid > 0)
+        g_fakelib_mount.notify_pending = false;
       if (notify) {
-        notify_system_info_l10n(
-            g_fakelib_mount.emulator_file_count > 0
-                ? SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED
-                : SM_L10N_GAME_BACKPORTED,
-            title_id);
+        notify_system_info_l10n(g_fakelib_mount.notification, title_id);
       }
       return true;
     }
   }
 
-  if (fakelib_enabled && !managed_title && sandbox_resolved) {
-    // A package's own fakelib is not visible until ShellCore has mounted
-    // app0. Prefer the external backport source directly and never add files
-    // from emulators_path for installed packages.
+  if (fakelib_enabled) {
     pthread_mutex_lock(&g_fakelib_cache_mutex);
-    if (!cleanup_ppr_backport_fakelib(title_id, sandbox_app0_path)) {
+    if (!managed_title && sandbox_resolved &&
+        !cleanup_ppr_backport_fakelib(title_id, sandbox_app0_path)) {
       int saved_errno = errno;
       pthread_mutex_unlock(&g_fakelib_cache_mutex);
       errno = saved_errno;
       return false;
     }
-    prepare_title_cache(title_id, sandbox_app0_path, true, false);
+    prepare_title_cache(title_id,
+                        managed_title ? managed_game_path : sandbox_app0_path,
+                        true, managed_title);
     pthread_mutex_unlock(&g_fakelib_cache_mutex);
   }
 
@@ -1552,15 +1726,23 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
   size_t emulator_file_count = 0;
   bool cache_resolved = false;
   bool cache_includes_global = false;
-  if (source_kind == FAKELIB_SOURCE_COMPOSABLE) {
+  if (has_game || has_global) {
     char cache_path[MAX_PATH];
+    bool required = false;
     cache_resolved = resolve_cached_fakelib(
-        title_id, game_source_path, managed_title, cache_path,
-        &emulator_file_count, &cache_includes_global);
+        title_id, has_game ? game_source_path : global_source_path,
+        managed_title, cache_path,
+        &emulator_file_count, &cache_includes_global, !allows_composition, &required);
     if (cache_resolved) {
-      (void)strlcpy(game_source_path, cache_path, sizeof(game_source_path));
+      (void)strlcpy(has_game ? game_source_path : global_source_path,
+                    cache_path, MAX_PATH);
       log_debug("  [FAKELIB] using cache for %s: %s", title_id,
-                game_source_path);
+                cache_path);
+    } else if (required) {
+      log_debug("  [FAKELIB] filtered cache unavailable for %s; "
+                "refusing unfiltered overlay", title_id);
+      errno = EIO;
+      return false;
     }
   }
   if (needs_combined_cache &&
@@ -1571,6 +1753,14 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
   }
 
   bool has_source = has_game || has_global;
+  bool emulators_only = false;
+  const char *source_path = has_game ? game_source_path : global_source_path;
+  if (has_source) {
+    bool has_files;
+    if (!fakelib_content_profile(source_path, &has_files, &emulators_only))
+      return false;
+    has_source = has_files;
+  }
   if (!sandbox_resolved) {
     sandbox_resolved =
         resolve_sandbox_paths(title_id, sandbox_app0_path, mount_path);
@@ -1579,26 +1769,6 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
       (has_source && mount_path[0] == '\0')) {
     errno = ENOENT;
     return false;
-  }
-
-  if (fakelib_session_active() &&
-      g_fakelib_mount.mounts_ready &&
-      strcmp(g_fakelib_mount.title_id, title_id) == 0 &&
-      strcmp(g_fakelib_mount.sandbox_app0_path, sandbox_app0_path) == 0 &&
-      strcmp(g_fakelib_mount.mount_path, mount_path) == 0) {
-    if (pid > 0) {
-      g_fakelib_mount.pid = pid;
-      bool notify = notify_user && g_fakelib_mount.notify_pending;
-      g_fakelib_mount.notify_pending = false;
-      if (notify) {
-        notify_system_info_l10n(
-            g_fakelib_mount.emulator_file_count > 0
-                ? SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED
-                : SM_L10N_GAME_BACKPORTED,
-            title_id);
-      }
-    }
-    return true;
   }
 
   if (fakelib_session_active()) {
@@ -1619,10 +1789,13 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
                 sizeof(g_fakelib_mount.sandbox_app0_path));
   (void)strlcpy(g_fakelib_mount.mount_path, mount_path,
                 sizeof(g_fakelib_mount.mount_path));
-  g_fakelib_mount.emulator_file_count = emulator_file_count;
-  g_fakelib_mount.notify_pending = has_game && pid <= 0;
-
-  const char *source_path = has_game ? game_source_path : global_source_path;
+  g_fakelib_mount.notification =
+      emulators_only ? SM_L10N_GAME_EMULATORS_APPLIED
+                     : (emulator_file_count > 0
+                            ? SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED
+                            : SM_L10N_GAME_BACKPORTED);
+  bool notify_applied = has_source && (has_game || emulators_only);
+  g_fakelib_mount.notify_pending = notify_applied && pid <= 0;
   const char *label = !allows_composition
                           ? "fakelib2"
                           : (has_game ? "game" : "global");
@@ -1639,12 +1812,8 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
   }
   g_fakelib_mount.mounts_ready = true;
 
-  if (has_game && notify_user) {
-    notify_system_info_l10n(emulator_file_count > 0
-                                ? SM_L10N_GAME_BACKPORTED_EMULATORS_UPDATED
-                                : SM_L10N_GAME_BACKPORTED,
-                            title_id);
-  }
+  if (notify_applied && notify_user)
+    notify_system_info_l10n(g_fakelib_mount.notification, title_id);
   return true;
 }
 

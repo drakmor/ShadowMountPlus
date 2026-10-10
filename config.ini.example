@@ -123,6 +123,17 @@
 # Default: 1
 # backport_fakelib=1
 
+# Per-game fakelib mode: full (default), emulators, disabled.
+# Applies to fakelib/fakelib2/global fakelib on the next launch; active mounts stay.
+# Repeatable, up to 128 non-default titles shared with fakelib_exclude.
+# Last valid entry wins; invalid modes/title IDs and excess rules are logged/ignored.
+# fakelib_mode=PPSA12345:emulators
+# fakelib_mode=PPSA54321:disabled
+# Emulators: AppContent, GameUpdate, NpEntitlementAccess; folder/image games
+# also Ampr and PlayGo (libSce*.sprx). Missing files are silently skipped.
+# libkernel.sprx is removed from writable folder sources. Images/PKGs use a
+# cache without it; source files stay unchanged. Filtering also applies to fakelib2.
+
 # Disable all fakelib overlays for specific games (repeatable, up to 128 titles):
 # Includes fakelib, fakelib2 and global fakelib. No exclusions by default.
 # Reloaded changes apply on the next game launch; active mounts are kept.
