@@ -938,7 +938,8 @@ static bool resolve_game_icon_path(const char *title_id,
     const char *base;
     const char *suffix;
   } icon_dirs[] = {
-      {APP_BASE, ""}, {APPMETA_BASE, ""}, {APP_BASE, "/sce_sys"}};
+      {APP_BASE, ""}, {APPMETA_BASE, ""}, {APP_BASE, "/sce_sys"},
+      {APPMETA_BASE "/external", ""}};
   char recorded_icon[MAX_PATH] = {0};
   if (recorded_path) {
     size_t length = strcspn(recorded_path, "?");
