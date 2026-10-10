@@ -201,7 +201,9 @@ Game error monitoring:
   launch event. Same-game process replacements keep the original deadline.
 - Fatal signals and module-load errors are matched to the game's PID and shown
   with their details. An exception-stop flag provides a generic crash notification
-  when no detailed error is available.
+  when no detailed error is available. Incomplete fatal reports wait for up to
+  two seconds without report progress, then show the available PID-matched
+  details or fall back to the tracked process's exception flag.
 - Monitoring stops after the first reported error, the deadline, game exit,
   runtime sleep or watcher shutdown. It does not control kstuff or tune delays.
 

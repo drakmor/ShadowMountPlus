@@ -22,6 +22,7 @@ int mdbg_call(void *cmd, void *req, void *res);
 
 #define MDBG_FLAG_EXCEPTION_STOP 0x00080000ull
 #define MDBG_MONITOR_WINDOW_US (60ull * 1000000ull)
+#define MDBG_FATAL_REPORT_GRACE_US (2ull * 1000000ull)
 #define MDBG_LOG_LINE_BUFFER_SIZE 512u
 #define MDBG_RTLD_ERROR_PREFIX_SIZE 32u
 #define MDBG_FATAL_ERROR_BUFFER_SIZE 512u
@@ -94,6 +95,7 @@ typedef struct {
   size_t log_snapshot_length;
   size_t log_line_length;
   size_t fatal_error_length;
+  uint64_t fatal_progress_us;
   pid_t fatal_error_pid;
   mdbg_fatal_section_t fatal_section;
   char *log_snapshot;
@@ -175,6 +177,7 @@ static void reset_log_line_buffer(void) {
 static void reset_fatal_error_buffer(void) {
   g_mdbg.fatal_section = MDBG_FATAL_NONE;
   g_mdbg.fatal_error_length = 0;
+  g_mdbg.fatal_progress_us = 0;
   g_mdbg.fatal_error_pid = 0;
   g_mdbg.fatal_error[0] = '\0';
 }
@@ -457,6 +460,7 @@ static void start_fatal_error(mdbg_fatal_section_t section, const char *detail,
     return;
   reset_fatal_error_buffer();
   g_mdbg.fatal_section = section;
+  g_mdbg.fatal_progress_us = now_us;
   append_fatal_error_detail(detail);
 }
 
@@ -512,6 +516,7 @@ static void process_log_line(const char *line, uint64_t now_us) {
   if (g_mdbg.fatal_section != MDBG_FATAL_NONE) {
     if (line[0] != '#')
       return;
+    g_mdbg.fatal_progress_us = now_us;
 
     if (!strcmp(line, "#")) {
       // The signal format separates its header, registers and backtrace
@@ -553,6 +558,24 @@ static void process_log_line(const char *line, uint64_t now_us) {
     return;
   }
 
+}
+
+static bool fatal_log_line_pending(void) {
+  static const char *const prefixes[] = {
+      MDBG_FATAL_SIGNAL_HEADER,
+      MDBG_FATAL_SIGNAL_PREFIX,
+      MDBG_FATAL_EXCEPTION_PREFIX,
+  };
+  if (g_mdbg.log_line_length == 0)
+    return false;
+  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+    size_t length = strlen(prefixes[i]);
+    if (length > g_mdbg.log_line_length)
+      length = g_mdbg.log_line_length;
+    if (!strncmp(g_mdbg.log_line, prefixes[i], length))
+      return true;
+  }
+  return false;
 }
 
 static void flush_log_line(uint64_t now_us) {
@@ -619,6 +642,8 @@ static void poll_log_monitor(uint64_t now_us) {
       return;
   }
 
+  if (fatal_log_line_pending())
+    g_mdbg.fatal_progress_us = now_us;
   update_log_snapshot(text, text_len);
 }
 
@@ -634,7 +659,7 @@ static void drain_log_monitor_before_clear(uint64_t now_us) {
   finish_fatal_error(now_us);
 }
 
-static bool start_log_monitoring(void) {
+static bool start_log_monitoring(uint64_t now_us) {
   if (!g_mdbg.game.active)
     return false;
 
@@ -663,7 +688,9 @@ static bool start_log_monitoring(void) {
   while (start > 0 && text[start - 1u] != '\n' && text[start - 1u] != '\r')
     --start;
   for (size_t i = start; i < text_len; ++i)
-    append_log_char(text[i], 0);
+    append_log_char(text[i], now_us);
+  if (fatal_log_line_pending())
+    g_mdbg.fatal_progress_us = now_us;
   return true;
 }
 
@@ -701,7 +728,7 @@ void sm_mdbg_game_on_exec(pid_t pid, const char *title_id,
   g_mdbg.game.next_poll_us = now_us + GAME_LIFECYCLE_POLL_INTERVAL_US;
   strlcpy(g_mdbg.game.title_id, title_id, sizeof(g_mdbg.game.title_id));
   set_tracked_game_pid(pid);
-  if (!start_log_monitoring()) {
+  if (!start_log_monitoring(now_us)) {
     clear_tracked_game();
     return;
   }
@@ -744,24 +771,6 @@ uint64_t sm_mdbg_next_wake_us(void) {
              : g_mdbg.game.monitor_deadline_us;
 }
 
-static bool fatal_log_line_pending(void) {
-  static const char *const prefixes[] = {
-      MDBG_FATAL_SIGNAL_HEADER,
-      MDBG_FATAL_SIGNAL_PREFIX,
-      MDBG_FATAL_EXCEPTION_PREFIX,
-  };
-  if (g_mdbg.log_line_length == 0)
-    return false;
-  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
-    size_t length = strlen(prefixes[i]);
-    if (length > g_mdbg.log_line_length)
-      length = g_mdbg.log_line_length;
-    if (!strncmp(g_mdbg.log_line, prefixes[i], length))
-      return true;
-  }
-  return false;
-}
-
 void sm_mdbg_poll(bool process_active) {
   if (!g_mdbg.game.active)
     return;
@@ -779,10 +788,23 @@ void sm_mdbg_poll(bool process_active) {
   if (!g_mdbg.game.active)
     return;
   g_mdbg.game.next_poll_us = now_us + GAME_LIFECYCLE_POLL_INTERVAL_US;
-  if (!process_active || fatal_log_line_pending() ||
-      (g_mdbg.fatal_section != MDBG_FATAL_NONE &&
-       (g_mdbg.fatal_error_pid == 0 || g_mdbg.fatal_error_pid == g_mdbg.game.pid)))
+  if (!process_active)
     return;
+  bool fatal_pending = fatal_log_line_pending() ||
+      (g_mdbg.fatal_section != MDBG_FATAL_NONE &&
+       (g_mdbg.fatal_error_pid == 0 || g_mdbg.fatal_error_pid == g_mdbg.game.pid));
+  if (fatal_pending) {
+    // Let a split report collect its location details, but a missing field or
+    // terminator must not suppress the process exception flag indefinitely.
+    if (now_us - g_mdbg.fatal_progress_us < MDBG_FATAL_REPORT_GRACE_US)
+      return;
+    flush_log_line(now_us);
+    if (!g_mdbg.game.active)
+      return;
+    finish_fatal_error(now_us);
+    if (!g_mdbg.game.active)
+      return;
+  }
 
   uint64_t flags = 0;
   int ret = query_mdbg_flags(g_mdbg.game.pid, &flags);
