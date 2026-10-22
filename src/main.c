@@ -27,6 +27,8 @@
 #include "sm_scanner.h"
 #include "sm_time.h"
 #include "sm_install.h"
+#include "sm_appinst.h"
+#include "sm_pkg_install.h"
 #include "sm_appdb.h"
 #include "sm_kstuff.h"
 #include "sm_limits.h"
@@ -559,7 +561,10 @@ int main(void) {
   pid_t existing_pid = 0;
 
   sceUserServiceInitialize(0);
-  sceAppInstUtilInitialize();
+  int appinst_result = sm_appinst_initialize();
+  if (appinst_result != 0)
+    log_debug("  [APPINST] initialization failed: 0x%08X",
+              (uint32_t)appinst_result);
   kernel_set_ucred_authid(-1, AUTHID_BASE);
   install_signal_handlers();
 
@@ -695,6 +700,7 @@ shutdown:
   sm_shellcore_flags_stop();
   sm_shellcore_hooks_stop();
   stop_game_lifecycle_watcher();
+  sm_pkg_install_shutdown();
   sm_shellcore_service_stop();
   sm_scanner_shutdown();
   sm_mdbg_shutdown();

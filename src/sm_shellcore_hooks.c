@@ -9,6 +9,7 @@
 #include "sm_kstuff.h"
 #include "sm_log.h"
 #include "sm_runtime.h"
+#include "sm_appinst.h"
 #include "sm_shellcore_hooks.h"
 #include "sm_shellcore_protocol_defs.h"
 #include "sm_shellcore_remote.h"
@@ -1090,7 +1091,7 @@ bool sm_shellcore_install_title_dir(const char *title_id,
     return false;
   }
 
-  int result = sceAppInstUtilAppInstallAll(NULL);
+  int result = sm_appinst_install_all(NULL);
   armed = 0;
   bool disarmed = sm_remote_process_write(
       pid, remote_bridge_symbol(sm_shellcore_bridge_install_armed), &armed,

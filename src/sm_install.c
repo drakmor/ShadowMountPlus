@@ -16,6 +16,7 @@
 #include "sm_image_cache.h"
 #include "sm_paths.h"
 #include "sm_manual.h"
+#include "sm_pkg_install.h"
 #include "sm_shellcore_hooks.h"
 
 #include <dlfcn.h>
@@ -406,6 +407,13 @@ void process_scan_candidates(const scan_candidate_t *candidates,
     const scan_candidate_t *c = &candidates[i];
     if (sm_shellcore_title_is_protected(c->title_id))
       continue;
+    
+    if (c->kind == SCAN_CANDIDATE_PKG) {
+      if (!sm_pkg_install_queue_candidate(c))
+        log_debug("  [PKG] failed to queue package: %s", c->path);
+      continue;
+    }
+
     bool has_src_snd0 = false;
     bool use_app_install_all =
         runtime_config().app_install_all_enabled && !c->in_app_db;

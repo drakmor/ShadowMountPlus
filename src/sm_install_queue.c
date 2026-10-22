@@ -3,6 +3,7 @@
 #include <stdatomic.h>
 
 #include "sm_install_queue.h"
+#include "sm_appinst.h"
 #include "sm_types.h"
 #include "sm_appdb.h"
 #include "sm_config_mount.h"
@@ -447,7 +448,7 @@ bool sm_install_submit_queued(void) {
   log_queued_install_batch();
   notify_queued_install_batch();
 
-  int res = sceAppInstUtilAppInstallAll(NULL);
+  int res = sm_appinst_install_all(NULL);
   if (res != 0) {
     log_debug("  [REG] Batch install request failed: 0x%x", res);
     if (!g_queued_install_submit_failure_notified) {

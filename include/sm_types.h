@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "sm_limits.h"
 
@@ -91,11 +92,39 @@ struct AppDbTitleList {
   int capacity;
 };
 
+typedef enum {
+  SCAN_CANDIDATE_DIRECTORY = 0,
+  SCAN_CANDIDATE_PKG,
+} scan_candidate_kind_t;
+
+typedef enum {
+  PKG_KIND_UNKNOWN = 0,
+  PKG_KIND_BASE,
+  PKG_KIND_PATCH,
+  PKG_KIND_DLC,
+} pkg_kind_t;
+
 typedef struct scan_candidate {
   char path[MAX_PATH];
   char title_id[MAX_TITLE_ID];
   char title_name[MAX_TITLE_NAME];
   char manual_source_path[MAX_PATH];
+  char content_id[MAX_CONTENT_ID];
+  char category[16];
+  char app_ver[MAX_GAME_VERSION];
+  uint32_t content_type;
+  uint32_t content_flags;
+  uint32_t outer_content_type;
+  uint32_t outer_content_flags;
+  uint64_t source_size;
+  uint64_t source_device;
+  uint64_t source_inode;
+  uint64_t source_ctime;
+  uint64_t source_fingerprint;
+  time_t source_mtime;
+  pkg_kind_t pkg_kind;
+  bool pkg_classification_confident;
+  scan_candidate_kind_t kind;
   bool installed;
   bool in_app_db;
   bool manual;
@@ -147,6 +176,7 @@ typedef struct runtime_config {
   bool force_mount;
   bool persistent_image_mounts;
   bool app_install_all_enabled;
+  bool pkg_install_enabled;
   bool auto_remove_missing_games;
   bool auto_remove_games_with_dlc;
   bool backport_fakelib_enabled;

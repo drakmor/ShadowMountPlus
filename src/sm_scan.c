@@ -11,9 +11,11 @@
 #include "sm_mount_device.h"
 #include "sm_filesystem.h"
 #include "sm_appdb.h"
+#include "sm_appinst.h"
 #include "sm_paths.h"
 #include "sm_path_state.h"
 #include "sm_path_utils.h"
+#include "sm_pkg.h"
 #include "sm_stability.h"
 #include "sm_title_state.h"
 #include "sm_image_cache.h"
@@ -125,7 +127,7 @@ static bool request_blocked_ppsa_uninstall(const char *title_id,
     return false;
 
   remember_blocked_ppsa_uninstall(title_id);
-  int res = sceAppInstUtilAppUnInstall(title_id);
+  int res = sm_appinst_uninstall(title_id);
   if (res == 0) {
     sm_install_forget_pending_title(title_id);
     invalidate_app_db_title_cache();
@@ -410,6 +412,12 @@ static bool enqueue_directory_candidate(
                 sizeof(candidates[*candidate_count].title_id));
   (void)strlcpy(candidates[*candidate_count].title_name, info->title_name,
                 sizeof(candidates[*candidate_count].title_name));
+  candidates[*candidate_count].content_id[0] = '\0';
+  candidates[*candidate_count].category[0] = '\0';
+  candidates[*candidate_count].app_ver[0] = '\0';
+  candidates[*candidate_count].source_size = 0;
+  candidates[*candidate_count].source_mtime = 0;
+  candidates[*candidate_count].kind = SCAN_CANDIDATE_DIRECTORY;
   candidates[*candidate_count].manual_source_path[0] = '\0';
   candidates[*candidate_count].installed = installed;
   candidates[*candidate_count].in_app_db = in_app_db;
@@ -548,6 +556,54 @@ static sm_scan_tree_dir_visit_t collect_candidate_directory_visit(
   return SM_SCAN_TREE_DIR_DESCEND;
 }
 
+static bool collect_candidate_pkg_visit(const char *pkg_path,
+                                        const char *pkg_name,
+                                        unsigned int depth_from_root,
+                                        void *ctx_ptr) {
+  (void)pkg_name;
+  (void)depth_from_root;
+  collect_candidates_walk_ctx_t *ctx = (collect_candidates_walk_ctx_t *)ctx_ptr;
+  if (!runtime_config().pkg_install_enabled ||
+      defer_full_candidate_batch(*ctx->candidate_count, ctx->max_candidates,
+                                 ctx->unstable_found_out))
+    return true;
+
+  struct stat pkg_st;
+  if (sm_pkg_is_installed_content_path(pkg_path) ||
+      stat(pkg_path, &pkg_st) != 0 ||
+      !wait_for_stability_fast(pkg_path, "PKG")) {
+    if (ctx->unstable_found_out)
+      *ctx->unstable_found_out = true;
+    return true;
+  }
+
+  scan_candidate_t candidate;
+  if (!sm_pkg_parse_file(pkg_path, &pkg_st, &candidate)) {
+    log_debug("  [PKG] invalid or unsupported package: %s", pkg_path);
+    return true;
+  }
+  for (int i = 0; i < *ctx->candidate_count; i++) {
+    if (ctx->candidates[i].kind == SCAN_CANDIDATE_PKG &&
+        strcmp(ctx->candidates[i].path, pkg_path) == 0)
+      return true;
+  }
+  candidate.manual_source_path[0] = '\0';
+  candidate.manual = false;
+  candidate.installed = is_installed(candidate.title_id);
+  candidate.in_app_db = app_db_title_list_contains(ctx->app_db->titles,
+                                                    candidate.title_id);
+  if (ctx->manual_source_path) {
+    candidate.manual = true;
+    (void)strlcpy(candidate.manual_source_path, ctx->manual_source_path,
+                  sizeof(candidate.manual_source_path));
+  }
+  ctx->candidates[*ctx->candidate_count] = candidate;
+  (*ctx->candidate_count)++;
+  log_debug("  [PKG] discovered: %s (%s %s)", candidate.title_name,
+            candidate.title_id, candidate.category);
+  return true;
+}
+
 static bool collect_candidate_image_visit(const char *image_path,
                                           const char *image_name,
                                           unsigned int depth_from_root,
@@ -644,6 +700,7 @@ static void collect_scan_candidates_from_manual_root(
       .on_directory = collect_candidate_directory_visit,
       .on_image_file = pfsc_container_root ? collect_candidate_image_visit
                                            : NULL,
+      .on_pkg_file = collect_candidate_pkg_visit,
   };
   if (!sm_scan_tree_walk(scan_path, scan_path, 0u, scan_depth, &callbacks, &ctx) &&
       unstable_found_out)
@@ -671,6 +728,34 @@ static void collect_scan_candidates_from_manual_path(
   clear_manual_missing_source(manual_path);
 
   const char *name = get_filename_component(manual_path);
+  if (S_ISREG(st.st_mode) && runtime_config().pkg_install_enabled &&
+      sm_pkg_path_is_candidate(manual_path, name)) {
+    scan_candidate_t candidate;
+    if (!sm_pkg_is_installed_content_path(manual_path) &&
+        wait_for_stability_fast(manual_path, "PKG") &&
+        sm_pkg_parse_file(manual_path, &st, &candidate)) {
+      candidate.manual = true;
+      candidate.installed = is_installed(candidate.title_id);
+      candidate.in_app_db = app_db_title_list_contains(app_db->titles,
+                                                        candidate.title_id);
+      (void)strlcpy(candidate.manual_source_path, manual_path,
+                    sizeof(candidate.manual_source_path));
+      bool duplicate = false;
+      for (int i = 0; i < *candidate_count; i++) {
+        if (candidates[i].kind == SCAN_CANDIDATE_PKG &&
+            strcmp(candidates[i].path, manual_path) == 0) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (!duplicate)
+        candidates[(*candidate_count)++] = candidate;
+    } else {
+      log_debug("  [MANUAL] invalid or unstable package: %s", manual_path);
+    }
+    return;
+  }
+
   if (S_ISREG(st.st_mode) &&
       is_supported_image_file_path(manual_path, name)) {
     bool index_ready = sm_image_index_visit_ready_titles(
@@ -1129,6 +1214,7 @@ static void collect_scan_candidates_from_root(
   sm_scan_tree_callbacks_t callbacks = {
       .on_directory = collect_candidate_directory_visit,
       .on_image_file = collect_candidate_image_visit,
+      .on_pkg_file = collect_candidate_pkg_visit,
   };
   if (!sm_scan_tree_walk(scan_path, scan_path, 0u, scan_depth, &callbacks, &ctx) &&
       unstable_found_out)

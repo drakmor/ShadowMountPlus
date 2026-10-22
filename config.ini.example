@@ -61,6 +61,11 @@
 # Default: 0 on FW below 12.00, forced to 1 on FW 12.00 and newer
 # app_install_all=0
 
+# Automatically install standalone regular .pkg files discovered below scan roots.
+# Uses the native AppInstUtil installer and a console-local loopback source.
+# Default: 0
+# pkg_install_enabled=0
+
 # Automatically remove games from the system library when their source
 # is no longer available:
 # 1/true/yes/on  -> remove after the configured missing delay

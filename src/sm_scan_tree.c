@@ -5,6 +5,7 @@
 #include "sm_filesystem.h"
 #include "sm_image.h"
 #include "sm_path_utils.h"
+#include "sm_pkg.h"
 #include "sm_paths.h"
 #include "sm_runtime.h"
 
@@ -84,6 +85,8 @@ bool sm_scan_tree_walk(const char *scan_root, const char *dir_path,
       callbacks->on_image_file &&
       (!path_matches_root_or_child(scan_root, IMAGE_MOUNT_BASE) ||
        scan_root_is_pfsc_mount_base);
+  bool allow_pkg_file_visits =
+      callbacks->on_pkg_file && !is_under_image_mount_base(scan_root);
 
   int read_error = 0;
   for (;;) {
@@ -122,6 +125,15 @@ bool sm_scan_tree_walk(const char *scan_root, const char *dir_path,
         is_supported_image_file_path(full_path, entry->d_name)) {
       if (!callbacks->on_image_file(full_path, entry->d_name, depth_from_root + 1u,
                                     ctx)) {
+        closedir(d);
+        return false;
+      }
+    }
+    if (allow_pkg_file_visits && is_regular &&
+        !is_under_image_mount_base(full_path) &&
+        sm_pkg_path_is_candidate(full_path, entry->d_name)) {
+      if (!callbacks->on_pkg_file(full_path, entry->d_name,
+                                  depth_from_root + 1u, ctx)) {
         closedir(d);
         return false;
       }

@@ -99,6 +99,7 @@ static bool web_managed_config_key(const char *key) {
          strcasecmp(key, "fan_target_temperature") == 0 ||
          strcasecmp(key, "api_bind_address") == 0 ||
          strcasecmp(key, "api_bind_adress") == 0 ||
+         strcasecmp(key, "pkg_install_enabled") == 0 ||
          strcasecmp(key, "scanpath") == 0;
 }
 
@@ -234,6 +235,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.force_mount = false;
   state->cfg.persistent_image_mounts = false;
   state->cfg.app_install_all_enabled = false;
+  state->cfg.pkg_install_enabled = false;
   state->cfg.auto_remove_missing_games = false;
   state->cfg.auto_remove_games_with_dlc = false;
   state->cfg.backport_fakelib_enabled = true;
@@ -1164,6 +1166,15 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
+    if (strcasecmp(key, "pkg_install_enabled") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.pkg_install_enabled = bval;
+      continue;
+    }
+
     if (strcasecmp(key, "auto_remove_missing_games") == 0) {
       if (!parse_bool_ini(value, &bval)) {
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
@@ -1511,7 +1522,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
   log_debug("  [CFG] loaded: api_enabled=%d debug=%d quiet=%d language=%s "
             "ro=%d force=%d "
-            "persistent_image_mounts=%d app_install_all=%d "
+            "persistent_image_mounts=%d app_install_all=%d pkg_install_enabled=%d "
             "auto_remove_missing_games=%d "
             "auto_remove_games_with_dlc=%d auto_remove_missing_delay_s=%u "
             "api=%s:%u scan_depth=%u "
@@ -1533,6 +1544,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.force_mount ? 1 : 0,
             state->cfg.persistent_image_mounts ? 1 : 0,
             state->cfg.app_install_all_enabled ? 1 : 0,
+            state->cfg.pkg_install_enabled ? 1 : 0,
             state->cfg.auto_remove_missing_games ? 1 : 0,
             state->cfg.auto_remove_games_with_dlc ? 1 : 0,
             state->cfg.auto_remove_missing_delay_seconds,
@@ -1786,6 +1798,7 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   bool auto_remove_missing_games,
                                   uint32_t auto_remove_missing_delay_seconds,
                                   bool allow_lan_access,
+                                  bool pkg_install_enabled,
                                   uint32_t fan_target_temperature_c,
                                   const char *const *scan_paths,
                                   size_t scan_path_count,
@@ -1923,6 +1936,10 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
               auto_remove_missing_games ? 1u : 0u,
               auto_remove_missing_delay_seconds,
               allow_lan_access ? "0.0.0.0" : "127.0.0.1") < 0) {
+    saved_errno = config_io_error();
+  }
+  if (saved_errno == 0 &&
+      fprintf(out, "pkg_install_enabled=%u\n", pkg_install_enabled ? 1u : 0u) < 0) {
     saved_errno = config_io_error();
   }
   if (saved_errno == 0) {

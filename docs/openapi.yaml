@@ -1349,6 +1349,9 @@ components:
         auto_remove_missing_games:
           type: boolean
           description: Remove app registrations whose source remains unavailable. Omission preserves the current value for compatibility with older web clients.
+        pkg_install_enabled:
+          type: boolean
+          description: Automatically install supported standalone PKG files discovered below scan roots. Omission preserves the current value for compatibility with older web clients.
         auto_remove_missing_delay_seconds:
           type: integer
           minimum: 1

@@ -509,6 +509,7 @@
             <label class="check"><input id="updateEmulators" type="checkbox"> <span data-i18n="updateFakelibEmulators">Update game fakelib emulators</span></label>
             <label class="check"><input id="autoUpdateAmpr" type="checkbox"> <span data-i18n="autoUpdateAmpr">Update AMPR emulator from GitHub</span></label>
             <label class="check"><input id="autoRemoveMissingGames" type="checkbox"> <span data-i18n="autoRemoveMissingGames">Remove unavailable app icons</span></label>
+            <label class="check"><input id="pkgInstallEnabled" type="checkbox"> <span data-i18n="pkgInstallEnabled">Install standalone PKG files</span></label>
             <label class="setting-row"><span data-i18n="autoRemoveDelay">Removal delay (seconds)</span><input id="autoRemoveMissingDelay" type="number" min="1" max="86400" step="1" value="300" required></label>
             <label class="check"><input id="allowLanAccess" type="checkbox"> <span data-i18n="allowLanAccess">Allow local network access</span></label>
             <label class="setting-row"><span data-i18n="fanTemperature">Fan target</span><select id="fanTemperature"><option value="0" data-i18n="systemControlled">System controlled</option></select></label>
@@ -673,6 +674,7 @@
           updateFakelibEmulators: "Update game fakelib emulators",
           autoUpdateAmpr: "Update AMPR emulator from GitHub",
           autoRemoveMissingGames: "Remove unavailable app icons",
+          pkgInstallEnabled: "Install standalone PKG files",
           autoRemoveDelay: "Removal delay (seconds)",
           allowLanAccess: "Allow local network access",
           fanTemperature: "Fan target",
@@ -847,6 +849,7 @@
           updateFakelibEmulators: "Обновлять эмуляторы в fakelib игр",
           autoUpdateAmpr: "Обновлять эмулятор AMPR с GitHub",
           autoRemoveMissingGames: "Удалять иконки недоступных приложений",
+          pkgInstallEnabled: "Устанавливать отдельные PKG-файлы",
           autoRemoveDelay: "Задержка удаления (секунды)",
           allowLanAccess: "Разрешить доступ из локальной сети",
           fanTemperature: "Целевая температура",
@@ -1563,6 +1566,7 @@
           $("fakelibDefaultMode").value = settings.fakelib_default_mode || "full";
           $("autoUpdateAmpr").checked = Boolean(settings.auto_update_ampr);
           $("autoRemoveMissingGames").checked = Boolean(settings.auto_remove_missing_games);
+          $("pkgInstallEnabled").checked = Boolean(settings.pkg_install_enabled);
           $("autoRemoveMissingDelay").value = String(settings.auto_remove_missing_delay_seconds || 300);
           syncAutoRemoveControls();
           $("allowLanAccess").checked = Boolean(settings.allow_lan_access);
@@ -1605,6 +1609,7 @@
             fakelib_default_mode: $("fakelibDefaultMode").value,
             auto_update_ampr: $("autoUpdateAmpr").checked,
             auto_remove_missing_games: $("autoRemoveMissingGames").checked,
+            pkg_install_enabled: $("pkgInstallEnabled").checked,
             auto_remove_missing_delay_seconds: Number($("autoRemoveMissingDelay").value),
             allow_lan_access: $("allowLanAccess").checked,
             fan_target_temperature: Number($("fanTemperature").value),

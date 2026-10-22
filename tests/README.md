@@ -1,5 +1,17 @@
 Host regression tests (Linux/WSL; no console connection):
 
+PKG parser and classification test (macOS/Linux with json-c):
+
+```sh
+cc -std=gnu11 -O2 -Wall -Wextra -Werror -pthread \
+  -Iinclude tests/test_pkg_parser.c src/sm_pkg.c \
+  $(pkg-config --cflags --libs json-c) \
+  -o /tmp/shadowmount-test-pkg
+/tmp/shadowmount-test-pkg
+```
+
+Runtime configuration test (Linux/WSL):
+
 ```sh
 cc -std=gnu11 -O2 -Wall -Wextra -Werror -pthread -ffunction-sections \
   -Wl,--gc-sections -Iinclude tests/test_runtime_config.c \

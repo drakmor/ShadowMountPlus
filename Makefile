@@ -17,10 +17,17 @@ CFLAGS += -DSHADOWMOUNT_VERSION=\"$(VERSION_TAG)\"
 LDFLAGS := -flto=thin -Wl,--gc-sections
 
 # Libraries
-LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lSceNet -lSceSsl -lSceHttp -lsqlite3 $(HOMEBREW_ROOT)/lib/libjson-c.a $(MHD_LIB) $(PNG_LIB) $(ZLIB_LIB) -lpthread -lm
+LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceIpmi -lSceAppInstUtil -lSceNet -lSceSsl -lSceHttp -lsqlite3 $(HOMEBREW_ROOT)/lib/libjson-c.a $(MHD_LIB) $(PNG_LIB) $(ZLIB_LIB) -lpthread -lm
 PS5_SCE_STUBS_DIR ?= $(PS5_PAYLOAD_SDK)/src/sce_stubs
+PS5_SCE_STUB_SOURCE ?= $(firstword \
+  $(wildcard $(PS5_SCE_STUBS_DIR)/libkernel_sys.c) \
+  $(wildcard $(PS5_PAYLOAD_SDK)/src/sce_stubs/libkernel_sys.c) \
+  $(wildcard third_party/ps5-sdk/sce_stubs/libkernel_sys.c))
+ifeq ($(strip $(PS5_SCE_STUB_SOURCE)),)
+$(error Missing libkernel_sys.c. Set PS5_SCE_STUB_SOURCE or PS5_SCE_STUBS_DIR, or provide the SDK source checkout)
+endif
 KERNEL_SYS_STUB_SO := src/libkernel_sys_ext.so
-KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUBS_DIR)/libkernel_sys.c src/libkernel_sys_ext.c
+KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUB_SOURCE) src/libkernel_sys_ext.c
 
 ASSET_SRCS := src/notify_icon_asset.c src/config_ini_example_asset.c src/web_index_asset.c
 ASSET_SRCS += src/shell_icon_param_asset.c
@@ -43,7 +50,7 @@ shadowmountplus.elf: $(OBJS) $(KERNEL_SYS_STUB_SO)
 	$(PS5_PAYLOAD_SDK)/bin/prospero-strip --strip-all $@
 
 $(KERNEL_SYS_STUB_SO): $(KERNEL_SYS_STUB_SRCS)
-	test -f "$(PS5_SCE_STUBS_DIR)/libkernel_sys.c"
+	test -f "$(PS5_SCE_STUB_SOURCE)"
 	$(CC) -shared -Wl,-soname=libkernel_sys.sprx -o $@ $^
 
 src/notify_icon_asset.c: smp_icon.png
@@ -58,7 +65,7 @@ src/web_index_asset.c: web/index.html
 src/shell_icon_param_asset.c: assets/shell_icon_param.json
 	xxd -i $< > $@
 
-src/sm_api_service.o src/sm_icon_thumb.o src/sm_gameinfo.o: CFLAGS += $(HOMEBREW_CFLAGS)
+src/%.o: CFLAGS += $(HOMEBREW_CFLAGS)
 src/main.o src/sm_image_index.o: CFLAGS += -DSHADOWMOUNT_BUILD_TIME=\"$(BUILD_TIME)\"
 src/main.o src/sm_image_index.o: FORCE
 

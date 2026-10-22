@@ -19,6 +19,7 @@
 #include "sm_image.h"
 #include "sm_install.h"
 #include "sm_install_queue.h"
+#include "sm_pkg_install.h"
 #include "sm_limits.h"
 #include "sm_l10n.h"
 #include "sm_log.h"
@@ -818,6 +819,25 @@ typedef struct {
   unsigned int scan_depth;
 } register_watch_tree_ctx_t;
 
+static void schedule_scan_root_dirty(int scan_root_index, uint64_t now_us,
+                                     bool immediate);
+
+static bool register_watch_pkg_visit(const char *pkg_path,
+                                     const char *pkg_name,
+                                     unsigned int depth_from_root,
+                                     void *ctx_ptr) {
+  (void)pkg_path;
+  (void)pkg_name;
+  (void)depth_from_root;
+  register_watch_tree_ctx_t *ctx = (register_watch_tree_ctx_t *)ctx_ptr;
+  if (ctx && ctx->scan_root_index >= 0 &&
+      ctx->scan_root_index < MAX_SCAN_PATHS) {
+    schedule_scan_root_dirty(ctx->scan_root_index, monotonic_time_us(),
+                              false);
+  }
+  return true;
+}
+
 static sm_scan_tree_dir_visit_t register_watch_directory_visit(
     const char *dir_path, unsigned int depth_from_root, void *ctx_ptr) {
   register_watch_tree_ctx_t *ctx = (register_watch_tree_ctx_t *)ctx_ptr;
@@ -882,6 +902,7 @@ static bool rebuild_scan_root_watch_tree(int kq, int scan_root_index) {
   sm_scan_tree_callbacks_t callbacks = {
       .on_directory = register_watch_directory_visit,
       .on_image_file = NULL,
+      .on_pkg_file = register_watch_pkg_visit,
   };
   if (!sm_scan_tree_walk(scan_root, scan_root, 0u, scan_depth, &callbacks,
                          &walk_ctx)) {
@@ -925,6 +946,7 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
   sm_scan_tree_callbacks_t callbacks = {
       .on_directory = register_watch_directory_visit,
       .on_image_file = NULL,
+      .on_pkg_file = register_watch_pkg_visit,
   };
   if (!sm_scan_tree_walk(scan_root, rebuild_path, rebuild_depth,
                          scan_depth - rebuild_depth, &callbacks, &walk_ctx)) {
@@ -1000,9 +1022,6 @@ static bool suspend_usb_scan_root_watch_trees(void) {
 
   return !removed_any || rebuild_scanner_watch_fd_index();
 }
-
-static void schedule_scan_root_dirty(int scan_root_index, uint64_t now_us,
-                                     bool immediate);
 
 static void schedule_scan_roots_for_usb_slot_except(int slot,
                                                     int excluded_root_index,
@@ -1574,10 +1593,15 @@ static uint64_t compute_next_scan_deadline_us(uint64_t now_us,
                                               bool include_scan_work) {
   uint64_t next_deadline = full_resync_due_us;
   uint64_t install_wake_us = sm_install_next_wake_us(now_us);
+  uint64_t pkg_install_wake_us = sm_pkg_install_next_wake_us(now_us);
 
   if (install_wake_us != 0 &&
       (next_deadline == 0 || install_wake_us < next_deadline)) {
     next_deadline = install_wake_us;
+  }
+  if (pkg_install_wake_us != 0 &&
+      (next_deadline == 0 || pkg_install_wake_us < next_deadline)) {
+    next_deadline = pkg_install_wake_us;
   }
 
   if (g_scanner_config_reload_pending &&
@@ -2282,9 +2306,16 @@ void sm_scanner_run_loop(void) {
     }
 
     uint64_t install_wake_us = sm_install_next_wake_us(now_us);
+    uint64_t pkg_install_wake_us = sm_pkg_install_next_wake_us(now_us);
     if (install_wake_us != 0 && now_us >= install_wake_us) {
       pthread_mutex_lock(&g_scanner_cycle_mutex);
       sm_install_service_pending();
+      pthread_mutex_unlock(&g_scanner_cycle_mutex);
+      continue;
+    }
+    if (pkg_install_wake_us != 0 && now_us >= pkg_install_wake_us) {
+      pthread_mutex_lock(&g_scanner_cycle_mutex);
+      sm_pkg_install_service();
       pthread_mutex_unlock(&g_scanner_cycle_mutex);
       continue;
     }

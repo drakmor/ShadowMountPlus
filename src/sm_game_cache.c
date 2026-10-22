@@ -3,6 +3,7 @@
 #include <pthread.h>
 
 #include "sm_game_cache.h"
+#include "sm_appinst.h"
 #include "sm_appdb.h"
 #include "sm_config_mount.h"
 #include "sm_filesystem.h"
@@ -371,7 +372,7 @@ void reconcile_missing_app_db_games(void) {
                                   cfg.auto_remove_games_with_dlc))
       continue;
 
-    int res = sceAppInstUtilAppUnInstall(title_id);
+    int res = sm_appinst_uninstall(title_id);
     if (res == 0) {
       sm_install_forget_pending_title(title_id);
       invalidate_app_db_title_cache();

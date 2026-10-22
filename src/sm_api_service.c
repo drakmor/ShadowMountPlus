@@ -10,6 +10,7 @@
 #include "sm_api_protocol.h"
 #include "sm_api_service.h"
 #include "sm_appdb.h"
+#include "sm_appinst.h"
 #include "sm_config_mount.h"
 #include "sm_filesystem.h"
 #include "sm_game_cache.h"
@@ -1913,6 +1914,8 @@ static void handle_settings(struct MHD_Connection *connection) {
                      cfg.auto_update_ampr_enabled) ||
       !add_json_bool(response, "auto_remove_missing_games",
                      cfg.auto_remove_missing_games) ||
+      !add_json_bool(response, "pkg_install_enabled",
+                     cfg.pkg_install_enabled) ||
       !add_json_int(response, "auto_remove_missing_delay_seconds",
                     cfg.auto_remove_missing_delay_seconds) ||
       !add_json_int(response, "fan_target_temperature",
@@ -1934,6 +1937,7 @@ static void handle_settings_update(struct MHD_Connection *connection,
   bool update_emulators = false;
   bool auto_update_ampr = current_cfg.auto_update_ampr_enabled;
   bool auto_remove_missing_games = current_cfg.auto_remove_missing_games;
+  bool pkg_install_enabled = current_cfg.pkg_install_enabled;
   bool allow_lan_access = false;
   sm_fakelib_mode_t fakelib_default_mode = current_cfg.fakelib_default_mode;
   struct json_object *mode_value = NULL;
@@ -1949,6 +1953,9 @@ static void handle_settings_update(struct MHD_Connection *connection,
       !get_optional_bool(request, "auto_remove_missing_games",
                          current_cfg.auto_remove_missing_games,
                          &auto_remove_missing_games) ||
+      !get_optional_bool(request, "pkg_install_enabled",
+                         current_cfg.pkg_install_enabled,
+                         &pkg_install_enabled) ||
       !get_required_bool(request, "allow_lan_access", &allow_lan_access) ||
       !json_object_object_get_ex(request, "fan_target_temperature",
                                  &fan_value) ||
@@ -2024,6 +2031,7 @@ static void handle_settings_update(struct MHD_Connection *connection,
                     auto_update_ampr, auto_remove_missing_games,
                     (uint32_t)remove_delay_int,
                     allow_lan_access,
+                    pkg_install_enabled,
                     (uint32_t)fan_value_int, paths, path_count,
                     fakelib_default_mode)) {
     int status = valid && errno != 0 ? errno : EINVAL;
@@ -2222,7 +2230,7 @@ static int request_game_uninstall(const char *title_id,
     source_missing = source_error && strcmp(source_error, "source_missing") == 0;
   }
 
-  int platform_status = sceAppInstUtilAppUnInstall(title_id);
+  int platform_status = sm_appinst_uninstall(title_id);
   if (platform_status != 0) {
     log_debug("  [API] uninstall request failed: title=%s code=0x%08X",
               title_id, (uint32_t)platform_status);
