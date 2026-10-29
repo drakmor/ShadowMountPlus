@@ -98,86 +98,153 @@ static bool is_appmeta_file(const char *name) {
 
 static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
                                     const char *user_appmeta_dir) {
+  if (should_stop_requested() || runtime_sleep_mode_active()) {
+    errno = ECANCELED;
+    return false;
+  }
   DIR *d = opendir(src_sce_sys);
   if (!d)
     return false;
 
-  bool ok = true;
-  struct dirent *e;
+  int error = 0;
   char src_path[MAX_PATH];
   char dst_path[MAX_PATH];
   struct stat st;
-  while ((e = readdir(d)) != NULL) {
+  for (;;) {
+    if (should_stop_requested() || runtime_sleep_mode_active()) {
+      error = ECANCELED;
+      break;
+    }
+    errno = 0;
+    struct dirent *e = readdir(d);
+    if (!e) {
+      error = errno;
+      break;
+    }
     if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
       continue;
     if (!is_appmeta_file(e->d_name))
       continue;
 
-    snprintf(src_path, sizeof(src_path), "%s/%s", src_sce_sys, e->d_name);
-    if (stat(src_path, &st) != 0 || !S_ISREG(st.st_mode))
+    int written = snprintf(src_path, sizeof(src_path), "%s/%s", src_sce_sys,
+                            e->d_name);
+    if (written < 0 || (size_t)written >= sizeof(src_path)) {
+      error = ENAMETOOLONG;
+      break;
+    }
+    if (stat(src_path, &st) != 0) {
+      error = errno;
+      break;
+    }
+    if (!S_ISREG(st.st_mode))
       continue;
 
-    snprintf(dst_path, sizeof(dst_path), "%s/%s", user_appmeta_dir, e->d_name);
+    written = snprintf(dst_path, sizeof(dst_path), "%s/%s", user_appmeta_dir,
+                        e->d_name);
+    if (written < 0 || (size_t)written >= sizeof(dst_path)) {
+      error = ENAMETOOLONG;
+      break;
+    }
+    errno = 0;
     if (copy_file(src_path, dst_path) != 0) {
-      ok = false;
+      error = errno != 0 ? errno : EIO;
       break;
     }
   }
 
-  if (closedir(d) != 0)
-    ok = false;
+  if (closedir(d) != 0 && error == 0)
+    error = errno;
 
-  return ok;
+  if (error != 0)
+    errno = error;
+  return error == 0;
 }
 
 static bool copy_optional_trophy_metadata_file(const char *src_sce_sys,
                                                const char *dst_base,
                                                const char *relative_path) {
+  if (should_stop_requested() || runtime_sleep_mode_active()) {
+    errno = ECANCELED;
+    return false;
+  }
   char src_path[MAX_PATH];
   char dst_path[MAX_PATH];
 
-  snprintf(src_path, sizeof(src_path), "%s/%s", src_sce_sys, relative_path);
-  if (!path_exists(src_path))
-    return true;
+  int written = snprintf(src_path, sizeof(src_path), "%s/%s", src_sce_sys,
+                          relative_path);
+  if (written < 0 || (size_t)written >= sizeof(src_path)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  struct stat st;
+  if (stat(src_path, &st) != 0)
+    return errno == ENOENT || errno == ENOTDIR;
+  if (!S_ISREG(st.st_mode)) {
+    errno = EINVAL;
+    return false;
+  }
 
-  snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_base, relative_path);
-  if (path_exists(dst_path))
-    return true;
+  written = snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_base,
+                      relative_path);
+  if (written < 0 || (size_t)written >= sizeof(dst_path)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  if (stat(dst_path, &st) == 0) {
+    if (S_ISREG(st.st_mode))
+      return true;
+    errno = EINVAL;
+    return false;
+  }
+  if (errno != ENOENT)
+    return false;
 
+  errno = 0;
   if (copy_file(src_path, dst_path) == 0)
     return true;
 
+  int error = errno != 0 ? errno : EIO;
   log_debug("  [COPY] Failed to copy trophy metadata: %s -> %s", src_path,
             dst_path);
+  errno = error;
   return false;
 }
 
 static bool update_trophy_metadata(const char *title_id,
                                    const char *src_sce_sys) {
+  if (should_stop_requested() || runtime_sleep_mode_active()) {
+    errno = ECANCELED;
+    return false;
+  }
   char dst_base[MAX_PATH];
   char dst_dir[MAX_PATH];
-  bool ok = true;
-
-  snprintf(dst_base, sizeof(dst_base), "/system_data/priv/appmeta/%s",
-           title_id);
+  int written = snprintf(dst_base, sizeof(dst_base),
+                          "/system_data/priv/appmeta/%s", title_id);
+  if (written < 0 || (size_t)written >= sizeof(dst_base)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
   mkdir("/system_data/priv/appmeta", 0755);
   mkdir(dst_base, 0755);
 
-  snprintf(dst_dir, sizeof(dst_dir), "%s/trophy2", dst_base);
+  written = snprintf(dst_dir, sizeof(dst_dir), "%s/trophy2", dst_base);
+  if (written < 0 || (size_t)written >= sizeof(dst_dir)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
   mkdir(dst_dir, 0755);
-  snprintf(dst_dir, sizeof(dst_dir), "%s/uds", dst_base);
+  written = snprintf(dst_dir, sizeof(dst_dir), "%s/uds", dst_base);
+  if (written < 0 || (size_t)written >= sizeof(dst_dir)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
   mkdir(dst_dir, 0755);
 
-  if (!copy_optional_trophy_metadata_file(src_sce_sys, dst_base,
-                                          "trophy2/npbind.dat"))
-    ok = false;
-  if (!copy_optional_trophy_metadata_file(src_sce_sys, dst_base,
-                                          "uds/npbind.dat"))
-    ok = false;
-  if (!copy_optional_trophy_metadata_file(src_sce_sys, dst_base, "param.json"))
-    ok = false;
-
-  return ok;
+  return copy_optional_trophy_metadata_file(src_sce_sys, dst_base,
+                                            "trophy2/npbind.dat") &&
+         copy_optional_trophy_metadata_file(src_sce_sys, dst_base,
+                                            "uds/npbind.dat") &&
+         copy_optional_trophy_metadata_file(src_sce_sys, dst_base, "param.json");
 }
 
 static void update_registered_title_snd0info(const char *title_id) {
