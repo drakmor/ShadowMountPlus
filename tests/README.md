@@ -14,6 +14,8 @@ The test compiles the production install implementation with a file-copy stub
 that emulates USB case-insensitive source lookup. It checks canonical icon
 staging in appmeta, retries over old uppercase metadata, unchanged custom
 artwork names, deterministic exact-case source selection, and copy failures.
+Missing icons remain optional for appmeta-only remount repairs; other source
+lookup errors are reported.
 Mounting and the PS5 installer are not emulated.
 GCC's existing path-truncation warnings in the included console implementation
 remain visible without failing this host-only test build.

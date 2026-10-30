@@ -12,28 +12,48 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "sm_limits.h"
 
 static uint32_t sm_firmware_major_version(void) { return 11u; }
 int sceKernelUsleep(unsigned int microseconds);
 
+static const char *usb_source_path(const char *src, char actual[MAX_PATH]);
+static int usb_stat(const char *path, struct stat *st);
+#define stat(path, st) usb_stat(path, st)
 #include "../src/sm_install.c"
+#undef stat
 
 static bool fail_icon_copy;
+static int icon_stat_error;
+
+static const char *usb_source_path(const char *src, char actual[MAX_PATH]) {
+  struct stat st;
+  if (stat(src, &st) != 0 && errno == ENOENT && strlen(src) >= 9u &&
+      strcmp(src + strlen(src) - 9u, "icon0.png") == 0) {
+    assert(strlen(src) < MAX_PATH);
+    strcpy(actual, src);
+    strcpy(actual + strlen(actual) - 9u, "ICON0.PNG");
+    return actual;
+  }
+  return src;
+}
+
+static int usb_stat(const char *path, struct stat *st) {
+  if (icon_stat_error && strstr(path, "/icon0.png")) {
+    errno = icon_stat_error;
+    return -1;
+  }
+  char actual[MAX_PATH];
+  return stat(usb_source_path(path, actual), st);
+}
 
 int copy_file(const char *src, const char *dst) {
   if (fail_icon_copy && strstr(dst, "/icon0.png")) {
     errno = EIO;
     return -1;
   }
-  FILE *input = fopen(src, "rb");
-  if (!input && strlen(src) >= 9u &&
-      strcmp(src + strlen(src) - 9u, "icon0.png") == 0) {
-    char actual[MAX_PATH];
-    assert(strlen(src) < sizeof(actual));
-    strcpy(actual, src);
-    strcpy(actual + strlen(actual) - 9u, "ICON0.PNG");
-    input = fopen(actual, "rb");
-  }
+  char actual[MAX_PATH];
+  FILE *input = fopen(usb_source_path(src, actual), "rb");
   if (!input)
     return -1;
   FILE *output = fopen(dst, "wb");
@@ -98,12 +118,31 @@ int main(void) {
   expect(target, "icon0.png", "canonical-icon");
   fail_icon_copy = true;
   assert(!copy_sce_sys_to_appmeta(source, target));
+  fail_icon_copy = false;
+  icon_stat_error = EACCES;
+  assert(!copy_sce_sys_to_appmeta(source, target));
+  icon_stat_error = 0;
+
+  // An existing title can repair appmeta even when its source icon is absent.
+  char source_icon[MAX_PATH];
+  snprintf(source_icon, sizeof(source_icon), "%s/icon0.png", source);
+  assert(unlink(source_icon) == 0);
+  snprintf(source_icon, sizeof(source_icon), "%s/ICON0.PNG", source);
+  assert(unlink(source_icon) == 0);
+  assert(copy_sce_sys_to_appmeta(source, target));
+  expect(target, "icon0.png", "canonical-icon");
+
+  snprintf(source_icon, sizeof(source_icon), "%s/icon0.png", source);
+  assert(mkdir(source_icon, 0700) == 0);
+  assert(copy_sce_sys_to_appmeta(source, target));
+  assert(rmdir(source_icon) == 0);
 
   const char *names[] = {"ICON0.PNG", "icon0.png", "param.json", "CustomArt.PNG"};
   for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
     char path[MAX_PATH];
     snprintf(path, sizeof(path), "%s/%s", source, names[i]);
-    assert(unlink(path) == 0);
+    if (i >= 2u)
+      assert(unlink(path) == 0);
     snprintf(path, sizeof(path), "%s/%s", target, names[i]);
     assert(unlink(path) == 0);
   }

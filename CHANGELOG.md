@@ -7,4 +7,5 @@
   that spelling on case-sensitive internal storage causes title registration
   to fail with `0x80A30008`. Adding the canonical copies restored registration
   of ProsperoStore and Playden on firmware 11.40 with ShadowMountPlus 1.7beta11.
+  Appmeta-only remount repairs continue to allow a missing source icon.
   The patched payload still requires its own PS5 build and console validation.

@@ -134,6 +134,11 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
   // USB enumeration may return ICON0.PNG; internal metadata paths are case-sensitive.
   snprintf(src_path, sizeof(src_path), "%s/icon0.png", src_sce_sys);
   snprintf(dst_path, sizeof(dst_path), "%s/icon0.png", user_appmeta_dir);
+  // Appmeta-only remount repairs previously allowed an absent source icon.
+  if (stat(src_path, &st) != 0)
+    return errno == ENOENT;
+  if (!S_ISREG(st.st_mode))
+    return true;
   return copy_file(src_path, dst_path) == 0;
 }
 
