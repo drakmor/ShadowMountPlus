@@ -1,5 +1,25 @@
 Host regression tests (Linux/WSL; no console connection):
 
+Metadata filename regression (case-insensitive USB lookup and case-sensitive
+internal destinations):
+
+```sh
+cc -std=gnu11 -O0 -Wall -Wextra -Werror -Wno-error=format-truncation -ffunction-sections \
+  -Wl,--gc-sections -Iinclude tests/test_install_metadata.c \
+  -o /tmp/shadowmount-test-metadata
+/tmp/shadowmount-test-metadata
+```
+
+The test compiles the production install implementation with a file-copy stub
+that emulates USB case-insensitive source lookup. It checks canonical icon
+staging in appmeta, retries over old uppercase metadata, unchanged custom
+artwork names, deterministic exact-case source selection, and copy failures.
+Mounting and the PS5 installer are not emulated.
+GCC's existing path-truncation warnings in the included console implementation
+remain visible without failing this host-only test build.
+
+Runtime config regression:
+
 ```sh
 cc -std=gnu11 -O2 -Wall -Wextra -Werror -pthread -ffunction-sections \
   -Wl,--gc-sections -Iinclude tests/test_runtime_config.c \

@@ -110,7 +110,8 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
   while ((e = readdir(d)) != NULL) {
     if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
       continue;
-    if (!is_appmeta_file(e->d_name))
+    if (!is_appmeta_file(e->d_name) ||
+        strcasecmp(e->d_name, "icon0.png") == 0)
       continue;
 
     snprintf(src_path, sizeof(src_path), "%s/%s", src_sce_sys, e->d_name);
@@ -127,7 +128,13 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
   if (closedir(d) != 0)
     ok = false;
 
-  return ok;
+  if (!ok)
+    return false;
+
+  // USB enumeration may return ICON0.PNG; internal metadata paths are case-sensitive.
+  snprintf(src_path, sizeof(src_path), "%s/icon0.png", src_sce_sys);
+  snprintf(dst_path, sizeof(dst_path), "%s/icon0.png", user_appmeta_dir);
+  return copy_file(src_path, dst_path) == 0;
 }
 
 static bool copy_optional_trophy_metadata_file(const char *src_sce_sys,
@@ -257,6 +264,12 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     if (copy_file(icon_src, icon_dst) != 0) {
       log_debug("  [COPY] Failed to copy staged icon: %s -> %s", icon_src,
                 icon_dst);
+      return false;
+    }
+    snprintf(icon_dst, sizeof(icon_dst), "%s/icon0.png", user_sce_sys);
+    if (copy_file(icon_src, icon_dst) != 0) {
+      log_debug("  [COPY] Failed to copy canonical sce_sys icon: %s -> %s",
+                icon_src, icon_dst);
       return false;
     }
   }
