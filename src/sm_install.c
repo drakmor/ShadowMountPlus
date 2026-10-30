@@ -96,6 +96,7 @@ static bool is_appmeta_file(const char *name) {
           strcasecmp(ext, ".at9") == 0);
 }
 
+/** Copy appmeta assets using a canonical icon name; an absent icon is optional. */
 static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
                                     const char *user_appmeta_dir) {
   DIR *d = opendir(src_sce_sys);
@@ -200,6 +201,7 @@ static void update_registered_title_snd0info(const char *title_id) {
 }
 
 // --- Install/Remount Action ---
+/** Stage and mount a title, then register it or prepare it for batch registration. */
 static bool mount_and_install(const char *src_path, const char *title_id,
                               const char *title_name, bool is_remount,
                               bool should_register,

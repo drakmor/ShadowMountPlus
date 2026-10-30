@@ -10,13 +10,18 @@ cc -std=gnu11 -O0 -Wall -Wextra -Werror -Wno-error=format-truncation -ffunction-
 /tmp/shadowmount-test-metadata
 ```
 
-The test compiles the production install implementation with a file-copy stub
-that emulates USB case-insensitive source lookup. It checks canonical icon
-staging in appmeta, retries over old uppercase metadata, unchanged custom
+The test compiles the production install implementation with file-copy and
+stat stubs that emulate USB case-insensitive source lookup. It checks canonical
+icon staging in appmeta, retries over old uppercase metadata, unchanged custom
 artwork names, deterministic exact-case source selection, and copy failures.
 Missing icons remain optional for appmeta-only remount repairs; other source
 lookup errors are reported.
-Mounting and the PS5 installer are not emulated.
+
+A caller-path check invokes `mount_and_install` for a fresh title and verifies
+the icon bytes in the staged title root, staged `sce_sys`, and appmeta. It also
+checks that a failed canonical `sce_sys` copy prevents mounting. Relative app
+roots are confined to a temporary working directory. Mounting, registration
+and privileged trophy metadata services are stubbed; no console is accessed.
 GCC's existing path-truncation warnings in the included console implementation
 remain visible without failing this host-only test build.
 
