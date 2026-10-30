@@ -39,6 +39,13 @@ jobs:
           repository: ps5-payload-dev/sdk
           path: ps5-sdk
 
+      - name: Check metadata filename regression
+        run: |
+          cc -std=gnu11 -O0 -Wall -Wextra -Werror -Wno-error=format-truncation -ffunction-sections \
+            -Wl,--gc-sections -Iinclude tests/test_install_metadata.c \
+            -o /tmp/shadowmount-test-metadata
+          timeout 30s /tmp/shadowmount-test-metadata
+
       - name: Setup build environment
         run: |
           sudo apt update

@@ -96,6 +96,7 @@ static bool is_appmeta_file(const char *name) {
           strcasecmp(ext, ".at9") == 0);
 }
 
+/** Copy appmeta assets using a canonical icon name; an absent icon is optional. */
 static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
                                     const char *user_appmeta_dir) {
   DIR *d = opendir(src_sce_sys);
@@ -110,7 +111,8 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
   while ((e = readdir(d)) != NULL) {
     if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
       continue;
-    if (!is_appmeta_file(e->d_name))
+    if (!is_appmeta_file(e->d_name) ||
+        strcasecmp(e->d_name, "icon0.png") == 0)
       continue;
 
     snprintf(src_path, sizeof(src_path), "%s/%s", src_sce_sys, e->d_name);
@@ -127,7 +129,18 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
   if (closedir(d) != 0)
     ok = false;
 
-  return ok;
+  if (!ok)
+    return false;
+
+  // USB enumeration may return ICON0.PNG; internal metadata paths are case-sensitive.
+  snprintf(src_path, sizeof(src_path), "%s/icon0.png", src_sce_sys);
+  snprintf(dst_path, sizeof(dst_path), "%s/icon0.png", user_appmeta_dir);
+  // Appmeta-only remount repairs previously allowed an absent source icon.
+  if (stat(src_path, &st) != 0)
+    return errno == ENOENT;
+  if (!S_ISREG(st.st_mode))
+    return true;
+  return copy_file(src_path, dst_path) == 0;
 }
 
 static bool copy_optional_trophy_metadata_file(const char *src_sce_sys,
@@ -188,6 +201,7 @@ static void update_registered_title_snd0info(const char *title_id) {
 }
 
 // --- Install/Remount Action ---
+/** Stage and mount a title, then register it or prepare it for batch registration. */
 static bool mount_and_install(const char *src_path, const char *title_id,
                               const char *title_name, bool is_remount,
                               bool should_register,
@@ -257,6 +271,12 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     if (copy_file(icon_src, icon_dst) != 0) {
       log_debug("  [COPY] Failed to copy staged icon: %s -> %s", icon_src,
                 icon_dst);
+      return false;
+    }
+    snprintf(icon_dst, sizeof(icon_dst), "%s/icon0.png", user_sce_sys);
+    if (copy_file(icon_src, icon_dst) != 0) {
+      log_debug("  [COPY] Failed to copy canonical sce_sys icon: %s -> %s",
+                icon_src, icon_dst);
       return false;
     }
   }
