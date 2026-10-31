@@ -1,6 +1,7 @@
 /* Exercise the production privilege boundary, including post-syscall failures. */
 #define _GNU_SOURCE
 #include <assert.h>
+#include <pthread.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -8,6 +9,8 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <sched.h>
+#include "sm_mdbg.h"
 
 #define SCE_AUTHID_DEBUGGER UINT64_C(0x4800000000010003)
 #define ORIGINAL_AUTHID UINT64_C(0x4800000000000006)
@@ -15,6 +18,26 @@ static uint64_t authid;
 static uint8_t caps[16];
 static unsigned auth_writes, cap_writes, calls, logs;
 static bool fail_setup, fail_restore, fail_call;
+static pthread_mutex_t credentials_mutex = PTHREAD_MUTEX_INITIALIZER;
+static unsigned memory_calls;
+void sm_mdbg_credentials_lock(void) { pthread_mutex_lock(&credentials_mutex); }
+void sm_mdbg_credentials_unlock(void) { pthread_mutex_unlock(&credentials_mutex); }
+static int mdbg_copyout(pid_t pid, intptr_t address, void *buffer, size_t size) {
+  assert(pid == 456 && address == 0x10000 && size == 1);
+  assert(authid == ORIGINAL_AUTHID);
+  uint64_t saved = authid;
+  authid = UINT64_C(0x4800000000000099);
+  sched_yield();
+  ++memory_calls;
+  memset(buffer, 0x5a, size);
+  authid = saved;
+  return 0;
+}
+static int kernel_proc_copyin(pid_t pid, const void *buffer, intptr_t address, size_t size) {
+  assert(*(const unsigned char *)buffer == 0x5a);
+  unsigned char scratch;
+  return mdbg_copyout(pid, address, &scratch, size);
+}
 static uint64_t kernel_get_ucred_authid(pid_t pid) { assert(pid == getpid()); return authid; }
 static int kernel_get_ucred_caps(pid_t pid, uint8_t *out) {
   assert(pid == getpid()); memcpy(out, caps, sizeof(caps)); return 0;
@@ -44,10 +67,30 @@ static void log_debug(const char *format, ...) { assert(format); logs++; }
 static void reset(void) {
   authid = ORIGINAL_AUTHID;
   memset(caps, 255, sizeof(caps));
-  auth_writes = cap_writes = calls = logs = 0;
+  auth_writes = cap_writes = calls = logs = memory_calls = 0;
   fail_setup = fail_restore = fail_call = false;
 }
+static void *ptrace_worker(void *unused) {
+  (void)unused;
+  for (unsigned i = 0; i < 1000; ++i)
+    assert(privileged_ptrace(123, 456, NULL, 0) == 0);
+  return NULL;
+}
+static void *mixed_worker(void *kind) {
+  for (unsigned i = 0; i < 1000; ++i) {
+    unsigned char value = 0x5a;
+    if ((uintptr_t)kind < 2) assert(privileged_ptrace(123, 456, NULL, 0) == 0);
+    else if ((uintptr_t)kind == 2)
+      assert(sm_remote_process_read(456, 0x10000, &value, 1) && value == 0x5a);
+    else assert(sm_remote_process_copyin(456, 0x10000, &value, 1));
+  }
+  return NULL;
+}
 int main(void) {
+  pthread_t workers[4];
+  unsigned char value = 0x5a;
+  assert(!sm_remote_process_read(-1, 0x10000, &value, 1));
+  assert(!sm_remote_process_copyin(0, 0x10000, &value, 1));
   reset();
   assert(privileged_ptrace(123, 456, NULL, 0) == 0);
   assert(authid == ORIGINAL_AUTHID && auth_writes == 2 && !cap_writes && calls == 1);
@@ -61,6 +104,11 @@ int main(void) {
   assert(cap_writes == 2 && auth_writes == 2 && calls == 1);
   for (size_t i = 0; i < sizeof(caps); ++i) assert(caps[i] == 0);
   reset();
+  for (uintptr_t i = 0; i < 4; ++i)
+    assert(!pthread_create(&workers[i], NULL, mixed_worker, (void *)i));
+  for (size_t i = 0; i < 4; ++i) assert(!pthread_join(workers[i], NULL));
+  assert(calls == 2000 && memory_calls == 2000 && authid == ORIGINAL_AUTHID);
+  reset();
   fail_setup = true;
   assert(privileged_ptrace(123, 456, NULL, 0) == -1 && !calls);
   assert(authid == ORIGINAL_AUTHID && !cap_writes);
@@ -72,6 +120,12 @@ int main(void) {
   fail_call = true;
   assert(privileged_ptrace(123, 456, NULL, 0) == -1 && errno == EBUSY);
   assert(authid == ORIGINAL_AUTHID && calls == 1 && !logs);
-  puts("ShellCore ptrace: actual operation result, errno, restoration failures and skipped redundant credential writes passed");
+  reset();
+  memset(caps, 0, sizeof(caps));
+  for (size_t i = 0; i < 4; ++i) assert(!pthread_create(&workers[i], NULL, ptrace_worker, NULL));
+  for (size_t i = 0; i < 4; ++i) assert(!pthread_join(workers[i], NULL));
+  assert(calls == 4000 && auth_writes == 8000 && cap_writes == 8000 && authid == ORIGINAL_AUTHID);
+  for (size_t i = 0; i < sizeof(caps); ++i) assert(caps[i] == 0);
+  puts("ShellCore remote: mixed ptrace/memory credentials, actual operation result, errno, restoration failures and skipped redundant credential writes passed");
   return 0;
 }

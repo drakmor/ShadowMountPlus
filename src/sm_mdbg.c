@@ -108,6 +108,14 @@ typedef struct {
 static sm_mdbg_state_t g_mdbg;
 static pthread_mutex_t g_mdbg_kernel_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+void sm_mdbg_credentials_lock(void) {
+  pthread_mutex_lock(&g_mdbg_kernel_log_mutex);
+}
+
+void sm_mdbg_credentials_unlock(void) {
+  pthread_mutex_unlock(&g_mdbg_kernel_log_mutex);
+}
+
 #if !MDBG_SKIP_PRIVILEGE_ELEVATION
 #define SCE_AUTHID_COREDUMP 0x4800000000000006ull
 static int elevate_to_coredump(void) {
@@ -156,7 +164,9 @@ static int query_mdbg_flags(pid_t pid, uint64_t *flags_out) {
   mdbg_cmd_t cmd = {MDBG_CMD_TYPE_SERVICE, MDBG_CMD_PROCESS_STATE};
   mdbg_req_t req = {.pid = pid, .subcmd = MDBG_SUBCMD_FLAGS};
   mdbg_res_t res = {0};
+  sm_mdbg_credentials_lock();
   int ret = mdbg_call(&cmd, &req, &res);
+  sm_mdbg_credentials_unlock();
   if (ret != 0)
     return ret;
   if (res.status != 0)
@@ -205,7 +215,9 @@ static bool ensure_log_buffers(void) {
 
   const char *title_id =
       g_mdbg.game.title_id[0] != '\0' ? g_mdbg.game.title_id : "?";
+  sm_mdbg_credentials_lock();
   uint64_t raw_size = sceKernelDebugGetLogBufferSize();
+  sm_mdbg_credentials_unlock();
   if (raw_size == 0 || raw_size > SIZE_MAX) {
     log_debug("  [MDBG] invalid log buffer size for %s: 0x%016" PRIx64,
               title_id,
@@ -275,7 +287,9 @@ int sm_mdbg_get_log_tail(size_t max_bytes, char **text_out,
   if (!ensure_mdbg_privileges())
     return EACCES;
 
+  sm_mdbg_credentials_lock();
   uint64_t raw_buffer_size = sceKernelDebugGetLogBufferSize();
+  sm_mdbg_credentials_unlock();
   if (raw_buffer_size == 0 || raw_buffer_size > SIZE_MAX)
     return EOVERFLOW;
   size_t buffer_size = (size_t)raw_buffer_size;

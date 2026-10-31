@@ -6,6 +6,11 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+// SDK memory helpers temporarily replace process-wide authid/caps. Serialize
+// them with ptrace, log access and the permanent MDBG privilege setup.
+void sm_mdbg_credentials_lock(void);
+void sm_mdbg_credentials_unlock(void);
+
 // Initialize game-error monitoring and kernel-log access state.
 void sm_mdbg_init(void);
 // Release monitoring state after the lifecycle watcher and API service stop.

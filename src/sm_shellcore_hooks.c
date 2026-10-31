@@ -763,7 +763,7 @@ static bool install_hooks_for_pid(pid_t pid) {
     goto done;
 
   bool copied = mapping_created
-      ? kernel_proc_copyin(pid, bridge, bridge_address, blob_size) == 0
+      ? sm_remote_process_copyin(pid, bridge_address, bridge, blob_size)
       : sm_remote_process_write(pid, bridge_address, bridge, blob_size);
   if (!copied || !verify_remote_bytes(pid, bridge_address, bridge, blob_size) ||
       !sm_kstuff_remote_mprotect(pid, bridge_address, BRIDGE_MAPPING_SIZE,

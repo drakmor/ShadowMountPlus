@@ -25,5 +25,8 @@ bool sm_remote_process_read(pid_t pid, uintptr_t address, void *buffer,
                             size_t size);
 bool sm_remote_process_write(pid_t pid, uintptr_t address, const void *buffer,
                              size_t size);
+// Initialize anonymous pages through the SDK's fault-in/fallback copy path.
+bool sm_remote_process_copyin(pid_t pid, uintptr_t address, const void *buffer,
+                              size_t size);
 
 #endif

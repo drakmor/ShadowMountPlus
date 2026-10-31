@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 
 #include "sm_log.h"
+#include "sm_mdbg.h"
 #include "sm_shellcore_remote.h"
 
 #define X86_PAGE_FRAME 0x000ffffffffff000ull
@@ -13,14 +14,19 @@
 #define SCE_AUTHID_DEBUGGER 0x4800000000010003ull
 
 static int privileged_ptrace(int request, pid_t pid, void *address, int data) {
+  // The game watcher and ShellCore hook owner can attach different processes.
+  // Credentials belong to this payload process, so protect the whole override.
+  sm_mdbg_credentials_lock();
   static const uint8_t k_priv_caps[16] = {
       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
       0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   pid_t self = getpid();
   uint8_t saved_caps[sizeof(k_priv_caps)];
   uint64_t saved_authid = kernel_get_ucred_authid(self);
-  if (!saved_authid || kernel_get_ucred_caps(self, saved_caps) != 0)
+  if (!saved_authid || kernel_get_ucred_caps(self, saved_caps) != 0) {
+    sm_mdbg_credentials_unlock();
     return -1;
+  }
   bool change_authid = saved_authid != SCE_AUTHID_DEBUGGER;
   bool change_caps = memcmp(saved_caps, k_priv_caps, sizeof(saved_caps)) != 0;
   if ((change_authid &&
@@ -31,6 +37,7 @@ static int privileged_ptrace(int request, pid_t pid, void *address, int data) {
       (void)kernel_set_ucred_authid(self, saved_authid);
     if (change_caps)
       (void)kernel_set_ucred_caps(self, saved_caps);
+    sm_mdbg_credentials_unlock();
     errno = saved_errno;
     return -1;
   }
@@ -47,6 +54,7 @@ static int privileged_ptrace(int request, pid_t pid, void *address, int data) {
   // Attach/detach ownership follows the actual ptrace result. Reporting a
   // successful attach as failure leaves an unowned stopped ShellCore; doing
   // the same for detach makes callers patch a process that is already running.
+  sm_mdbg_credentials_unlock();
   errno = saved_errno;
   return result;
 }
@@ -131,17 +139,34 @@ static uint64_t virtual_to_physical(uint64_t address, uint64_t dmap,
 
 bool sm_remote_process_read(pid_t pid, uintptr_t address, void *buffer,
                             size_t size) {
-  if (!buffer || size == 0 || address > UINTPTR_MAX - (size - 1u))
+  if (pid <= 0 || !buffer || size == 0 || address > UINTPTR_MAX - (size - 1u))
     return false;
-  return mdbg_copyout(pid, (intptr_t)address, buffer, size) == 0;
+  sm_mdbg_credentials_lock();
+  int result = mdbg_copyout(pid, (intptr_t)address, buffer, size);
+  sm_mdbg_credentials_unlock();
+  return result == 0;
+}
+
+bool sm_remote_process_copyin(pid_t pid, uintptr_t address, const void *buffer,
+                              size_t size) {
+  if (pid <= 0 || !buffer || size == 0 || address > UINTPTR_MAX - (size - 1u))
+    return false;
+  sm_mdbg_credentials_lock();
+  int result = kernel_proc_copyin(pid, buffer, (intptr_t)address, size);
+  sm_mdbg_credentials_unlock();
+  return result == 0;
 }
 
 bool sm_remote_process_write(pid_t pid, uintptr_t address, const void *buffer,
                              size_t size) {
-  if (!buffer || size == 0 || address > UINTPTR_MAX - (size - 1u))
+  if (pid <= 0 || !buffer || size == 0 || address > UINTPTR_MAX - (size - 1u))
     return false;
-  if ((kernel_get_fw_version() >> 16) <= 0x0820u)
-    return mdbg_copyin(pid, buffer, (intptr_t)address, size) == 0;
+  if ((kernel_get_fw_version() >> 16) <= 0x0820u) {
+    sm_mdbg_credentials_lock();
+    int result = mdbg_copyin(pid, buffer, (intptr_t)address, size);
+    sm_mdbg_credentials_unlock();
+    return result == 0;
+  }
 
   uint8_t probe = 0;
   if (!sm_remote_process_read(pid, address, &probe, sizeof(probe)) ||

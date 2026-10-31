@@ -25,8 +25,6 @@ static uintptr_t kernel_dynlib_dlsym(pid_t pid, uint32_t handle,
   return 0x900000;
 }
 static int sceAppInstUtilAppInstallAll(const char *path);
-int kernel_proc_copyin(pid_t pid, const void *source, uintptr_t address,
-                       size_t size);
 static int mock_kill(pid_t pid, int sig) {
   assert(pid == current_pid && sig == 0);
   return 0;
@@ -114,11 +112,11 @@ bool sm_kstuff_remote_mprotect(pid_t pid, uintptr_t address, size_t size,
   assert(bridge_locked);
   return true;
 }
-int kernel_proc_copyin(pid_t pid, const void *source, uintptr_t address,
-                       size_t size) {
+bool sm_remote_process_copyin(pid_t pid, uintptr_t address, const void *source,
+                              size_t size) {
   assert(pid == current_pid && attached && bridge_locked);
   memcpy(memory + memory_offset(pid, address, size), source, size);
-  return 0;
+  return true;
 }
 bool sm_remote_process_write(pid_t pid, uintptr_t address, const void *buffer,
                              size_t size) {
