@@ -36,7 +36,9 @@ static size_t test_strlcpy(char *dst, const char *src, size_t size) {
 }
 #define strlcpy test_strlcpy
 
+#include "title_id_helpers.inc"
 #include "../src/sm_config_mount.c"
+bool is_under_image_mount_base(const char *path) { (void)path; return false; }
 
 void log_debug(const char *fmt, ...) {
   (void)fmt;
@@ -81,11 +83,9 @@ static void write_config(unsigned version) {
           "global_fakelib_exclude=PPSA12345\n"
           "scanpath=/data/games%u\n"
           "image_ro=game.exfat\n"
-          "image_sector=game.exfat:%u\n"
-          "kstuff_no_pause=PPSA12345\n"
-          "kstuff_delay=PPSA12345:%u\n",
+          "image_sector=game.exfat:%u\n",
           9100u + version, version, version, version,
-          version == 1u ? 512u : 4096u, version);
+          version == 1u ? 512u : 4096u);
   assert(fclose(file) == 0);
   assert(rename(next_path, CONFIG_FILE) == 0);
 }
@@ -125,14 +125,11 @@ static void *reload_reader(void *unused) {
     assert(strcmp(path, "/data/games1") == 0 ||
            strcmp(path, "/data/games2") == 0);
     bool read_only = false;
-    uint32_t sector = 0, delay = 0;
+    uint32_t sector = 0;
     assert(get_image_mode_override("game.exfat", &read_only) && read_only);
     assert(get_image_sector_size_override("game.exfat", &sector));
     assert(sector == 512u || sector == 4096u);
-    assert(is_kstuff_pause_disabled_for_title("PPSA12345"));
     assert(is_global_fakelib_excluded_for_title("PPSA12345"));
-    assert(get_kstuff_pause_delay_override_for_title("PPSA12345", &delay));
-    assert(delay == 1u || delay == 2u);
     atomic_fetch_add(&read_count, 1u);
   } while (!atomic_load(&reader_stop));
   return NULL;
@@ -195,9 +192,7 @@ int main(void) {
   uint32_t value = 0;
   assert(!get_image_mode_override("missing.exfat", &read_only));
   assert(!get_image_sector_size_override("missing.exfat", &value));
-  assert(!is_kstuff_pause_disabled_for_title("PPSA99999"));
   assert(!is_global_fakelib_excluded_for_title("PPSA99999"));
-  assert(!get_kstuff_pause_delay_override_for_title("PPSA99999", &value));
   write_config(1);
   assert(reload_runtime_config_if_changed(&changed) && !changed);
   assert(unlink(CONFIG_FILE) == 0);
