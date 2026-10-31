@@ -5,17 +5,8 @@ The machine-readable OpenAPI 3.1 description is available in
 
 ShadowMount exposes its public API over HTTP/TCP. By default it listens on
 `0.0.0.0:10101`, allowing clients on the local network to connect through the
-PS5's IPv4 address. Set `api_bind_address=127.0.0.1` for PS5-only access, or
-select a specific PS5 IPv4 address. Existing explicit settings are preserved.
-`api_port` accepts values from 1 through 65535.
-These settings are applied on runtime config reload. `api_enabled` defaults to
-`1`; setting it to `0` stops the HTTP service. Re-enabling it restarts the
-service without restarting the payload. An already-running storage job is
-allowed to finish, but no new jobs can be submitted while the API is disabled.
-
-`/data/shadowmount/index.html` overrides the web interface bundled into the
-payload. If the file is absent, the same `web/index.html` built into the ELF is
-served automatically, so enabling the API always provides a landing page.
+PS5's IPv4 address. Listener configuration is described in the
+[runtime configuration reference](../README.md#runtime-configuration).
 
 The API has no authentication. Bind it to a network-facing address only on a
 trusted network.
@@ -33,31 +24,31 @@ request body is 4096 bytes; the request-header limit is 8192 bytes.
 All responses include `Access-Control-Allow-Origin: *`. Browser preflight
 requests using `OPTIONS` are supported and allow `GET`, `POST`, the `Content-Type`
 header and Private Network Access. This permits calls from any browser origin;
-the listener still needs `api_bind_address=0.0.0.0` for access from another
-device.
+local network access must still be enabled for connections from another device.
 
 ## Routes
 
 | Route | Request | Purpose |
 | --- | --- | --- |
-| `/` | GET | Serve `/data/shadowmount/index.html`, or the embedded page when it is absent |
+| `/` | GET | Serve the web interface |
 | `/api/v1/version` | `{}` | API and ShadowMount versions plus capabilities |
 | `/api/v1/storage` | `{}` or `{"path":"smb://NAS"}` | Local storage listing and active SMB destinations, or capacity for one SMB path |
 | `/api/v1/storage/eject` | `{"path":"/mnt/usb0","source":"/dev/da1p1","mount_id":"1122334455667788"}` | Safely unmount an external USB drive; returns an asynchronous storage job |
 | `/api/v1/images` | `{}` | Complete image snapshot |
 | `/api/v1/scan` | `{"reset_attempts":false}` | Queue an immediate full rescan; optionally reset title and image retry counters |
-| `/api/v1/manual/list` | `{}` | List direct paths to individual game folders or images from `manual.lst` |
-| `/api/v1/manual/add` | `{"path":"/mnt/usb0/games/PPSA12345"}` | Idempotently add one game source to `manual.lst` |
-| `/api/v1/manual/remove` | `{"path":"/mnt/usb0/games/PPSA12345"}` | Remove matching source lines from `manual.lst` |
+| `/api/v1/manual/list` | `{}` | List manually registered game folders or images |
+| `/api/v1/manual/add` | `{"path":"/mnt/usb0/games/PPSA12345"}` | Idempotently register one game source |
+| `/api/v1/manual/remove` | `{"path":"/mnt/usb0/games/PPSA12345"}` | Remove a manually registered source |
 | `/api/v1/settings` | `{}` | Read API-managed runtime settings and scan paths |
 | `/api/v1/smb` | `{"action":"list"}` | List, save, remove or check named SMB2/SMB3 connections |
 | `/api/v1/sources/delete` | `{"path":"smb://NAS/Game.pkg","confirm":true}` | Start asynchronous deletion of a permitted folder, image or PKG |
 | `/api/v1/files/mkdir` | `{"path":"smb://NAS","name":"New folder"}` | Create one directory beneath an existing local or SMB parent; return its full path |
-| `/api/v1/settings/update` | `{"debug":true,"quiet_mode":false,"update_emulators":true,"fakelib_default_mode":"full","auto_update_ampr":false,"auto_remove_missing_games":false,"auto_remove_missing_delay_seconds":300,"allow_lan_access":true,"fan_target_temperature":0,"scan_paths":["/mnt/usb0/games"]}` | Update the API-managed part of `config.ini` |
+| `/api/v1/settings/update` | `{"debug":true,"quiet_mode":false,"update_emulators":true,"fakelib_default_mode":"full","auto_update_ampr":false,"auto_remove_missing_games":false,"auto_remove_missing_delay_seconds":300,"allow_lan_access":true,"fan_target_temperature":0,"scan_paths":["/mnt/usb0/games"]}` | Persist API-managed runtime settings |
 | `/api/v1/debug-log` | `{"max_bytes":131072}` | Read a bounded tail of `debug.log` |
 | `/api/v1/kernel-log` | `{"max_bytes":131072}` | Read a bounded tail of the kernel log |
 | `/api/v1/games` | `{"include_size":false}` | Detailed game snapshot; optional physical source-size calculation |
 | `/api/v1/games/info` | `{"title_id":"PPSA12345"}` | Detailed installed-game and source information for one game; size is always calculated |
+| `/api/v1/games/ps4-profile` | `{"title_id":"CUSA12345","pro":"default","cpu":"default","gpu":"default"}` | Save per-game PS4 profile overrides for the next launch |
 | `/api/v1/games/fakelib` | `{"title_id":"PPSA12345","mode":"emulators"}` | Persist the PS5 game's fakelib policy for its next launch |
 | `/api/v1/games/fakelib` | `{"title_id":"PPSA12345","ignore_global_fakelib":true}` | Ignore the global fakelib overlay for this PS5 game on its next launch |
 | `/api/v1/games/icon?title_id=PPSA12345[&size=thumb\|card\|cover]` | GET | Stream the original PNG or a cached icon variant |
@@ -197,18 +188,15 @@ allow the same work regardless of AppFocus, including while in the foreground. T
 live application's own title, source, backing image chain, mounted fakelib
 overlay source and retained NSFS backport sources remain protected;
 operations affecting them return `game_active`. Pending launches/exits and
-unknown runtime ownership defer new work. Forced, scheduled and dirty-root
-scans use the same protection. Directory traversal is paced while a game runs
-(10 ms per directory and 2 ms per 32 entries); idle waits do not poll for this.
+unknown runtime ownership defer new work. Scan requests use the same protection.
 
 Image items expose `path`, `mount_point`, `size`, modification time, `unit_id`,
 `backend`, `complete`, `source_available`, `mapped` and `mounted`. Game items expose
 the physical `path`, `runtime_path`, `source_type` (`folder` or `image`), image
 filesystem type, PS4/PS5 platform, title/content IDs, name, last-launch and
 install timestamps, game `version`, relative `icon_url`, app.db size, and runtime state.
-`backport_path` contains the directory found by the shared backport resolver,
-or an empty string when absent. It respects configured roots, the internal
-fallback and title-prefix matching. This reports presence independently of
+`backport_path` contains the matching backport directory,
+or an empty string when absent. This reports presence independently of
 fakelib policy or whether an overlay is currently mounted.
 
 Icon requests without `size` return the original PNG. `size=thumb` returns a
@@ -233,20 +221,14 @@ On success (status `0`), the matching `save_data_size_bytes`,
 `download_size_bytes`, `patch_size_bytes` or `dlc_size_bytes` field contains
 the sum of regular-file lengths. Missing
 directories are successful zero sizes; errors omit the corresponding byte count.
-PS5 saves are read from `/user/home/<8-hex-user>/savedata_prospero/<title_id>`;
-other supported titles use `savedata/<title_id>`. Saves are summed across local
+Saves are summed across local
 profiles and include backups within the title directory, but exclude cloud,
-metadata and profile-level backup folders. Download data uses
-`/user/download/<title_id>`. Symlink directories are not followed. Traversal
-cooperatively stops on payload shutdown or rest mode. These counts run only for
-the selected title in `games/info`, never during library listing or scanning.
-Patch and DLC totals walk only the selected title directories under
-`/user/patch` and `/user/addcont`, plus matching paths beneath `/mnt/ext0`,
-`/mnt/ext0/ps5`, `/mnt/ext1` and `/mnt/ext1/ps5`. The same directory identity
-(device/inode) is counted once across these roots. Missing directories return
-zero; any access, cancellation or measurement failure returns that category's
+metadata and profile-level backup folders. Patch and DLC totals include matching
+internal and extended-storage installations without counting aliases twice.
+Any access, cancellation or measurement failure returns that category's
 errno-style status and omits its bytes, without publishing a partial total.
-Symlink directories are not followed. Separate patch files are measured;
+Symlink directories are not followed. Measurements stop on shutdown or rest mode.
+Separate patch files are measured;
 updates merged into the base package remain part of the game's main size.
 
 Details also return `patch_info_status`, a `patch` object (`installed`,
@@ -320,8 +302,8 @@ job starts. `usb_disk_busy` identifies other dependency/precondition failures;
 `copy` and `move` preserve the source basename and require an existing
 destination under a configured non-runtime scan root (with the ext1 homebrew
 creation exception above). They and `delete` return
-HTTP 202 with a `job_id` and continue in one background worker;
-only one of these jobs can be active. A second start returns HTTP 409/`EBUSY`.
+HTTP 202 with a `job_id`; only one storage job can be active.
+A second start returns HTTP 409/`EBUSY`.
 `delete` still requires `confirm=true`. If a cached source is already absent
 (`ENOENT` or `ENOTDIR`), it instead returns HTTP 200 with `source_missing=true`
 and `scan_queued=true`, without creating a job or directly uninstalling the title.
@@ -361,7 +343,7 @@ to avoid leaving the only source tree partially removed. A rescan is queued
 after success, cancellation or failure. Cross-filesystem moves delete the
 source only after copying the complete destination. A backing image
 shared by several titles is handled as one physical source.
-`unpack` uses the same worker and progress endpoint. It mounts the requested
+`unpack` uses the same job status and cancellation endpoints. It mounts the requested
 image read-only, copies the mounted game tree to `<destination_dir>/<TITLE_ID>`,
 and always releases the runtime mount afterward. `delete_source=true` removes
 the image only after a complete copy and successful unmount; this irreversible
@@ -385,10 +367,10 @@ Game responses also provide `can_uninstall`, `can_manage_source`,
 `fakelib_mode` is the resolved mode (`full`, `emulators`, `disabled`),
 `fakelib_mode_override` is the title's explicit mode or `default`, and
 `fakelib_default_mode` is the current global default.
-`ignore_global_fakelib` reports the title's `global_fakelib_exclude` setting.
+`ignore_global_fakelib` reports whether the title ignores the global overlay.
 Post `title_id` and a boolean `ignore_global_fakelib` to update only that setting;
-do not combine it with `mode` or `enabled`. False removes the exclusion, including
-legacy `global_fakelib_exclude_title` entries. The game's own fakelib mode stays
+do not combine it with `mode` or `enabled`. False removes the exclusion.
+The game's own fakelib mode stays
 unchanged. Changes apply on the next launch and preserve active mounts.
 The fakelib route accepts only known PS5 games, including PKGs, images and
 folders. `PPSA` identifies PS5; homebrew uses its `app.db` platform.
@@ -396,12 +378,12 @@ Send `mode: "full"`, `"emulators"` or `"disabled"` to persist an explicit overri
 or `mode: "default"` to remove it and inherit `fakelib_default_mode`.
 Legacy `enabled: true|false` requests remain supported and select explicit
 `full` or `disabled`; `mode` takes precedence when both fields are present.
-Unrelated config lines, other title overrides and global settings are preserved.
+Other title overrides and global settings are preserved.
 The response includes the three mode fields, `saved: true` and
 `applies_on_next_launch: true`. Existing mounts stay until game exit.
 `fakelib_enabled` is false when the resolved mode is `disabled`;
 `fakelib_effective_enabled` also respects the global `backport_fakelib` switch.
-Reaching the 128-title override limit fails without modifying the file;
+Reaching the 128-title override limit fails without changing saved settings;
 removing an override remains possible at the limit.
 
 Mount mutations return HTTP 409 with `status` set to
@@ -411,8 +393,8 @@ conflicting scan, storage operation, launch or release is in progress. An
 independent title may be mounted/unmounted during gameplay without replacing
 the live runtime owner; scanner cleanup may release these transient mounts. Clients
 must not retry this response in a tight loop. HTTP 404 with `ENOENT` means the
-title has no ShadowMount `mount.lnk` tracker.
-The optional mount `mode` is request-scoped and does not change `config.ini`.
+title has no managed runtime mount.
+The optional mount `mode` is request-scoped and does not change saved settings.
 Accepted values are `ro`, `rw`, `r/o` and `r/w`; responses normalize them to
 `ro` or `rw`. It applies to every image layer needed for that title. A direct
 directory source or an image profile that is inherently read-only rejects an
@@ -435,20 +417,20 @@ manual source does not uninstall its game; use the uninstall route separately
 when both operations are desired.
 The list route returns `{status, count, paths}`. Paths use the same trimming and
 trailing-slash normalization as the scanner; comments and empty lines are not
-included. A missing `manual.lst` is reported as an empty list.
+included. An unconfigured manual source list is returned as an empty list.
 
 The settings update owns only `debug`, `quiet_mode`, `update_emulators`,
-`fakelib_default_mode`, `auto_update_ampr`, `auto_remove_missing_games`,
-`auto_remove_missing_delay_seconds`,
-`api_bind_address`, `fan_target_temperature`, and repeated `scanpath` keys. The
+`fakelib_default_mode`, `ps4_force_pro`, `ps4_cpu_boost`, `ps4_gpu_boost`,
+`auto_update_ampr`, `auto_remove_missing_games`,
+`auto_remove_missing_delay_seconds`, `allow_lan_access`,
+`fan_target_temperature`, and `scan_paths`. The
 `allow_lan_access` field maps to `0.0.0.0` when enabled and `127.0.0.1` when
 disabled. Updates preserve unrelated settings and apply through runtime reload.
-`api_enabled` is config-only and cannot be changed through this endpoint.
+The listener's enabled state and port cannot be changed through this endpoint.
 A fan target of `0` means system control; explicit
-values must be 50 through 91 degrees Celsius. Unlike `manual.lst`, `scan_paths`
-are recursive library roots. The settings response contains only explicit
-custom roots, never compile-time defaults or internal image-mount roots. Saving
-an empty array removes the custom override and restores compile-time defaults.
+values must be 50 through 91 degrees Celsius. `scan_paths` defines recursive
+library roots. The settings response contains only explicit custom roots. Saving
+an empty array removes the custom override and restores built-in defaults.
 
 `POST /api/v1/settings` returns `fakelib_default_mode` (`full`, `emulators`, or
 `disabled`; initial default `full`). The settings update accepts the same
@@ -509,8 +491,8 @@ be installed or queued. Direct patch/DLC installation requires an installed base
 PS5 media application PKGs (`content_type=0x26`) are supported. A full media
 remaster is classified as a base source and has `replaceable=true`: it can be
 installed standalone or queued even when the native app is installed. The
-worker follows ShellCore's patch task when replacing an existing native app,
-including patch progress and cancellation without uninstalling that base.
+replacement reports patch progress and supports cancellation without uninstalling
+the existing base app.
 
 `GET /api/v1/packages/icon?path=...&v=...` returns the embedded icon0.png from a
 permitted PKG, limited to 4 MiB. For a game directory, add `source_type=folder`
@@ -602,33 +584,9 @@ An acknowledgement releases its window slot. If `max_window` is absent,
 clients must keep the initial window of two outstanding transfers.
 The server closes the connection when the operation ends; disconnecting the
 source fails pending reads immediately with `pkg_stream_lost`. Explicit cancellation
-remains a separate cancelled job. Keep the browser page open until completion.
-
-No staging PKG is saved to storage.
-
-The web interface accepts up to 32 computer files at once and keeps their queue
-in the source browser. It reads bounded PKG headers and CATEGORY metadata to
-order games before patches and DLC, then starts one stream job at a time.
-The web interface has one queue panel and shared start, clear and remove
-controls for both sources. A new browser selection replaces the displayed
-batch and clears the payload queue after all selected PKGs validate. Invalid or
-empty selections and refused queue clearing preserve the previous batch.
-The atomic `only_if_idle` clear prevents replacing a native installation that
-started in another client. Adding a disk/SMB PKG switches the panel back to that
-queue after the add succeeds, releasing any browser file artwork.
-Both sources use the same cards with artwork, title, type, version and size.
-Browser artwork is read from the embedded icon0.png through a file-backed Blob;
-its object URL is released when that queue entry is removed or completes.
-Only a completed native installation advances the queue; source-socket closure
-alone does not. Errors and cancellation stop the queue, retaining the failed or
-cancelled file and remaining entries for manual review. Completed entries are
-removed. The page must stay open for the whole batch; reloading loses this queue.
-If cancellation arrives with a confirmed native completion, the completed entry
-is still removed and its installed content is preserved; the batch stops before
-the next entry. A single-file stream then reports `completed` with
-`cancel_requested=true`, which also prevents the browser from advancing.
-Stream jobs can wait up to 30 seconds for the scanner during preparation,
-with cancellation and rest/shutdown checks, before any native submission.
+remains a separate cancelled job. Keep the source connection available until
+completion. A stream whose native installation completes before cancellation
+takes effect reports `completed` with `cancel_requested=true`.
 
 Compatibility clients can use two concurrent
 `POST /api/v1/packages/stream/request` clients, with
@@ -666,3 +624,56 @@ Package list and queue entries also include `sdk_version`, an unsigned packed
 SDK value (for example `0x07508000` displays as `SDK 7.50`), or zero if unavailable.
 A zero or missing value remains unknown and never prevents installation.
 Minimum firmware requirements are separate fields.
+
+## PS4 game profiles
+
+`POST /api/v1/settings` returns three global boolean defaults:
+`ps4_force_pro`, `ps4_cpu_boost`, and `ps4_gpu_boost`. All default to `false`.
+`POST /api/v1/settings/update` accepts these fields optionally; omitted values
+remain unchanged. Changes apply at the next game launch.
+
+The `game_ps4_profiles` capability advertises
+`POST /api/v1/games/ps4-profile`. It accepts a known PS4 game's `title_id`
+and the following string fields:
+
+| Field | Required | Values |
+| --- | --- | --- |
+| `pro` | Yes | `default`, `on`, `off` |
+| `cpu` | Yes | `default`, `on`, `off` |
+| `gpu` | Yes | `default`, `on`, `off` |
+| `memory` | No | `default`, `on`, `off` |
+| `video_120hz` | No | `default`, `on`, `off` |
+| `gpu_clock` | No | `default`, `2350` |
+
+Omitted optional fields preserve their saved values. `default` restores
+inheritance for `pro`, `cpu`, and `gpu`; memory and 120 Hz default to off.
+Explicit `off` overrides an enabled global default. `gpu_clock=2350` selects
+that GPU target even when `gpu=off`. To disable GPU boost completely, send
+`gpu=off` and `gpu_clock=default`. Setting every profile field to `default`
+removes its overrides while preserving the title's other settings.
+
+Example:
+
+```json
+{"title_id":"CUSA12345","pro":"default","cpu":"on","gpu":"on","gpu_clock":"2350"}
+```
+
+PS5/system titles, unknown games and invalid modes are rejected. Up to 128
+explicit PS4 title profiles are supported. `memory=on` requires
+`ps4_memory_supported=true` and Pro mode: `pro=default` implicitly enables Pro,
+while explicit `pro=off` is rejected. The `game_ps4_memory` capability advertises
+the optional memory field.
+
+PS4 library/detail entries set `can_configure_ps4_profile=true` and include:
+
+- `ps4_profile`: the six saved override strings listed above.
+- `ps4_profile_default`: default booleans for `pro`, `cpu`, `gpu`, `memory`,
+  and `video_120hz`, plus `gpu_clock=0` (no explicit target override).
+- `ps4_profile_effective`: resolved booleans for those five switches and a
+  numeric `gpu_clock` in MHz: `0` for stock, `2200`, or `2350`.
+- `ps4_memory_supported`: whether the console firmware supports the memory option.
+- `ps4_memory_status`: current memory state, `off`, `pending`, `active`, or `blocked`.
+
+Successful saves return these fields with `status=0`, `title_id`, `saved=true`
+and `applies_on_next_launch=true`. This confirms persistence; it does not confirm
+display-mode activation or the hardware's actual clock frequency.

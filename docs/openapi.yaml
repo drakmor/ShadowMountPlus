@@ -400,6 +400,60 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/games/ps4-profile:
+    options:
+      operationId: preflightGamePs4Profile
+      tags: [Games]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: setGamePs4Profile
+      summary: Set per-game PS4 Pro, CPU/GPU and optional memory launch overrides
+      tags: [Games]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/Ps4ProfileOverride"
+                - type: object
+                  required: [title_id]
+                  properties:
+                    title_id:
+                      type: string
+                      pattern: "^(CUSA|PLAS|PCAS|PCJS|PLJS|PLJM|PCKS)[0-9]{5}$"
+      responses:
+        "200":
+          description: Saved; applies on the next launch. All default removes the override.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: integer, const: 0}
+                  title_id: {type: string}
+                  saved: {type: boolean, const: true}
+                  applies_on_next_launch: {type: boolean, const: true}
+                  ps4_profile:
+                    $ref: "#/components/schemas/Ps4ProfileOverride"
+                  ps4_profile_default:
+                    $ref: "#/components/schemas/Ps4ProfileValues"
+                  ps4_profile_effective:
+                    $ref: "#/components/schemas/Ps4ProfileValues"
+                  ps4_memory_supported:
+                    type: boolean
+                    description: Exact audited firmware layout available; activation is verified at launch.
+                  ps4_memory_status:
+                    $ref: "#/components/schemas/Ps4MemoryStatus"
+        "400":
+          description: Invalid title or setting
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/games/fakelib:
     options:
       operationId: preflightGameFakelib
@@ -1870,6 +1924,44 @@ components:
           format: int64
           minimum: 1
 
+    Ps4ProfileOverride:
+      type: object
+      required: [pro, cpu, gpu]
+      properties:
+        pro: {type: string, enum: [default, "on", "off"]}
+        cpu: {type: string, enum: [default, "on", "off"]}
+        gpu: {type: string, enum: [default, "on", "off"]}
+        memory:
+          type: string
+          enum: [default, "on", "off"]
+          description: Per-game 8 GB mode. Default is off. Requires Pro mode; explicit pro=off conflicts. Omission preserves the saved value.
+        video_120hz:
+          type: string
+          enum: [default, "on", "off"]
+          description: Request 120 Hz video output at the next PS4 launch. Default off; omission preserves.
+        gpu_clock:
+          type: string
+          enum: [default, "2350"]
+          description: Explicit GPU target. 2350 forces the GPU policy independently of gpu; omission preserves.
+    Ps4ProfileValues:
+      type: object
+      required: [pro, cpu, gpu]
+      properties:
+        pro: {type: boolean}
+        cpu: {type: boolean}
+        gpu: {type: boolean}
+        memory: {type: boolean}
+        video_120hz: {type: boolean}
+        gpu_clock:
+          type: integer
+          enum: [0, 2200, 2350]
+          description: Resolved GPU target in MHz (0 for stock); default object uses 0 for no explicit target.
+
+    Ps4MemoryStatus:
+      type: string
+      enum: ["off", pending, active, blocked]
+      description: Cached state of the physical container budget. Close the game before launching another or stopping ShadowMount.
+
     SettingsUpdateRequest:
       type: object
       required: [debug, quiet_mode, update_emulators, allow_lan_access, fan_target_temperature, scan_paths]
@@ -1884,6 +1976,18 @@ components:
           type: string
           enum: [full, emulators, disabled]
           description: Mode inherited by games without an individual override. Initial default is full. Omission preserves the current value; changes apply on the next launch.
+        ps4_force_pro:
+          type: boolean
+          default: false
+          description: Force PS4 Pro compatibility on the next game launch. Omission preserves the current value.
+        ps4_cpu_boost:
+          type: boolean
+          default: false
+          description: Request Pstate 0 in PS4 game profiles. Omission preserves the current value.
+        ps4_gpu_boost:
+          type: boolean
+          default: false
+          description: Request 2200 MHz in PS4 game profiles. Omission preserves the current value.
         auto_update_ampr:
           type: boolean
           description: Download libSceAmpr.sprx updates from the configured GitHub release URL. Omission preserves the current value for compatibility with older web clients.
@@ -1989,8 +2093,8 @@ components:
           type: array
           items:
             type: string
-            enum: [web_ui, storage_space, storage_eject, list_images, list_games, game_info, game_data_sizes, pkg_install, pkg_browser_stream, smb2_smb3, game_icon, mount_game, unmount_game, uninstall_game, uninstall_game_content, install_game_source, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan]
-          example: [web_ui, storage_space, storage_eject, list_images, list_games, game_info, game_data_sizes, pkg_install, pkg_browser_stream, smb2_smb3, game_icon, mount_game, unmount_game, uninstall_game, uninstall_game_content, install_game_source, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan]
+            enum: [web_ui, storage_space, storage_eject, list_images, list_games, installed_pkg_games, game_fakelib_settings, game_ps4_profiles, game_ps4_memory, game_info, game_data_sizes, pkg_install, pkg_browser_stream, smb2_smb3, game_icon, mount_game, unmount_game, uninstall_game, uninstall_game_content, install_game_source, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan]
+          example: [web_ui, storage_space, storage_eject, list_images, list_games, installed_pkg_games, game_fakelib_settings, game_ps4_profiles, game_ps4_memory, game_info, game_data_sizes, pkg_install, pkg_browser_stream, smb2_smb3, game_icon, mount_game, unmount_game, uninstall_game, uninstall_game_content, install_game_source, move_game_source, copy_game_source, delete_game_source, unpack_game_image, storage_job_status, storage_job_cancel, list_manual_sources, add_manual_source, remove_manual_source, manage_settings, read_debug_log, read_kernel_log, rescan]
 
     StorageMount:
       type: object
@@ -2265,6 +2369,20 @@ components:
         can_manage_source:
           type: boolean
           description: False for installed PKGs; source mutations are forbidden.
+        can_configure_ps4_profile:
+          type: boolean
+          description: True for supported PS4 title IDs, including installed PKGs.
+        ps4_profile:
+          $ref: "#/components/schemas/Ps4ProfileOverride"
+        ps4_profile_default:
+          $ref: "#/components/schemas/Ps4ProfileValues"
+        ps4_profile_effective:
+          $ref: "#/components/schemas/Ps4ProfileValues"
+        ps4_memory_supported:
+          type: boolean
+          description: Exact audited retail DATA layout available; not a runtime activation result.
+        ps4_memory_status:
+          $ref: "#/components/schemas/Ps4MemoryStatus"
         can_toggle_fakelib:
           type: boolean
           description: True for PS5 games in PKGs, images and folders.
