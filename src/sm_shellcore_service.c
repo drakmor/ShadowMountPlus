@@ -26,7 +26,7 @@ _Static_assert(MAX_TITLE_ID == SM_SHELLCORE_REQUEST_TITLE_ID_SIZE,
                "ShellCore title id size mismatch");
 _Static_assert(sizeof(sm_shellcore_request_t) == SM_SHELLCORE_REQUEST_SIZE,
                "unexpected ShellCore request size");
-_Static_assert(offsetof(sm_shellcore_request_t, title_id) == 8,
+_Static_assert(offsetof(sm_shellcore_request_t, title_id) == SM_SHELLCORE_REQUEST_TITLE_OFFSET,
                "unexpected ShellCore request title id offset");
 _Static_assert(sizeof(sm_shellcore_response_t) == SM_SHELLCORE_RESPONSE_SIZE,
                "unexpected ShellCore response size");
@@ -52,6 +52,7 @@ typedef struct {
   bool stop_requested;
   int listen_fd;
   int client_fd;
+  uint64_t session_id;
   // The incoming title is mounted before launchApp closes the outgoing game.
   shellcore_mount_owner_t prepared;
   shellcore_mount_owner_t outgoing;
@@ -1178,29 +1179,30 @@ static void handle_client(int fd) {
   if (!shellcore_client_active(fd))
     return;
 
+  pthread_mutex_lock(&g_service.mutex);
+  uint64_t session_id = g_service.session_id;
+  pthread_mutex_unlock(&g_service.mutex);
+  sm_shellcore_response_t response = sm_shellcore_response(session_id,
+      SM_SHELLCORE_REQUEST_HELLO_VALUE, 0, 0);
+  if (!sm_socket_write_full(fd, &response, sizeof(response))) return;
   sm_shellcore_request_t request;
-  sm_shellcore_response_t response;
-  if (!sm_socket_read_full(fd, &request, sizeof(request)))
+  if (!sm_socket_read_full(fd, &request, sizeof(request)) || !shellcore_client_active(fd))
     return;
-  if (!shellcore_client_active(fd))
-    return;
-  if (request.magic != SM_SHELLCORE_PROTOCOL_MAGIC ||
-      request.version != SM_SHELLCORE_PROTOCOL_VERSION ||
-      ((request.operation == SM_SHELLCORE_REQUEST_LAUNCH ||
-        request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED ||
-        request.operation == SM_SHELLCORE_REQUEST_SANDBOX_READY) &&
-       strnlen(request.title_id, sizeof(request.title_id)) ==
-           sizeof(request.title_id))) {
-    response.status = EPROTO;
-  } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH) {
-    response.status = handle_launch_request(request.title_id);
-  } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED) {
-    response.status = handle_launch_failed_request(request.title_id);
-  } else if (request.operation == SM_SHELLCORE_REQUEST_SANDBOX_READY) {
-    response.status = handle_sandbox_ready_request(request.title_id);
-  } else {
-    response.status = ENOTSUP;
+  int status = EPROTO;
+  if (sm_shellcore_request_valid(&request, session_id)) {
+    if (request.pid || request.app_id || request.module_handle) {
+      status = EINVAL; // Existing ShellCore operations have no target process.
+    } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH) {
+      status = handle_launch_request(request.title_id);
+    } else if (request.operation == SM_SHELLCORE_REQUEST_LAUNCH_FAILED) {
+      status = handle_launch_failed_request(request.title_id);
+    } else if (request.operation == SM_SHELLCORE_REQUEST_SANDBOX_READY) {
+      status = handle_sandbox_ready_request(NULL);
+    } else {
+      status = ENOTSUP;
+    }
   }
+  response = sm_shellcore_response(session_id, request.operation, request.request_id, status);
   if (shellcore_client_active(fd))
     (void)sm_socket_write_full(fd, &response, sizeof(response));
 }
@@ -1343,6 +1345,8 @@ bool sm_shellcore_service_start(void) {
 
   g_service.listen_fd = fd;
   g_service.client_fd = -1;
+  arc4random_buf(&g_service.session_id, sizeof(g_service.session_id));
+  if (!g_service.session_id) g_service.session_id = 1;
   g_service.stop_requested = false;
   clear_mount_owner(&g_service.prepared);
   clear_mount_owner(&g_service.outgoing);

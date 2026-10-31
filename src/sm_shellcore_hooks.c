@@ -1,6 +1,7 @@
 #include "sm_platform.h"
 
 #include <signal.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <pthread.h>
@@ -31,7 +32,7 @@ _Static_assert(sizeof(SM_SHELLCORE_SOCKET_PATH) + 2 ==
                "ShellCore bridge socket path encoding mismatch");
 _Static_assert(TRAMPOLINE_SIZE ==
                    MAX_HOOK_PROLOGUE_SIZE +
-                       SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE,
+                       SM_SHELLCORE_BRIDGE_ABSOLUTE_JUMP_SIZE,
                "ShellCore bridge trampoline size mismatch");
 _Static_assert(SOL_SOCKET == SM_SHELLCORE_BRIDGE_SOL_SOCKET,
                "ShellCore bridge SOL_SOCKET mismatch");
@@ -281,17 +282,6 @@ static bool parse_absolute_jump(const uint8_t *patch, size_t patch_size,
   return true;
 }
 
-static bool parse_relative_jump(const uint8_t *jump, uintptr_t source,
-                                uintptr_t *destination_out) {
-  if (!jump || !destination_out || jump[0] != 0xe9)
-    return false;
-  int32_t displacement = 0;
-  memcpy(&displacement, jump + 1, sizeof(displacement));
-  *destination_out = source + SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE +
-                     (intptr_t)displacement;
-  return true;
-}
-
 static bool parse_relative_call(const uint8_t *call, uintptr_t source,
                                 uintptr_t *destination_out) {
   if (!call || call[0] != 0xe8)
@@ -315,6 +305,8 @@ static bool remote_call_matches(pid_t pid, uintptr_t source,
  * ShellCore alive. Recover only a bridge with this exact code signature and
  * valid embedded trampolines; unknown hooks remain untouched.
  */
+static uintptr_t sandbox_veneer(const sm_shellcore_remote_t *remote);
+
 static bool recover_stale_bridge(
     pid_t pid, const sm_shellcore_remote_t *remote,
     const shellcore_hook_record_t hooks[SHELLCORE_MAX_HOOK_COUNT],
@@ -350,7 +342,7 @@ static bool recover_stale_bridge(
       }
       if (destination == original_target)
         continue;
-      if (destination != bridge_address + hook_offset)
+      if (destination != sandbox_veneer(remote))
         return false;
       stale[i] = true;
       ++stale_count;
@@ -405,10 +397,8 @@ static bool recover_stale_bridge(
                                 trampoline, sizeof(trampoline)) ||
         memcmp(trampoline, k_expected_function_prologue,
                sizeof(k_expected_function_prologue)) != 0 ||
-        !parse_relative_jump(
-            trampoline + patch_size,
-            bridge_address + trampoline_offset + patch_size,
-            &return_address) ||
+        !parse_absolute_jump(trampoline + patch_size, ABSOLUTE_JUMP_SIZE,
+                             &return_address) ||
         return_address != target_address + patch_size) {
       return false;
     }
@@ -465,7 +455,6 @@ static bool write_embedded_trampoline(uint8_t *bridge, size_t blob_size,
                                       const uint8_t *local_symbol,
                                       const uint8_t *original,
                                       size_t original_size,
-                                      uintptr_t remote_bridge_address,
                                       uintptr_t return_address) {
   size_t offset = 0;
   if (!original || original_size == 0 ||
@@ -476,9 +465,8 @@ static bool write_embedded_trampoline(uint8_t *bridge, size_t blob_size,
   }
   memset(bridge + offset, 0x90, TRAMPOLINE_SIZE);
   memcpy(bridge + offset, original, original_size);
-  return build_relative_jump(bridge + offset + original_size,
-                             remote_bridge_address + offset + original_size,
-                             return_address);
+  build_absolute_jump(bridge + offset + original_size, return_address);
+  return true;
 }
 
 static bool set_bridge_pointer(uint8_t *bridge, size_t blob_size,
@@ -534,7 +522,6 @@ static bool populate_bridge(const shellcore_hooks_state_t *hooks,
   if (!write_embedded_trampoline(
           bridge, hooks->bridge_size, sm_shellcore_bridge_launch_trampoline,
           hooks->hooks[0].original, hooks->hooks[0].original_size,
-          hooks->bridge_address,
           hooks->remote.targets[SM_SHELLCORE_TARGET_LAUNCH_APP] +
               hooks->hooks[0].original_size)) {
     return false;
@@ -551,7 +538,6 @@ static bool populate_bridge(const shellcore_hooks_state_t *hooks,
     if (!write_embedded_trampoline(
             bridge, hooks->bridge_size, sm_shellcore_bridge_install_all_trampoline,
             hooks->hooks[2].original, hooks->hooks[2].original_size,
-            hooks->bridge_address,
             hooks->remote.targets[SM_SHELLCORE_TARGET_INSTALL_ALL] +
                 hooks->hooks[2].original_size)) {
       return false;
@@ -565,6 +551,55 @@ static bool populate_bridge(const shellcore_hooks_state_t *hooks,
   if (!resolve_bridge_imports(hooks->remote.pid, bridge, hooks->bridge_size))
     return false;
 
+  return true;
+}
+
+#define BRIDGE_DESCRIPTOR_MAGIC UINT64_C(0x334350494d534252)
+#define BRIDGE_DESCRIPTOR_SIZE 32u
+#define BRIDGE_ANCHOR_SIZE (BRIDGE_DESCRIPTOR_SIZE + ABSOLUTE_JUMP_SIZE)
+#define BRIDGE_MAPPING_SIZE 0x4000u
+
+typedef struct {
+  uint64_t magic, address, image_base, size;
+} bridge_descriptor_t;
+
+_Static_assert(sizeof(bridge_descriptor_t) == BRIDGE_DESCRIPTOR_SIZE,
+               "ShellCore bridge descriptor size mismatch");
+
+static uintptr_t sandbox_veneer(const sm_shellcore_remote_t *remote) {
+  return remote->image_base + remote->offsets->bridge_cave_offset +
+         BRIDGE_DESCRIPTOR_SIZE;
+}
+
+static bool resolve_bridge_mapping(pid_t pid,
+                                   const sm_shellcore_remote_t *remote,
+                                   size_t size, uintptr_t *address,
+                                   bool *created) {
+  uintptr_t anchor = remote->image_base + remote->offsets->bridge_cave_offset;
+  bridge_descriptor_t descriptor;
+  if (!sm_remote_process_read(pid, anchor, &descriptor, sizeof(descriptor)))
+    return false;
+  if (remote_range_is_zero(pid, anchor, BRIDGE_ANCHOR_SIZE)) {
+    *created = true;
+    if (!sm_kstuff_remote_mmap(pid, BRIDGE_MAPPING_SIZE, address))
+      return false;
+    return !(*address & (BRIDGE_MAPPING_SIZE - 1));
+  }
+  if (descriptor.magic != BRIDGE_DESCRIPTOR_MAGIC ||
+      descriptor.image_base != remote->image_base ||
+      descriptor.size != size || descriptor.address < 0x10000 ||
+      descriptor.address >= UINT64_C(0x800000000000) - BRIDGE_MAPPING_SIZE ||
+      (descriptor.address & (BRIDGE_MAPPING_SIZE - 1)))
+    return false;
+  uint8_t jump[ABSOLUTE_JUMP_SIZE];
+  build_absolute_jump(jump,
+      descriptor.address + (sm_shellcore_bridge_sandbox_hook -
+                            sm_shellcore_bridge_blob_start));
+  if (!verify_remote_bytes(pid, sandbox_veneer(remote), jump, sizeof(jump)) ||
+      !verify_remote_bytes(pid, descriptor.address, sm_shellcore_bridge_blob_start,
+                           BRIDGE_SIGNATURE_SIZE))
+    return false;
+  *address = descriptor.address;
   return true;
 }
 
@@ -595,6 +630,9 @@ static bool install_hooks_for_pid(pid_t pid) {
   bool cleanup_pending = false;
   size_t patched_count = 0;
   uintptr_t bridge_address = 0;
+  bool mapping_created = false;
+  bool mapping_published = false;
+  size_t hook_count = 0;
   shellcore_hooks_state_t hooks = {0};
   if (!sm_shellcore_remote_resolve(pid, &hooks.remote)) {
     log_debug("  [SHELLCORE] attached-process target resolution failed");
@@ -606,30 +644,38 @@ static bool install_hooks_for_pid(pid_t pid) {
     log_debug("  [SHELLCORE] bridge firmware mode changed during install");
     goto done;
   }
-  const size_t hook_count = install_hook_enabled
-                                ? SHELLCORE_MAX_HOOK_COUNT
-                                : SHELLCORE_BASE_HOOK_COUNT;
+  hook_count = install_hook_enabled ? SHELLCORE_MAX_HOOK_COUNT
+                                    : SHELLCORE_BASE_HOOK_COUNT;
   hooks.hooks[0].target = SM_SHELLCORE_TARGET_LAUNCH_APP;
   hooks.hooks[1].target = SM_SHELLCORE_TARGET_SANDBOX_READY;
   hooks.hooks[2].target = SM_SHELLCORE_TARGET_INSTALL_ALL;
 
   if (hooks.remote.offsets->bridge_cave_offset >
           UINTPTR_MAX - hooks.remote.image_base ||
-      blob_size > hooks.remote.offsets->bridge_cave_size) {
+      BRIDGE_ANCHOR_SIZE > hooks.remote.offsets->bridge_cave_size) {
     log_debug("  [SHELLCORE] cave too small: fw=%s need=0x%zx have=0x%zx",
-              hooks.remote.offsets->name, blob_size,
+              hooks.remote.offsets->name, (size_t)BRIDGE_ANCHOR_SIZE,
               hooks.remote.offsets->bridge_cave_size);
     goto done;
   }
-  bridge_address = hooks.remote.image_base +
-                   hooks.remote.offsets->bridge_cave_offset;
+  if (!resolve_bridge_mapping(pid, &hooks.remote, blob_size, &bridge_address,
+                              &mapping_created)) {
+    log_debug("  [SHELLCORE] bridge descriptor unavailable or incompatible");
+    goto done;
+  }
+  if (!sm_kstuff_remote_mlock(pid, bridge_address, BRIDGE_MAPPING_SIZE)) {
+    log_debug("  [SHELLCORE] could not retain allocated bridge page");
+    goto done;
+  }
 
   /* Physical writes bypass the VM's copy-on-write/dirty accounting on 8.40+.
-   * Retain the cave and every patched text page before changing any bytes.
-   * Keep them for ShellCore's lifetime: shutdown retains an inactive cave that
-   * a thread may still be executing, and replacements reuse the same pages. */
+   * Retain the anchor and every patched text page before changing any bytes.
+   * Keep them for ShellCore's lifetime: shutdown retains an inactive bridge
+   * that a thread may still be executing, and replacements reuse it. */
   if ((kernel_get_fw_version() >> 16) > 0x0820u) {
-    bool wired = sm_kstuff_remote_mlock(pid, bridge_address, blob_size);
+    bool wired = sm_kstuff_remote_mlock(
+        pid, hooks.remote.image_base + hooks.remote.offsets->bridge_cave_offset,
+        BRIDGE_ANCHOR_SIZE);
     for (size_t i = 0; wired && i < hook_count; ++i) {
       sm_shellcore_target_t target = hooks.hooks[i].target;
       wired = sm_kstuff_remote_mlock(pid, hooks.remote.targets[target],
@@ -639,7 +685,7 @@ static bool install_hooks_for_pid(pid_t pid) {
       log_debug("  [SHELLCORE] could not retain hook pages; hooks not installed");
       goto done;
     }
-    log_debug("  [SHELLCORE] hook pages retained: cave=1 sites=%zu", hook_count);
+    log_debug("  [SHELLCORE] hook pages retained: anchor=1 sites=%zu", hook_count);
   }
 
   if (!recover_stale_bridge(pid, &hooks.remote, hooks.hooks, hook_count,
@@ -716,10 +762,33 @@ static bool install_hooks_for_pid(pid_t pid) {
   if (!populate_bridge(&hooks, bridge))
     goto done;
 
-  if (!sm_remote_process_write(pid, bridge_address, bridge, blob_size) ||
-      !verify_remote_bytes(pid, bridge_address, bridge, blob_size)) {
-    log_debug("  [SHELLCORE] failed to populate bridge cave");
+  bool copied = mapping_created
+      ? kernel_proc_copyin(pid, bridge, bridge_address, blob_size) == 0
+      : sm_remote_process_write(pid, bridge_address, bridge, blob_size);
+  if (!copied || !verify_remote_bytes(pid, bridge_address, bridge, blob_size) ||
+      !sm_kstuff_remote_mprotect(pid, bridge_address, BRIDGE_MAPPING_SIZE,
+                                PROT_READ | PROT_EXEC)) {
+    log_debug("  [SHELLCORE] failed to populate bridge mapping");
     goto done;
+  }
+
+  if (mapping_created) {
+    uint8_t anchor[BRIDGE_ANCHOR_SIZE];
+    bridge_descriptor_t descriptor = {BRIDGE_DESCRIPTOR_MAGIC, bridge_address,
+                                      hooks.remote.image_base, blob_size};
+    memcpy(anchor, &descriptor, sizeof(descriptor));
+    build_absolute_jump(anchor + BRIDGE_DESCRIPTOR_SIZE,
+        bridge_address + (sm_shellcore_bridge_sandbox_hook -
+                          sm_shellcore_bridge_blob_start));
+    uintptr_t location = hooks.remote.image_base +
+                         hooks.remote.offsets->bridge_cave_offset;
+    if (!restore_remote_bytes(pid, location, anchor, sizeof(anchor))) {
+      const uint8_t zero[BRIDGE_ANCHOR_SIZE] = {0};
+      cleanup_pending = !restore_remote_bytes(pid, location, zero, sizeof(zero));
+      mapping_published = cleanup_pending;
+      goto done;
+    }
+    mapping_published = true;
   }
 
   uintptr_t launch_hook =
@@ -736,9 +805,7 @@ static bool install_hooks_for_pid(pid_t pid) {
                          launch_hook_record->original_size)) {
     goto done;
   }
-  uintptr_t sandbox_hook =
-      bridge_address + (uintptr_t)(sm_shellcore_bridge_sandbox_hook -
-                                   sm_shellcore_bridge_blob_start);
+  uintptr_t sandbox_hook = sandbox_veneer(&hooks.remote);
   patched_count = SHELLCORE_BASE_HOOK_COUNT;
   if (!patch_remote_call(pid, sandbox_target, sandbox_hook)) {
     goto done;
@@ -759,6 +826,10 @@ done:
   if (!ok && patched_count != 0) {
     cleanup_pending =
         !cleanup_remote_bridge(pid, &hooks.remote, hooks.hooks, patched_count);
+  }
+  if (!ok && mapping_created && !mapping_published && bridge_address != 0 &&
+      !sm_kstuff_remote_munmap(pid, bridge_address, BRIDGE_MAPPING_SIZE)) {
+    log_debug("  [SHELLCORE] failed to release unpublished bridge mapping");
   }
   bool detached = false;
   if (!cleanup_pending)
@@ -802,7 +873,8 @@ done:
 static bool hook_installed(pid_t pid, size_t index) {
   const shellcore_hook_record_t *hook = &g_hooks.hooks[index];
   uintptr_t target = g_hooks.remote.targets[hook->target];
-  uintptr_t destination = remote_bridge_symbol(k_hook_symbols[index]);
+  uintptr_t destination = hook->target == SM_SHELLCORE_TARGET_SANDBOX_READY
+      ? sandbox_veneer(&g_hooks.remote) : remote_bridge_symbol(k_hook_symbols[index]);
   return hook->target == SM_SHELLCORE_TARGET_SANDBOX_READY
              ? remote_call_matches(pid, target, destination)
              : remote_hook_matches(pid, target, destination,
@@ -889,7 +961,8 @@ static bool refresh_hooks_locked(void) {
     if (hook_installed(pid, i))
       continue;
     uintptr_t target = remote.targets[hook->target];
-    uintptr_t destination = remote_bridge_symbol(k_hook_symbols[i]);
+    uintptr_t destination = hook->target == SM_SHELLCORE_TARGET_SANDBOX_READY
+        ? sandbox_veneer(&g_hooks.remote) : remote_bridge_symbol(k_hook_symbols[i]);
     attempted[i] = true;
     bool patched = hook->target == SM_SHELLCORE_TARGET_SANDBOX_READY
                        ? patch_remote_call(pid, target, destination)

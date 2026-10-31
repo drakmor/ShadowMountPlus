@@ -1,10 +1,13 @@
 #include "host_platform.h"
 #include "sm_shellcore_remote.h"
 
-static uint8_t memory[16384];
+static uint8_t memory[65536];
 static pid_t current_pid = 100;
 static bool attached, stopping, attach_fail, detach_fail, resolve_fail;
 static int writes, attaches, dispatches;
+static bool bridge_locked;
+static bool fail_bridge_lock;
+static int bridge_unmaps;
 static uintptr_t fail_address;
 static int fail_writes;
 static bool fail_disarm;
@@ -22,6 +25,8 @@ static uintptr_t kernel_dynlib_dlsym(pid_t pid, uint32_t handle,
   return 0x900000;
 }
 static int sceAppInstUtilAppInstallAll(const char *path);
+int kernel_proc_copyin(pid_t pid, const void *source, uintptr_t address,
+                       size_t size);
 static int mock_kill(pid_t pid, int sig) {
   assert(pid == current_pid && sig == 0);
   return 0;
@@ -85,7 +90,35 @@ bool sm_remote_process_read(pid_t pid, uintptr_t address, void *buffer,
 }
 bool sm_kstuff_remote_mlock(pid_t pid, uintptr_t address, size_t size) {
   (void)memory_offset(pid, address, size);
+  if (address == 0x108000 && size == 0x4000) {
+    if (fail_bridge_lock)
+      return false;
+    bridge_locked = true;
+  }
   return true;
+}
+bool sm_kstuff_remote_mmap(pid_t pid, size_t size, uintptr_t *address) {
+  assert(pid == current_pid && attached && size == 0x4000 && address);
+  *address = 0x108000;
+  return true;
+}
+bool sm_kstuff_remote_munmap(pid_t pid, uintptr_t address, size_t size) {
+  assert(pid == current_pid && attached && address == 0x108000 && size == 0x4000);
+  bridge_unmaps++;
+  return true;
+}
+bool sm_kstuff_remote_mprotect(pid_t pid, uintptr_t address, size_t size,
+                               int protection) {
+  assert(pid == current_pid && address == 0x108000 && size == 0x4000);
+  assert(protection == (PROT_READ | PROT_EXEC));
+  assert(bridge_locked);
+  return true;
+}
+int kernel_proc_copyin(pid_t pid, const void *source, uintptr_t address,
+                       size_t size) {
+  assert(pid == current_pid && attached && bridge_locked);
+  memcpy(memory + memory_offset(pid, address, size), source, size);
+  return 0;
 }
 bool sm_remote_process_write(pid_t pid, uintptr_t address, const void *buffer,
                              size_t size) {
@@ -132,6 +165,9 @@ static void reset(void) {
   memset(&g_hooks, 0, sizeof(g_hooks));
   attached = stopping = attach_fail = detach_fail = resolve_fail = false;
   fail_disarm = false;
+  fail_bridge_lock = false;
+  bridge_unmaps = 0;
+  bridge_locked = false;
   current_pid = 100;
   fail_address = 0;
   fail_writes = writes = attaches = dispatches = 0;
@@ -298,5 +334,17 @@ int main(void) {
   sm_shellcore_hooks_stop();
   assert(g_hooks.status == SHELLCORE_HOOKS_EMPTY);
   assert(sm_shellcore_hooks_refresh() && g_hooks.status == SHELLCORE_HOOKS_EMPTY);
+  // An unpinned mapping is never published or used as executable bridge code.
+  memset(&g_hooks, 0, sizeof(g_hooks));
+  prepare_process();
+  bridge_locked = false;
+  fail_bridge_lock = true;
+  assert(!sm_shellcore_hooks_start() && !attached);
+  assert(bridge_unmaps == 1 && !bridge_locked);
+  assert(remote_range_is_zero(current_pid, 0x100000 + offsets.bridge_cave_offset,
+                              BRIDGE_ANCHOR_SIZE));
+  fail_bridge_lock = false;
+  assert(sm_shellcore_hooks_start() && bridge_locked);
+  sm_shellcore_hooks_stop();
   puts("ShellCore hooks: loss, safe repair, rollback, replacement and shutdown passed");
 }

@@ -16,4 +16,7 @@ bool sm_kstuff_remote_mprotect(pid_t pid, uintptr_t address, size_t size,
 // Retain another process's mapped pages through kstuff's remote-syscall service.
 bool sm_kstuff_remote_mlock(pid_t pid, uintptr_t address, size_t size);
 
+bool sm_kstuff_remote_mmap(pid_t pid, size_t size, uintptr_t *address);
+bool sm_kstuff_remote_munmap(pid_t pid, uintptr_t address, size_t size);
+
 #endif

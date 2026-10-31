@@ -27,13 +27,16 @@ def main():
         source = re.sub(r'_Static_assert\((?:SOL_SOCKET|SO_SNDTIMEO|SO_RCVTIMEO)\b.*?;',
                         '', source, flags=re.DOTALL)
         (build / 'shellcore_hooks.inc').write_text(source, encoding='utf-8')
-        for test in ('remote', 'hooks'):
+        for test in ('remote', 'hooks', 'bridge'):
+            if args.sanitize and test == 'bridge':
+                # ASan cannot reliably instrument calls into a copied RX blob.
+                continue
             binary = build / test
             command = shlex.split(os.environ.get('CC', 'cc')) + [
                 '-std=gnu11', '-O1', '-g', '-pthread', '-Wall', '-Wextra', '-Werror',
                 '-I' + str(root / 'include'), '-I' + str(build),
                 str(root / ('tests/test_shellcore_' + test + '.c')), '-o', str(binary)]
-            if test == 'hooks':
+            if test in ('hooks', 'bridge'):
                 command += [str(root / 'src/sm_shellcore_bridge.S'), '-Wl,-z,noexecstack']
             if args.sanitize:
                 command += ['-fsanitize=address,undefined', '-fno-omit-frame-pointer']
