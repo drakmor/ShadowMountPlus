@@ -981,6 +981,12 @@
               <div class="panel"><h3 data-i18n="consoleNetwork">Network</h3>
                 <label class="check console-setting"><span data-i18n="allowLanAccess">Allow local network access</span><input id="allowLanAccess" form="settingsForm" type="checkbox" role="switch"></label>
               </div>
+              <div class="panel console-wide"><h3 data-i18n="ps4Profiles">PS4 game profiles</h3>
+                <label class="check console-setting"><span data-i18n="ps4ForcePro">Force PS4 Pro mode</span><input id="ps4ForcePro" form="settingsForm" type="checkbox" role="switch"></label>
+                <label class="check console-setting"><span data-i18n="ps4CpuBoost">CPU boost (Pstate 0)</span><input id="ps4CpuBoost" form="settingsForm" type="checkbox" role="switch"></label>
+                <label class="check console-setting"><span data-i18n="ps4GpuBoost">GPU boost (2200 MHz)</span><input id="ps4GpuBoost" form="settingsForm" type="checkbox" role="switch"></label>
+                <p class="subtle console-hint" data-i18n="fakelibNextLaunch">Changes apply on the next game launch.</p>
+              </div>
               <div class="panel console-wide"><h3 data-i18n="consoleCooling">Cooling</h3>
                 <label class="setting-row console-setting"><span data-i18n="fanTemperature">Fan target</span><select id="fanTemperature" form="settingsForm"><option value="0" data-i18n="systemControlled">System controlled</option></select></label>
               </div>
@@ -1238,7 +1244,7 @@
         games: [],
         selected: null,
         detailRequest: null,
-        fakelibSaving: false,
+        gamePolicySaving: false,
         activity: [],
         consoleClock: null,
         busy: false,
@@ -1413,6 +1419,19 @@
           autoRemoveMissingGames: "Remove unavailable app icons",
           autoRemoveDelay: "Removal delay (seconds)",
           allowLanAccess: "Allow local network access",
+          ps4ProfileOn: "Enabled",
+          ps4ProfileOff: "Disabled",
+          ps4Profiles: "PS4 game profiles",
+          ps4ForcePro: "Force PS4 Pro mode",
+          ps4CpuBoost: "CPU boost (Pstate 0)",
+          ps4GpuBoost: "GPU boost (2200 MHz)",
+          ps4Memory: "8 GB memory mode",
+          ps4Video120: "120 Hz output",
+          ps4GpuClock: "GPU boost",
+          ps4GpuClockDefault: "Default",
+          ps4VideoHint: "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits.",
+          ps4MemoryHint: "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.",
+          ps4MemoryUnavailable: "8 GB memory mode is unavailable on this firmware.",
           fanTemperature: "Fan target",
           systemControlled: "System controlled",
           saveSettings: "Save settings",
@@ -1718,6 +1737,19 @@
           autoRemoveMissingGames: "Удалять иконки недоступных приложений",
           autoRemoveDelay: "Задержка удаления (секунды)",
           allowLanAccess: "Разрешить доступ из локальной сети",
+          ps4ProfileOn: "Включено",
+          ps4ProfileOff: "Выключено",
+          ps4Profiles: "Профили игр PS4",
+          ps4ForcePro: "Принудительный режим PS4 Pro",
+          ps4CpuBoost: "Буст CPU (Pstate 0)",
+          ps4GpuBoost: "Буст GPU (2200 МГц)",
+          ps4Memory: "Режим памяти 8 ГБ",
+          ps4Video120: "Вывод 120 Гц",
+          ps4GpuClock: "Буст GPU",
+          ps4GpuClockDefault: "По умолчанию",
+          ps4VideoHint: "120 Гц требует поддержки дисплея и не снимает лимит FPS. 2350 МГц задаёт целевую частоту GPU; фактическая зависит от приставки и её ограничений.",
+          ps4MemoryHint: "Со следующего запуска. Требуется Pro-режим; игре также может понадобиться патч памяти. Закройте игру перед запуском другой игры или остановкой SM+.",
+          ps4MemoryUnavailable: "Режим 8 ГБ недоступен на этой прошивке.",
           fanTemperature: "Целевая температура",
           systemControlled: "Управление системой",
           saveSettings: "Сохранить настройки",
@@ -1920,7 +1952,7 @@
         if (values.length !== translationKeys.length) throw new Error(`Invalid translation catalog: ${locale}`);
         translations[locale] = Object.fromEntries(translationKeys.map((key, index) => [key, values[index]]));
       }
-      const extendedTranslationKeys = ["changeFakelibMode","consoleTools","consoleSections","consoleOverview","consoleSystem","consoleSources","consoleLogs","consoleOverviewHint","consoleSystemHint","consoleNotifications","consoleNetwork","consoleCooling","consoleLibraryHint","consoleMounting","consoleMaintenance","consoleSourcesHint","consoleIndividualGames","consoleLogsHint","consoleKernelHint","consoleRecordLog","consoleSaveHint","back","navigate","controllerHint","confirmation","continueAction","chooseUnpackDestination","deleteAfterUnpack","selectAction","saveDataSize","downloadSize","saveDataSizeHint","detailSizes","sourceSize","patchSize","dlcSize","systemSize","sourceSizeHint","patchSizeHint","dlcSizeHint","systemSizeHint","copyToClipboard","logCopied","clipboardUnavailable","remountConfirm","chooseCopyDestination","noOtherDestinations","chooseMoveDestination","destinationDescription","customDestination","useDestination","totalSize","packagesTab","packagesHint","packageDevices","packageRemote","packageRemoteHint","packageChooseFile","packageStream","packageEmpty","packageInvalid","packageInstall","packageConfirm","packageBase","packageTruncated","operationInstall","jobInstalling","packageStreamLost","packageInstallError","packageBaseMissing","packageInstalled","packageUpdate","packageNoBase","packageEnqueue","packageQueued","packageQueue","packageQueueStart","packageQueueClear","packageQueueFull","packageReplace","browse","installBackport","replaceBackport","backport","unknownGame","deleteBackport","deleteBackportConfirm","baseVersionBeforePatch","noDlc","deletePatch","deleteDlc","deletePatchConfirm","deleteDlcConfirm","patchBadge","smbConnections","smbDescription","smbName","smbPath","smbUsername","smbPassword","smbActive","smbClearPassword","smbPasswordHint","smbSave","smbCheck","smbNew","smbEdit","smbRemove","smbRemoveConfirm","smbChecked","smbSavedOk","sourceDeleteConfirm","sourceDeleteBlocked","newFolder","folderName","createFolder","folderCreated","invalidFolderName","smbInvalid","smbEnabled","smbDisabled","smbEmpty","ejectStorage","ejectStorageConfirm","ejectedStorage","usbDiskBusy","usbEjectUnconfirmed","usbEjectFailed","usbMountChanged","usbMountBusy","usbPartitionBusy","usbImageBusy","smbGuestAccess","smbReadOnly","remainingTime"];
+      const extendedTranslationKeys = ["changeFakelibMode","consoleTools","consoleSections","consoleOverview","consoleSystem","consoleSources","consoleLogs","consoleOverviewHint","consoleSystemHint","consoleNotifications","consoleNetwork","consoleCooling","consoleLibraryHint","consoleMounting","consoleMaintenance","consoleSourcesHint","consoleIndividualGames","consoleLogsHint","consoleKernelHint","consoleRecordLog","consoleSaveHint","back","navigate","controllerHint","confirmation","continueAction","chooseUnpackDestination","deleteAfterUnpack","selectAction","saveDataSize","downloadSize","saveDataSizeHint","detailSizes","sourceSize","patchSize","dlcSize","systemSize","sourceSizeHint","patchSizeHint","dlcSizeHint","systemSizeHint","copyToClipboard","logCopied","clipboardUnavailable","remountConfirm","chooseCopyDestination","noOtherDestinations","chooseMoveDestination","destinationDescription","customDestination","useDestination","totalSize","packagesTab","packagesHint","packageDevices","packageRemote","packageRemoteHint","packageChooseFile","packageStream","packageEmpty","packageInvalid","packageInstall","packageConfirm","packageBase","packageTruncated","operationInstall","jobInstalling","packageStreamLost","packageInstallError","packageBaseMissing","packageInstalled","packageUpdate","packageNoBase","packageEnqueue","packageQueued","packageQueue","packageQueueStart","packageQueueClear","packageQueueFull","packageReplace","browse","installBackport","replaceBackport","backport","unknownGame","deleteBackport","deleteBackportConfirm","baseVersionBeforePatch","noDlc","deletePatch","deleteDlc","deletePatchConfirm","deleteDlcConfirm","patchBadge","smbConnections","smbDescription","smbName","smbPath","smbUsername","smbPassword","smbActive","smbClearPassword","smbPasswordHint","smbSave","smbCheck","smbNew","smbEdit","smbRemove","smbRemoveConfirm","smbChecked","smbSavedOk","sourceDeleteConfirm","sourceDeleteBlocked","newFolder","folderName","createFolder","folderCreated","invalidFolderName","smbInvalid","smbEnabled","smbDisabled","smbEmpty","ejectStorage","ejectStorageConfirm","ejectedStorage","usbDiskBusy","usbEjectUnconfirmed","usbEjectFailed","usbMountChanged","usbMountBusy","usbPartitionBusy","usbImageBusy","smbGuestAccess","smbReadOnly","remainingTime","ps4Profiles","ps4ForcePro","ps4CpuBoost","ps4GpuBoost","ps4ProfileOn","ps4ProfileOff","ps4Memory","ps4MemoryHint","ps4MemoryUnavailable","ps4Video120","ps4GpuClock","ps4GpuClockDefault","ps4VideoHint"];
       const extendedTranslationCatalogs = {
         "ja-JP": [
           "選択してモードを切り替え", "本体", "本体の設定項目", "概要",
@@ -1964,7 +1996,7 @@
           "ゲストアクセス",
           "読み取り専用",
           "残り時間"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "fr-FR": [
           "Sélectionner pour changer de mode", "Console", "Rubriques de la console", "Vue d’ensemble",
           "Système", "Sources", "Journaux", "Espace disponible sur la console et les lecteurs connectés",
@@ -2007,7 +2039,7 @@
           "Accès invité",
           "Lecture seule",
           "Temps restant"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "es-ES": [
           "Selecciona para cambiar de modo", "Consola", "Secciones de la consola", "Resumen",
           "Sistema", "Orígenes", "Registros", "Espacio disponible en la consola y las unidades conectadas",
@@ -2050,7 +2082,7 @@
           "Acceso de invitado",
           "Solo lectura",
           "Tiempo restante"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "de-DE": [
           "Auswählen, um den Modus zu wechseln", "Konsole", "Konsolenbereiche", "Übersicht",
           "System", "Quellen", "Protokolle", "Freier Speicher auf der Konsole und angeschlossenen Laufwerken",
@@ -2093,7 +2125,7 @@
           "Gastzugriff",
           "Nur lesen",
           "Verbleibend"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "it-IT": [
           "Seleziona per cambiare modalità", "Console", "Sezioni della console", "Panoramica",
           "Sistema", "Origini", "Registri", "Spazio disponibile sulla console e sulle unità collegate",
@@ -2136,7 +2168,7 @@
           "Accesso ospite",
           "Sola lettura",
           "Tempo rimanente"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "nl-NL": [
           "Selecteer om van modus te wisselen", "Console", "Consoleonderdelen", "Overzicht",
           "Systeem", "Bronnen", "Logboeken", "Vrije ruimte op de console en aangesloten schijven",
@@ -2179,7 +2211,7 @@
           "Gasttoegang",
           "Alleen-lezen",
           "Resterend"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "pt-PT": [
           "Selecionar para mudar de modo", "Consola", "Secções da consola", "Visão geral",
           "Sistema", "Origens", "Registos", "Espaço disponível na consola e nas unidades ligadas",
@@ -2222,7 +2254,7 @@
           "Acesso de convidado",
           "Só de leitura",
           "Tempo restante"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "ko-KR": [
           "선택하여 모드 전환", "콘솔", "콘솔 메뉴", "개요",
           "시스템", "소스", "로그", "콘솔 및 연결된 드라이브의 여유 공간",
@@ -2265,7 +2297,7 @@
           "게스트 액세스",
           "읽기 전용",
           "남은 시간"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "zh-TW": [
           "選取以切換模式", "主機", "主機選單", "概覽",
           "系統", "來源", "記錄", "主機與已連接磁碟的可用空間",
@@ -2308,7 +2340,7 @@
           "訪客存取",
           "唯讀",
           "剩餘時間"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "zh-CN": [
           "选择以切换模式", "主机", "主机菜单", "概览",
           "系统", "来源", "日志", "主机和已连接磁盘的可用空间",
@@ -2351,7 +2383,7 @@
           "访客访问",
           "只读",
           "剩余时间"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "fi-FI": [
           "Vaihda tilaa valitsemalla", "Konsoli", "Konsolin osiot", "Yleiskatsaus",
           "Järjestelmä", "Lähteet", "Lokit", "Konsolin ja liitettyjen asemien vapaa tila",
@@ -2394,7 +2426,7 @@
           "Vieraskäyttö",
           "Vain luku",
           "Aikaa jäljellä"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "sv-SE": [
           "Välj för att byta läge", "Konsol", "Konsolavsnitt", "Översikt",
           "System", "Källor", "Loggar", "Ledigt utrymme på konsolen och anslutna enheter",
@@ -2437,7 +2469,7 @@
           "Gäståtkomst",
           "Skrivskyddad",
           "Tid kvar"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "da-DK": [
           "Vælg for at skifte tilstand", "Konsol", "Konsolafsnit", "Oversigt",
           "System", "Kilder", "Logfiler", "Ledig plads på konsollen og tilsluttede drev",
@@ -2480,7 +2512,7 @@
           "Gæsteadgang",
           "Skrivebeskyttet",
           "Tid tilbage"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "no-NO": [
           "Velg for å bytte modus", "Konsoll", "Konsollseksjoner", "Oversikt",
           "System", "Kilder", "Logger", "Ledig plass på konsollen og tilkoblede stasjoner",
@@ -2523,7 +2555,7 @@
           "Gjestetilgang",
           "Skrivebeskyttet",
           "Tid igjen"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "pl-PL": [
           "Wybierz, aby zmienić tryb", "Konsola", "Sekcje konsoli", "Przegląd",
           "System", "Źródła", "Dzienniki", "Wolne miejsce na konsoli i podłączonych dyskach",
@@ -2566,7 +2598,7 @@
           "Dostęp gościa",
           "Tylko do odczytu",
           "Pozostało"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "pt-BR": [
           "Selecione para alternar o modo", "Console", "Seções do console", "Visão geral",
           "Sistema", "Origens", "Logs", "Espaço disponível no console e nas unidades conectadas",
@@ -2609,7 +2641,7 @@
           "Acesso de convidado",
           "Somente leitura",
           "Tempo restante"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "tr-TR": [
           "Mod değiştirmek için seçin", "Konsol", "Konsol bölümleri", "Genel bakış",
           "Sistem", "Kaynaklar", "Günlükler", "Konsolda ve bağlı sürücülerde kullanılabilir alan",
@@ -2652,7 +2684,7 @@
           "Misafir erişimi",
           "Salt okunur",
           "Kalan süre"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "ar-SA": [
           "اختر لتغيير الوضع", "الجهاز", "أقسام الجهاز", "نظرة عامة",
           "النظام", "المصادر", "السجلات", "المساحة المتاحة على الجهاز ومحركات الأقراص المتصلة",
@@ -2695,7 +2727,7 @@
           "وصول الضيف",
           "للقراءة فقط",
           "الوقت المتبقي"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "cs-CZ": [
           "Vyberte pro změnu režimu", "Konzole", "Sekce konzole", "Přehled",
           "Systém", "Zdroje", "Protokoly", "Volné místo na konzoli a připojených discích",
@@ -2738,7 +2770,7 @@
           "Přístup hosta",
           "Pouze pro čtení",
           "Zbývá"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "hu-HU": [
           "Válaszd ki a mód váltásához", "Konzol", "Konzol szakaszai", "Áttekintés",
           "Rendszer", "Források", "Naplók", "Szabad hely a konzolon és a csatlakoztatott meghajtókon",
@@ -2781,7 +2813,7 @@
           "Vendéghozzáférés",
           "Csak olvasható",
           "Hátralévő idő"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "el-GR": [
           "Επιλέξτε για αλλαγή λειτουργίας", "Κονσόλα", "Ενότητες κονσόλας", "Επισκόπηση",
           "Σύστημα", "Πηγές", "Αρχεία καταγραφής", "Διαθέσιμος χώρος στην κονσόλα και στις συνδεδεμένες μονάδες",
@@ -2824,7 +2856,7 @@
           "Πρόσβαση επισκέπτη",
           "Μόνο για ανάγνωση",
           "Χρόνος που απομένει"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "ro-RO": [
           "Selectează pentru a schimba modul", "Consolă", "Secțiunile consolei", "Prezentare generală",
           "Sistem", "Surse", "Jurnale", "Spațiu disponibil pe consolă și pe unitățile conectate",
@@ -2867,7 +2899,7 @@
           "Acces pentru oaspeți",
           "Doar citire",
           "Timp rămas"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "th-TH": [
           "เลือกเพื่อเปลี่ยนโหมด", "คอนโซล", "ส่วนต่าง ๆ ของคอนโซล", "ภาพรวม",
           "ระบบ", "แหล่งที่มา", "บันทึก", "พื้นที่ว่างบนคอนโซลและไดรฟ์ที่เชื่อมต่อ",
@@ -2910,7 +2942,7 @@
           "การเข้าถึงแบบผู้เยี่ยมชม",
           "อ่านอย่างเดียว",
           "เวลาที่เหลือ"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "vi-VN": [
           "Chọn để chuyển chế độ", "Máy chơi game", "Các mục của máy chơi game", "Tổng quan",
           "Hệ thống", "Nguồn", "Nhật ký", "Dung lượng trống trên máy và các ổ đĩa được kết nối",
@@ -2953,7 +2985,7 @@
           "Truy cập khách",
           "Chỉ đọc",
           "Thời gian còn lại"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "id-ID": [
           "Pilih untuk mengganti mode", "Konsol", "Bagian konsol", "Ringkasan",
           "Sistem", "Sumber", "Log", "Ruang kosong di konsol dan drive yang terhubung",
@@ -2996,7 +3028,7 @@
           "Akses tamu",
           "Hanya baca",
           "Waktu tersisa"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
         "uk-UA": [
           "Натисніть, щоб змінити режим", "Приставка", "Розділи приставки", "Огляд",
           "Система", "Джерела", "Журнали", "Вільне місце на приставці та підключених накопичувачах",
@@ -3039,7 +3071,7 @@
           "Гостьовий доступ",
           "Лише читання",
           "Залишилося"
-        ],
+        , "PS4 game profiles", "Force PS4 Pro mode", "CPU boost (Pstate 0)", "GPU boost (2200 MHz)", "Enabled", "Disabled", "8 GB memory mode", "For the next launch. Requires Pro mode; the game may also need a memory patch. Close this game before starting another game or stopping SM+.", "8 GB memory mode is unavailable on this firmware.", "120 Hz output", "GPU boost", "Default", "120 Hz requires display support and does not unlock FPS. 2350 MHz forces the GPU target; actual frequency depends on the console and its limits."],
       };
       for (const [locale, values] of Object.entries(extendedTranslationCatalogs)) {
         if (values.length !== extendedTranslationKeys.length) throw new Error(`Invalid extended translation catalog: ${locale}`);
@@ -3957,6 +3989,9 @@
           const settings = await api("/settings");
           $("debugEnabled").checked = Boolean(settings.debug);
           $("quietMode").checked = Boolean(settings.quiet_mode);
+          $("ps4ForcePro").checked = Boolean(settings.ps4_force_pro);
+          $("ps4CpuBoost").checked = Boolean(settings.ps4_cpu_boost);
+          $("ps4GpuBoost").checked = Boolean(settings.ps4_gpu_boost);
           $("updateEmulators").checked = Boolean(settings.update_emulators);
           $("fakelibDefaultMode").value = settings.fakelib_default_mode || "full";
           $("autoUpdateAmpr").checked = Boolean(settings.auto_update_ampr);
@@ -4009,6 +4044,9 @@
           await api("/settings/update", {
             debug: $("debugEnabled").checked,
             quiet_mode: $("quietMode").checked,
+            ps4_force_pro: $("ps4ForcePro").checked,
+            ps4_cpu_boost: $("ps4CpuBoost").checked,
+            ps4_gpu_boost: $("ps4GpuBoost").checked,
             update_emulators: $("updateEmulators").checked,
             fakelib_default_mode: $("fakelibDefaultMode").value,
             auto_update_ampr: $("autoUpdateAmpr").checked,
@@ -4362,6 +4400,44 @@
         detailRow(grid, t("installed"), game.install_time);
         detailRow(grid, t("lastLaunch"), game.last_access_time);
         content.append(sizes, installedContentFor(game), grid);
+        if (game.can_configure_ps4_profile) {
+          const policy = node("section", "fakelib-controls ps4-profile-controls");
+          policy.append(node("h3", "subtle", t("ps4Profiles")));
+          for (const [field, label] of [["pro", "ps4ForcePro"], ["cpu", "ps4CpuBoost"], ["gpu", "ps4GpuClock"], ["memory", "ps4Memory"], ["video_120hz", "ps4Video120"]]) {
+            const modes = field === "gpu" ? ["default", "2200", "2350", "off"] : field === "memory" && game.ps4_memory_supported === false ? ["default", "off"] : ["default", "on", "off"];
+            let mode = game.ps4_profile?.[field] || "default";
+            if (field === "gpu") {
+              if (game.ps4_profile?.gpu_clock === "2350") mode = "2350";
+              else if (mode === "on") mode = "2200";
+            }
+            const enabled = game.ps4_profile_default?.[field]
+              ? field === "gpu" ? "2200 MHz" : t("ps4ProfileOn")
+              : t("ps4ProfileOff");
+            const value = mode === "default" ? t("fakelibDefault", { mode: enabled })
+              : field === "gpu" && mode !== "off" ? `${mode} MHz`
+              : t(mode === "on" ? "ps4ProfileOn" : "ps4ProfileOff");
+            const button = actionButton(`${t(label)}: ${value}`, () => {
+              const settings = { pro: "default", cpu: "default", gpu: "default", memory: "default", video_120hz: "default", gpu_clock: "default", ...game.ps4_profile };
+              const next = modes[(modes.indexOf(mode) + 1) % modes.length];
+              if (field === "gpu") {
+                settings.gpu = next === "default" || next === "off" ? next : "on";
+                settings.gpu_clock = next === "2350" ? "2350" : "default";
+              } else settings[field] = next;
+              if (settings.memory === "on" && settings.pro === "off") {
+                if (field === "memory") settings.pro = "on";
+                else if (field === "pro") settings.memory = "off";
+              }
+              setGamePolicy(game, button, settings, "ps4-profile");
+            }, `ps4-profile-${field}`);
+            button.value = mode;
+            button.disabled = Boolean(state.gamePolicySaving);
+            policy.append(button);
+          }
+          policy.append(node("p", "subtle fakelib-hint", t("fakelibNextLaunch")));
+          policy.append(node("p", "subtle fakelib-hint", t("ps4VideoHint")));
+          policy.append(node("p", "subtle fakelib-hint", t(game.ps4_memory_supported === false ? "ps4MemoryUnavailable" : "ps4MemoryHint")));
+          sidebar.append(policy);
+        }
         if (game.can_toggle_fakelib) {
           const policy = node("section", "fakelib-controls");
           policy.append(node("h3", "subtle", t("fakelibMode")));
@@ -4370,15 +4446,15 @@
           const modeKeys = { default: "fakelibDefault", full: "fakelibFull", emulators: "fakelibEmulators", disabled: "fakelibDisabled" };
           const defaultModeKey = modeKeys[game.fakelib_default_mode || "full"];
           const modeButton = actionButton(t(modeKeys[mode], { mode: t(defaultModeKey) }), () =>
-            setGameFakelib(game, modeButton, { mode: modes[(modes.indexOf(mode) + 1) % modes.length] }), "fakelib-mode");
+            setGamePolicy(game, modeButton, { mode: modes[(modes.indexOf(mode) + 1) % modes.length] }), "fakelib-mode");
           modeButton.value = mode;
           modeButton.title = t("changeFakelibMode");
           modeButton.setAttribute("aria-label", `${t("fakelibMode")}: ${modeButton.textContent}. ${t("changeFakelibMode")}`);
-          const ignore = actionButton("", () => setGameFakelib(game, ignore, { ignore_global_fakelib: !game.ignore_global_fakelib }), "fakelib-switch");
+          const ignore = actionButton("", () => setGamePolicy(game, ignore, { ignore_global_fakelib: !game.ignore_global_fakelib }), "fakelib-switch");
           ignore.setAttribute("role", "switch");
           ignore.setAttribute("aria-checked", String(Boolean(game.ignore_global_fakelib)));
           ignore.append(node("span", "switch-label", t("ignoreGlobalFakelib")), node("span", "switch-track"));
-          for (const control of [modeButton, ignore]) control.disabled = Boolean(state.fakelibSaving);
+          for (const control of [modeButton, ignore]) control.disabled = Boolean(state.gamePolicySaving);
           policy.append(modeButton, ignore, node("p", "subtle fakelib-hint", t("fakelibNextLaunch")));
           if (game.fakelib_enabled && !game.fakelib_effective_enabled) {
             policy.append(node("p", "subtle fakelib-hint", t("fakelibGloballyDisabled")));
@@ -4723,15 +4799,21 @@
         }
       }
 
-      async function setGameFakelib(game, trigger, setting) {
-        if (state.fakelibSaving) return;
+      async function setGamePolicy(game, trigger, setting, kind = "fakelib") {
+        if (state.gamePolicySaving) return;
         const controls = trigger.closest(".fakelib-controls").querySelectorAll("button");
         const focusedIndex = Array.from(controls).indexOf(document.activeElement);
-        state.fakelibSaving = true;
+        state.gamePolicySaving = true;
         controls.forEach(control => { control.disabled = true; });
         try {
-          const result = await api("/games/fakelib", { title_id: game.title_id, ...setting });
-          const policy = {
+          const result = await api(`/games/${kind}`, { title_id: game.title_id, ...setting });
+          const policy = kind === "ps4-profile" ? {
+            ps4_profile: result.ps4_profile,
+            ps4_profile_effective: result.ps4_profile_effective,
+            ps4_profile_default: result.ps4_profile_default,
+            ps4_memory_supported: result.ps4_memory_supported,
+            ps4_memory_status: result.ps4_memory_status
+          } : {
             fakelib_mode: result.fakelib_mode,
             fakelib_mode_override: result.fakelib_mode_override,
             fakelib_default_mode: result.fakelib_default_mode,
@@ -4744,7 +4826,7 @@
             if (listed.title_id === game.title_id) Object.assign(listed, policy);
           }
           if (state.selected?.title_id === game.title_id) Object.assign(state.selected, policy);
-          const message = t("fakelibSaved", { title: game.title_id });
+          const message = kind === "ps4-profile" ? t("settingsSaved") : t("fakelibSaved", { title: game.title_id });
           logActivity(message);
           toast(message);
         } catch (error) {
@@ -4752,12 +4834,13 @@
           toast(errorMessage(error), true);
         } finally {
           const restoreFocus = focusedIndex >= 0 && (document.activeElement === document.body || Array.from(controls).includes(document.activeElement));
-          state.fakelibSaving = false;
+          state.gamePolicySaving = false;
           controls.forEach(control => { control.disabled = false; });
           if (state.selected && !$("modal").hidden) {
             renderDetails(state.selected);
             if (restoreFocus && state.selected.title_id === game.title_id) {
-              focusControl($("detailSidebar").querySelectorAll(".fakelib-controls button")[focusedIndex]);
+              const selector = kind === "ps4-profile" ? ".ps4-profile-controls button" : ".fakelib-controls:not(.ps4-profile-controls) button";
+              focusControl($("detailSidebar").querySelectorAll(selector)[focusedIndex]);
             }
           }
         }
