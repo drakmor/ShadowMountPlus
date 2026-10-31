@@ -106,6 +106,7 @@ typedef enum {
 typedef struct {
   shellcore_hooks_status_t status;
   bool enabled;
+  bool attached;
   sm_shellcore_remote_t remote;
   uintptr_t bridge_address;
   size_t bridge_size;
@@ -759,14 +760,17 @@ done:
     cleanup_pending =
         !cleanup_remote_bridge(pid, &hooks.remote, hooks.hooks, patched_count);
   }
-  bool detached = sm_remote_process_detach(pid);
-  if (!detached) {
+  bool detached = false;
+  if (!cleanup_pending)
+    detached = sm_remote_process_detach(pid);
+  if (!detached && !cleanup_pending) {
     log_debug("  [SHELLCORE] failed to detach from pid=%ld", (long)pid);
     if (ok) {
       cleanup_pending = !cleanup_remote_bridge(
           pid, &hooks.remote, hooks.hooks, hook_count);
     }
-    (void)sm_remote_process_detach(pid);
+    if (!cleanup_pending)
+      detached = sm_remote_process_detach(pid);
     ok = false;
   }
   if (ok) {
@@ -781,13 +785,16 @@ done:
               (unsigned long)bridge_address, blob_size,
               (unsigned long)launch_trampoline,
               install_hook_enabled ? 1 : 0);
-  } else if (cleanup_pending) {
+  } else if (cleanup_pending || !detached) {
+    hooks.attached = !detached;
+    hooks.remote.pid = pid;
     hooks.bridge_address = bridge_address;
     hooks.bridge_size = blob_size;
     hooks.hook_count = patched_count;
     hooks.status = SHELLCORE_HOOKS_ROLLBACK_PENDING;
     g_hooks = hooks;
-    log_debug("  [SHELLCORE] retaining bridge state for shutdown cleanup");
+    log_debug("  [SHELLCORE] retaining bridge state for shutdown cleanup; "
+              "stopped=%d", hooks.attached ? 1 : 0);
   }
   return ok;
 }
@@ -907,9 +914,12 @@ done:
       }
     }
   }
-  if (!sm_remote_process_detach(pid)) {
+  if (g_hooks.status == SHELLCORE_HOOKS_ROLLBACK_PENDING) {
+    // A failed rollback may have left executable bytes partially written.
+    g_hooks.attached = true;
+  } else if (!sm_remote_process_detach(pid)) {
     g_hooks.status = SHELLCORE_HOOKS_ROLLBACK_PENDING;
-    (void)sm_remote_process_detach(pid);
+    g_hooks.attached = !sm_remote_process_detach(pid);
     ok = false;
   }
   if (ok) {
@@ -947,11 +957,9 @@ bool sm_shellcore_hooks_start(void) {
   return ok;
 }
 
-void sm_shellcore_hooks_stop(void) {
-  pthread_mutex_lock(&g_install_mutex);
+static void stop_bridge_locked(void) {
   g_hooks.enabled = false;
   if (g_hooks.status == SHELLCORE_HOOKS_EMPTY) {
-    pthread_mutex_unlock(&g_install_mutex);
     return;
   }
 
@@ -961,35 +969,40 @@ void sm_shellcore_hooks_stop(void) {
     log_debug("  [SHELLCORE] stale hook state dropped: old pid=%ld current=%ld",
               (long)pid, (long)current_pid);
     memset(&g_hooks, 0, sizeof(g_hooks));
-    pthread_mutex_unlock(&g_install_mutex);
     return;
   }
-  if (!sm_remote_process_attach(pid)) {
+  if (!g_hooks.attached && !sm_remote_process_attach(pid)) {
     if (kill(pid, 0) != 0 && errno == ESRCH)
       memset(&g_hooks, 0, sizeof(g_hooks));
     else
       log_debug("  [SHELLCORE] failed to attach for hook cleanup: pid=%ld",
                 (long)pid);
-    pthread_mutex_unlock(&g_install_mutex);
+    return;
+  }
+
+  g_hooks.attached = true;
+  if (g_hooks.hook_count == 0) {
+    if (sm_remote_process_detach(pid))
+      memset(&g_hooks, 0, sizeof(g_hooks));
     return;
   }
 
   sm_shellcore_remote_t current_remote;
   if (!sm_shellcore_remote_resolve(pid, &current_remote)) {
     log_debug("  [SHELLCORE] cleanup target validation failed; state retained");
-    (void)sm_remote_process_detach(pid);
-    pthread_mutex_unlock(&g_install_mutex);
+    if (g_hooks.status != SHELLCORE_HOOKS_ROLLBACK_PENDING)
+      g_hooks.attached = !sm_remote_process_detach(pid);
     return;
   }
   if (current_remote.image_base != g_hooks.remote.image_base) {
     log_debug("  [SHELLCORE] stale hook image detected during cleanup");
-    (void)sm_remote_process_detach(pid);
-    memset(&g_hooks, 0, sizeof(g_hooks));
-    pthread_mutex_unlock(&g_install_mutex);
+    if (sm_remote_process_detach(pid))
+      memset(&g_hooks, 0, sizeof(g_hooks));
     return;
   }
 
   bool restored = true;
+  bool rollback_failed = false;
   bool found_installed_hook = false;
   for (size_t i = 0; i < g_hooks.hook_count; ++i) {
     shellcore_hook_record_t *hook = &g_hooks.hooks[i];
@@ -999,6 +1012,7 @@ void sm_shellcore_hooks_stop(void) {
       if (!restore_remote_bytes(pid, target_address, hook->original,
                                 hook->original_size)) {
         restored = false;
+        rollback_failed = true;
       }
       continue;
     }
@@ -1007,20 +1021,31 @@ void sm_shellcore_hooks_stop(void) {
       if (!restore_remote_bytes(pid, target_address, hook->original,
                                 hook->original_size)) {
         restored = false;
+        rollback_failed = true;
       }
     } else if (!verify_remote_bytes(pid, target_address, hook->original,
                                     hook->original_size)) {
       restored = false;
     }
   }
-  if (!sm_remote_process_detach(pid)) {
+  if (rollback_failed) {
+    g_hooks.status = SHELLCORE_HOOKS_ROLLBACK_PENDING;
+    log_debug("  [SHELLCORE] rollback failed; ShellCore kept stopped for "
+              "shutdown recovery or reboot");
+    return;
+  }
+  g_hooks.attached = !sm_remote_process_detach(pid);
+  if (g_hooks.attached) {
     log_debug("  [SHELLCORE] failed to detach after hook cleanup: pid=%ld",
               (long)pid);
-    (void)sm_remote_process_detach(pid);
+    g_hooks.attached = !sm_remote_process_detach(pid);
+  }
+  if (g_hooks.attached) {
+    g_hooks.status = SHELLCORE_HOOKS_ROLLBACK_PENDING;
+    return;
   }
   if (!restored) {
     log_debug("  [SHELLCORE] hook cleanup incomplete; cave bridge retained");
-    pthread_mutex_unlock(&g_install_mutex);
     return;
   }
   if (!found_installed_hook) {
@@ -1033,6 +1058,11 @@ void sm_shellcore_hooks_stop(void) {
               (unsigned long)g_hooks.bridge_address, g_hooks.bridge_size);
   }
   memset(&g_hooks, 0, sizeof(g_hooks));
+}
+
+void sm_shellcore_hooks_stop(void) {
+  pthread_mutex_lock(&g_install_mutex);
+  stop_bridge_locked();
   pthread_mutex_unlock(&g_install_mutex);
 }
 
