@@ -27,6 +27,9 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   sm_fakelib_mode_t fakelib_default_mode);
 // Return a coherent caller-owned copy of the current runtime configuration.
 runtime_config_t runtime_config(void);
+// Hot-path flags: avoid copying the full configuration and rule tables.
+bool sm_config_debug_enabled(void);
+bool sm_config_quiet_mode(void);
 // Return the number of configured scan roots.
 int get_scan_path_count(void);
 // Copy a scan root; return false and an empty path if the index is invalid.

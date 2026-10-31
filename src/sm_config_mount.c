@@ -319,6 +319,22 @@ runtime_config_t runtime_config(void) {
   return cfg;
 }
 
+bool sm_config_debug_enabled(void) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  bool enabled = g_runtime_state.cfg.debug_enabled;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return enabled;
+}
+
+bool sm_config_quiet_mode(void) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  bool quiet = g_runtime_state.cfg.quiet_mode;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return quiet;
+}
+
 int get_scan_path_count(void) {
   ensure_runtime_config_ready();
   pthread_mutex_lock(&g_runtime_state_mutex);

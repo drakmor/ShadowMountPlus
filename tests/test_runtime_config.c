@@ -138,6 +138,17 @@ static void *reload_reader(void *unused) {
   return NULL;
 }
 
+static void test_logging_flags(void) {
+  for (unsigned mask = 0; mask < 4; ++mask) {
+    FILE *file = fopen(CONFIG_FILE, "w");
+    assert(file);
+    fprintf(file, "debug=%u\nquiet_mode=%u\n", mask & 1u, (mask >> 1) & 1u);
+    assert(fclose(file) == 0 && load_runtime_config());
+    assert(sm_config_debug_enabled() == !!(mask & 1u));
+    assert(sm_config_quiet_mode() == !!(mask & 2u));
+  }
+}
+
 int main(void) {
   char directory[] = "/tmp/shadowmount-config-test-XXXXXX";
   assert(mkdtemp(directory));
@@ -152,6 +163,7 @@ int main(void) {
   for (size_t i = 0; i < 4; i++)
     assert(pthread_join(readers[i], NULL) == 0);
 
+  test_logging_flags();
   write_config(1);
   assert(load_runtime_config());
   runtime_config_t retained = runtime_config();
