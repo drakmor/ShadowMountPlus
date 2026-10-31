@@ -4,7 +4,8 @@
 static uint8_t memory[65536];
 static pid_t current_pid = 100;
 static bool attached, stopping, attach_fail, detach_fail, resolve_fail;
-static int writes, attaches, dispatches;
+static bool profile_owns_stop;
+static int writes, attaches, dispatches, profile_syncs;
 static bool bridge_locked;
 static bool fail_bridge_lock;
 static int bridge_unmaps;
@@ -46,6 +47,19 @@ pid_t find_pid_by_name(const char *name, bool exclude_self) {
 }
 bool should_stop_requested(void) { return stopping; }
 void log_debug(const char *fmt, ...) { assert(fmt); }
+void sm_ps4_profiles_sync(pid_t pid) { assert(pid == current_pid && !attached); profile_syncs++; }
+bool sm_ps4_memory_bind_bridge(pid_t pid, uintptr_t address) {
+  assert(pid == current_pid && attached && address);
+  return true;
+}
+void sm_ps4_profiles_stop(void) {
+  assert(!g_hooks.attached); // never release a stop owned by the bridge
+  if (profile_owns_stop) {
+    assert(attached);
+    attached = false;
+    profile_owns_stop = false;
+  }
+}
 const char *sm_shellcore_target_name(sm_shellcore_target_t target) {
   assert(target < SM_SHELLCORE_TARGET_COUNT);
   return "test";
@@ -153,6 +167,12 @@ static void prepare_process(void) {
     if (i == SM_SHELLCORE_TARGET_SANDBOX_READY) {
       assert(build_relative_call(memory + offsets.targets[i].offset, address,
                                  0x100000 + offsets.sandbox_call_target_offset));
+      const uint8_t stack_args[] = {0x53, 0x41, 0x52, 0x50};
+      const uint8_t stack_cleanup[] = {0x48, 0x83, 0xc4, 0x20};
+      memcpy(memory + offsets.targets[i].offset - sizeof(stack_args),
+             stack_args, sizeof(stack_args));
+      memcpy(memory + offsets.targets[i].offset + 5,
+             stack_cleanup, sizeof(stack_cleanup));
     } else {
       memcpy(memory + offsets.targets[i].offset, k_expected_function_prologue,
              sizeof(k_expected_function_prologue));
@@ -162,7 +182,7 @@ static void prepare_process(void) {
 static void reset(void) {
   memset(&g_hooks, 0, sizeof(g_hooks));
   attached = stopping = attach_fail = detach_fail = resolve_fail = false;
-  fail_disarm = false;
+  fail_disarm = profile_owns_stop = false;
   fail_bridge_lock = false;
   bridge_unmaps = 0;
   bridge_locked = false;
@@ -208,6 +228,15 @@ int main(void) {
   for (size_t i = 0; i < 3; ++i)
     assert(hook_installed(current_pid, i));
   install();
+  // Rest-mode repair must preserve the currently armed container owner.
+  reset();
+  uint32_t memory_owner = 0x12345678;
+  uintptr_t guard = remote_bridge_symbol(sm_shellcore_bridge_memory_guard);
+  memcpy(memory + memory_offset(current_pid, guard, sizeof(memory_owner)),
+         &memory_owner, sizeof(memory_owner));
+  lose_hook(1);
+  assert(sm_shellcore_hooks_refresh() && writes == 1 && !attached);
+  assert(verify_remote_bytes(current_pid, guard, &memory_owner, sizeof(memory_owner)));
   // A failed attach is retried only by a later explicit operation.
   reset();
   lose_hook(2);
@@ -284,7 +313,9 @@ int main(void) {
   assert(!g_hooks.enabled && g_hooks.status != SHELLCORE_HOOKS_EMPTY);
   attach_fail = false;
   before = writes;
+  int previous_profiles = profile_syncs;
   assert(sm_shellcore_hooks_refresh());
+  assert(profile_syncs == previous_profiles);
   assert(!sm_shellcore_install_title_dir("PPSA12345", "/game", &result));
   assert(writes == before && dispatches == 0);
   sm_shellcore_hooks_stop();
@@ -307,6 +338,11 @@ int main(void) {
   detach_fail = false;
   sm_shellcore_hooks_stop();
   assert(g_hooks.status == SHELLCORE_HOOKS_EMPTY);
+  // Optional-hook recovery must release its own stop before bridge cleanup.
+  reset();
+  attached = profile_owns_stop = true;
+  sm_shellcore_hooks_stop();
+  assert(!attached && !profile_owns_stop && g_hooks.status == SHELLCORE_HOOKS_EMPTY);
   // Failed initial target resolution plus failed detach owns a stop even
   // though it installed no bytes. Shutdown must release it without reattach.
   memset(&g_hooks, 0, sizeof(g_hooks));

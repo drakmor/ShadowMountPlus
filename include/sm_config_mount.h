@@ -31,7 +31,22 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   uint32_t fan_target_temperature_c,
                                   const char *const *scan_paths,
                                   size_t scan_path_count,
-                                  sm_fakelib_mode_t fakelib_default_mode);
+                                  sm_fakelib_mode_t fakelib_default_mode,
+                                  bool ps4_force_pro, bool ps4_cpu_boost,
+                                  bool ps4_gpu_boost);
+bool sm_config_is_ps4_title(const char *title_id);
+const char *sm_config_ps4_setting_name(sm_ps4_setting_t setting);
+bool sm_config_parse_ps4_setting(const char *value, sm_ps4_setting_t *setting);
+sm_ps4_settings_t sm_config_title_ps4_override(const runtime_config_t *cfg,
+                                               const char *title_id);
+// Effective bits: CPU=1, GPU=2, Pro=4, 8 GB mode=8. Non-PS4 titles return zero.
+uint8_t sm_config_title_ps4_policy(const runtime_config_t *cfg, const char *title_id);
+// Resolve flags and their revision under one lock without copying the rule tables.
+uint8_t sm_config_get_title_ps4_policy(const char *title_id, uint64_t *revision);
+// Whether any global or per-title setting needs the paired PS4 hooks.
+bool sm_config_ps4_hooks_needed(uint64_t *revision);
+bool sm_config_set_title_ps4_profile(const char *title_id,
+                                    const sm_ps4_settings_t *settings);
 // Return a coherent caller-owned copy of the current runtime configuration.
 runtime_config_t runtime_config(void);
 // Hot-path flags: avoid copying the full configuration and rule tables.

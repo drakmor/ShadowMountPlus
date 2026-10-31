@@ -173,6 +173,19 @@ class ShellCore:
                 f"sceApplicationSpawn2 call at 0x{sandbox_ready:x} "
                 f"has size {sandbox_call_size}"
             )
+        # The bridge calls Spawn2 and observes outPid after it returns. Every
+        # supported retail call site passes four arguments on the stack.
+        call_file = self.virtual_to_file(sandbox_ready)
+        stack_args = self.data[call_file - 4 : call_file]
+        stack_cleanup = self.data[call_file + 5 : call_file + 9]
+        if not (stack_args[0] in range(0x50, 0x58) and
+                stack_args[1] == 0x41 and
+                stack_args[2] in range(0x50, 0x58) and
+                stack_args[3] == 0x50 and
+                stack_cleanup == b"\x48\x83\xc4\x20"):
+            raise ValueError(
+                f"unexpected Spawn2 stack ABI at 0x{sandbox_ready:x}"
+            )
 
         install_strings = self.string_addresses(b"AppInstallTitleDirMain", False)
         install_groups: dict[int, int] = {}

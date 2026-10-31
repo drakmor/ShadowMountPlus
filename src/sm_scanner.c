@@ -2293,6 +2293,8 @@ void sm_scanner_run_loop(void) {
         log_debug("  [CFG] runtime config reload failed");
       } else if (reloaded) {
         const runtime_config_t new_cfg = runtime_config();
+        if (old_cfg.ps4_revision != new_cfg.ps4_revision)
+          (void)sm_shellcore_hooks_refresh();
         bool scan_topology_changed =
             old_scan_topology_hash != scanner_config_topology_hash();
         if (!apply_runtime_config_reload_effects(kq, &old_cfg, &new_cfg,

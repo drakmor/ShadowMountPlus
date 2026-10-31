@@ -15,6 +15,7 @@
 #define SM_API_ROUTE_IMAGES "/api/v1/images"
 #define SM_API_ROUTE_GAMES "/api/v1/games"
 #define SM_API_ROUTE_GAME_INFO "/api/v1/games/info"
+#define SM_API_ROUTE_GAME_PS4_PROFILE "/api/v1/games/ps4-profile"
 #define SM_API_ROUTE_GAME_FAKELIB "/api/v1/games/fakelib"
 #define SM_API_ROUTE_GAME_ICON "/api/v1/games/icon"
 #define SM_API_ROUTE_MOUNT "/api/v1/games/mount"

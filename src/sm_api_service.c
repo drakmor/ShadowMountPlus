@@ -32,10 +32,12 @@
 #include "sm_pkg_native.h"
 #include "sm_pkg_server.h"
 #include "sm_pkg_stream.h"
+#include "sm_ps4_memory.h"
 #include "sm_runtime.h"
 #include "sm_scan.h"
 #include "sm_scanner.h"
 #include "sm_shellcore_service.h"
+#include "sm_shellcore_hooks.h"
 #include "sm_storage.h"
 #include "sm_time.h"
 #include "sm_title_state.h"
@@ -699,6 +701,8 @@ static void handle_version(struct MHD_Connection *fd) {
       !append_json_string(capabilities, "list_games") ||
       !append_json_string(capabilities, "installed_pkg_games") ||
       !append_json_string(capabilities, "game_fakelib_settings") ||
+      !append_json_string(capabilities, "game_ps4_profiles") ||
+      !append_json_string(capabilities, "game_ps4_memory") ||
       !append_json_string(capabilities, "game_info") ||
       !append_json_string(capabilities, "game_data_sizes") ||
       !append_json_string(capabilities, "pkg_install") ||
@@ -1304,6 +1308,42 @@ static bool add_game_content_summary(struct json_object *item, const char *title
       (dlc_status || add_json_int(item, "dlc_count", (int64_t)dlc_count));
 }
 
+static bool add_ps4_profile_fields(struct json_object *object,
+                                   const runtime_config_t *cfg,
+                                   const char *title_id) {
+  static const char *const keys[] = {"ps4_profile", "ps4_profile_effective", "ps4_profile_default"};
+  static const char *const fields[] = {"pro", "cpu", "gpu", "memory", "video_120hz"};
+  static const uint8_t bits[] = {4, 1, 2, 8, 32};
+  sm_ps4_settings_t setting = sm_config_title_ps4_override(cfg, title_id);
+  const sm_ps4_setting_t values[] = {setting.pro, setting.cpu, setting.gpu, setting.memory, setting.video_120hz};
+  const bool defaults[] = {cfg->ps4_force_pro || setting.memory == SM_PS4_ON,
+                            cfg->ps4_cpu_boost, cfg->ps4_gpu_boost, false, false};
+  uint8_t policy = sm_config_title_ps4_policy(cfg, title_id);
+  for (size_t kind = 0; kind < 3; ++kind) {
+    struct json_object *value = json_object_new_object();
+    if (!value)
+      return false;
+    for (size_t field = 0; field < sizeof(fields) / sizeof(fields[0]); ++field) {
+      bool ok = kind == 0
+          ? add_json_string(value, fields[field], sm_config_ps4_setting_name(values[field]))
+          : add_json_bool(value, fields[field], kind == 1 ? (policy & bits[field]) != 0 : defaults[field]);
+      if (!ok) {
+        json_object_put(value);
+        return false;
+      }
+    }
+    bool clock_ok = kind == 0
+        ? add_json_string(value, "gpu_clock", setting.gpu_mhz ? "2350" : "default")
+        : add_json_int(value, "gpu_clock", kind == 1 && (policy & 2u)
+            ? ((policy & 16u) ? 2350 : 2200) : 0);
+    if (!clock_ok) { json_object_put(value); return false; }
+    if (!add_json_value(object, keys[kind], value))
+      return false;
+  }
+  return add_json_bool(object, "ps4_memory_supported", sm_ps4_memory_supported()) &&
+         add_json_string(object, "ps4_memory_status", sm_ps4_memory_status(title_id));
+}
+
 static struct json_object *game_to_json(
     const sm_game_cache_snapshot_entry_t *source,
     const sm_app_db_game_info_t *metadata, const runtime_config_t *cfg,
@@ -1387,6 +1427,13 @@ static struct json_object *game_to_json(
                            sm_config_title_fakelib_override(cfg, source->title_id))) ||
       !add_json_bool(item, "fakelib_effective_enabled",
                      fakelib_enabled && cfg->backport_fakelib_enabled)) {
+    json_object_put(item);
+    return NULL;
+  }
+
+  bool ps4_profile = sm_config_is_ps4_title(source->title_id);
+  if (!add_json_bool(item, "can_configure_ps4_profile", ps4_profile) ||
+      (ps4_profile && !add_ps4_profile_fields(item, cfg, source->title_id))) {
     json_object_put(item);
     return NULL;
   }
@@ -2558,6 +2605,9 @@ static void handle_settings(struct MHD_Connection *connection) {
                      cfg.update_emulators_enabled) ||
       !add_json_string(response, "fakelib_default_mode",
                        sm_config_fakelib_mode_name(cfg.fakelib_default_mode)) ||
+      !add_json_bool(response, "ps4_force_pro", cfg.ps4_force_pro) ||
+      !add_json_bool(response, "ps4_cpu_boost", cfg.ps4_cpu_boost) ||
+      !add_json_bool(response, "ps4_gpu_boost", cfg.ps4_gpu_boost) ||
       !add_json_bool(response, "auto_update_ampr",
                      cfg.auto_update_ampr_enabled) ||
       !add_json_bool(response, "auto_remove_missing_games",
@@ -2582,6 +2632,9 @@ static void handle_settings_update(struct MHD_Connection *connection,
   bool quiet_mode = false;
   bool update_emulators = false;
   bool auto_update_ampr = current_cfg.auto_update_ampr_enabled;
+  bool ps4_force_pro = current_cfg.ps4_force_pro;
+  bool ps4_cpu_boost = current_cfg.ps4_cpu_boost;
+  bool ps4_gpu_boost = current_cfg.ps4_gpu_boost;
   bool auto_remove_missing_games = current_cfg.auto_remove_missing_games;
   bool allow_lan_access = false;
   sm_fakelib_mode_t fakelib_default_mode = current_cfg.fakelib_default_mode;
@@ -2598,6 +2651,12 @@ static void handle_settings_update(struct MHD_Connection *connection,
       !get_optional_bool(request, "auto_remove_missing_games",
                          current_cfg.auto_remove_missing_games,
                          &auto_remove_missing_games) ||
+      !get_optional_bool(request, "ps4_force_pro", current_cfg.ps4_force_pro,
+                         &ps4_force_pro) ||
+      !get_optional_bool(request, "ps4_cpu_boost", current_cfg.ps4_cpu_boost,
+                         &ps4_cpu_boost) ||
+      !get_optional_bool(request, "ps4_gpu_boost", current_cfg.ps4_gpu_boost,
+                         &ps4_gpu_boost) ||
       !get_required_bool(request, "allow_lan_access", &allow_lan_access) ||
       !json_object_object_get_ex(request, "fan_target_temperature",
                                  &fan_value) ||
@@ -2674,7 +2733,8 @@ static void handle_settings_update(struct MHD_Connection *connection,
                     (uint32_t)remove_delay_int,
                     allow_lan_access,
                     (uint32_t)fan_value_int, paths, path_count,
-                    fakelib_default_mode)) {
+                    fakelib_default_mode, ps4_force_pro, ps4_cpu_boost,
+                    ps4_gpu_boost)) {
     int status = valid && errno != 0 ? errno : EINVAL;
     free(paths);
     send_error_response(connection, operation_http_status(status), status,
@@ -3117,6 +3177,77 @@ static void handle_game_fakelib(struct MHD_Connection *connection,
   json_object_put(response);
 }
 
+static void handle_game_ps4_profile(struct MHD_Connection *connection,
+                                    struct json_object *request) {
+  const char *title_id = get_title_id(request);
+  sm_ps4_settings_t settings;
+  struct json_object *pro, *cpu, *gpu, *memory_value;
+  runtime_config_t cfg = runtime_config();
+  settings = sm_config_title_ps4_override(&cfg, title_id);
+  if (!sm_config_is_ps4_title(title_id) ||
+      !json_object_object_get_ex(request, "pro", &pro) || !json_object_is_type(pro, json_type_string) ||
+      !json_object_object_get_ex(request, "cpu", &cpu) || !json_object_is_type(cpu, json_type_string) ||
+      !json_object_object_get_ex(request, "gpu", &gpu) || !json_object_is_type(gpu, json_type_string) ||
+      !sm_config_parse_ps4_setting(json_object_get_string(pro), &settings.pro) ||
+      !sm_config_parse_ps4_setting(json_object_get_string(cpu), &settings.cpu) ||
+      !sm_config_parse_ps4_setting(json_object_get_string(gpu), &settings.gpu)) {
+    send_error_response(connection, 400, EINVAL,
+                        "PS4 title_id and pro/cpu/gpu values default, on or off are required");
+    return;
+  }
+  if ((json_object_object_get_ex(request, "memory", &memory_value) &&
+       (!json_object_is_type(memory_value, json_type_string) ||
+        !sm_config_parse_ps4_setting(json_object_get_string(memory_value), &settings.memory))) ||
+      (settings.memory == SM_PS4_ON &&
+       (settings.pro == SM_PS4_OFF || !sm_ps4_memory_supported()))) {
+    send_error_response(connection, 400, EINVAL,
+                        "8 GB requires a supported memory profile and Pro mode; memory accepts default, on or off");
+    return;
+  }
+  struct json_object *video, *clock;
+  if ((json_object_object_get_ex(request, "video_120hz", &video) &&
+       (!json_object_is_type(video, json_type_string) ||
+        !sm_config_parse_ps4_setting(json_object_get_string(video), &settings.video_120hz))) ||
+      (json_object_object_get_ex(request, "gpu_clock", &clock) &&
+       (!json_object_is_type(clock, json_type_string) ||
+        (strcmp(json_object_get_string(clock), "default") &&
+         strcmp(json_object_get_string(clock), "2350"))))) {
+    send_error_response(connection, 400, EINVAL,
+                        "video_120hz accepts default/on/off; gpu_clock accepts default/2350");
+    return;
+  }
+  if (json_object_object_get_ex(request, "gpu_clock", &clock))
+    settings.gpu_mhz = !strcmp(json_object_get_string(clock), "2350") ? 2350 : 0;
+  sm_game_cache_snapshot_entry_t entry;
+  if (!find_game_snapshot_by_title(title_id, &entry) &&
+      (errno != ENOENT || !find_installed_pkg_game(title_id, &entry))) {
+    int status = errno != 0 ? errno : ENOENT;
+    send_error_response(connection, operation_http_status(status), status, strerror(status));
+    return;
+  }
+  if (!sm_config_set_title_ps4_profile(title_id, &settings)) {
+    int status = errno != 0 ? errno : EIO;
+    send_error_response(connection, operation_http_status(status), status, strerror(status));
+    return;
+  }
+  // The title writer publishes this rule immediately. Prepare newly required
+  // hooks now; the launch callback selects the effective policy without ptrace.
+  (void)sm_shellcore_hooks_refresh();
+  cfg = runtime_config();
+  struct json_object *response = new_status_response(0);
+  if (!response || !add_json_string(response, "title_id", title_id) ||
+      !add_ps4_profile_fields(response, &cfg, title_id) ||
+      !add_json_bool(response, "saved", true) ||
+      !add_json_bool(response, "applies_on_next_launch", true)) {
+    if (response)
+      json_object_put(response);
+    send_out_of_memory_response(connection);
+    return;
+  }
+  (void)send_json_object(connection, 200, response);
+  json_object_put(response);
+}
+
 static void dispatch_request(struct MHD_Connection *connection,
                              const char *route,
                              struct json_object *json) {
@@ -3132,6 +3263,8 @@ static void dispatch_request(struct MHD_Connection *connection,
     handle_games(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_GAME_INFO) == 0) {
     handle_game_info(connection, json);
+  } else if (strcmp(route, SM_API_ROUTE_GAME_PS4_PROFILE) == 0) {
+    handle_game_ps4_profile(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_GAME_FAKELIB) == 0) {
     handle_game_fakelib(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_MOUNT) == 0) {

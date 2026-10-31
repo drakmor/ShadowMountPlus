@@ -23,6 +23,10 @@ bool sm_game_lifecycle_background_title(char title_id[MAX_TITLE_ID]);
 void sm_game_lifecycle_note_app_focus(uint32_t app_id);
 // Invalidate focus information used by per-game fan policy.
 void sm_game_lifecycle_invalidate_app_focus(void);
+// Queue a VideoOut loader signal without touching watcher-owned game state.
+bool sm_game_lifecycle_note_video_ready(pid_t pid);
+// Queue a PID returned by ShellCore's Spawn2 call for early VideoOut setup.
+bool sm_game_lifecycle_note_process_spawned(pid_t pid);
 // Ensure the shared watcher is running for runtime game-state tracking.
 bool refresh_game_lifecycle_watcher(void);
 

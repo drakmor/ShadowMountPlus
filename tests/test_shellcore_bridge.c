@@ -3,12 +3,15 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/time.h>
 
 #include "sm_shellcore_protocol.h"
 
 extern const uint8_t sm_shellcore_bridge_blob_start[];
 extern const uint8_t sm_shellcore_bridge_base_end[];
 extern const uint8_t sm_shellcore_bridge_exchange[];
+extern const uint8_t sm_shellcore_bridge_sandbox_hook[];
+extern const uint8_t sm_shellcore_bridge_sandbox_original[];
 extern const uint8_t sm_shellcore_bridge_socket[];
 extern const uint8_t sm_shellcore_bridge_setsockopt[];
 extern const uint8_t sm_shellcore_bridge_connect[];
@@ -21,16 +24,34 @@ static size_t written_size;
 static size_t read_size;
 static int closes;
 static int mode;
+static uint16_t expected_op = SM_SHELLCORE_REQUEST_LAUNCH_VALUE;
+static int test_spawn;
+static int spawn_called;
+static int spawn_result;
 static const uint64_t session_id = UINT64_C(0x1234567890abcdef);
 
 static int fake_socket(int domain, int type, int protocol) {
   assert(domain == 1 && type == 1 && protocol == 0);
+  if (test_spawn) {
+    expected_op = closes ? SM_SHELLCORE_REQUEST_PROCESS_SPAWNED_VALUE
+                         : SM_SHELLCORE_REQUEST_SANDBOX_READY_VALUE;
+    written_size = read_size = 0;
+  }
   return 7;
 }
 static int fake_setsockopt(int fd, int level, int option,
                            const void *value, unsigned length) {
   assert(fd == 7 && level == 0xffff && option >= 0x1005 &&
          option <= 0x1006 && value && length == 16);
+  const struct timeval *timeout = value;
+  assert(timeout->tv_sec ==
+         (expected_op == SM_SHELLCORE_REQUEST_VIDEO_READY_VALUE ||
+          expected_op == SM_SHELLCORE_REQUEST_PROCESS_SPAWNED_VALUE
+              ? 0 : expected_op == SM_SHELLCORE_REQUEST_SANDBOX_READY_VALUE
+                        ? 3 : 15));
+  assert(timeout->tv_usec == (expected_op == SM_SHELLCORE_REQUEST_VIDEO_READY_VALUE ||
+                             expected_op == SM_SHELLCORE_REQUEST_PROCESS_SPAWNED_VALUE
+                                 ? SM_SHELLCORE_BRIDGE_VIDEO_TIMEOUT_USEC : 0));
   return 0;
 }
 static int fake_connect(int fd, const void *address, unsigned length) {
@@ -58,7 +79,18 @@ static long fake_read(int fd, void *bytes, size_t size) {
     sm_shellcore_request_t request;
     memcpy(&request, written, sizeof(request));
     assert(sm_shellcore_request_valid(&request, session_id));
-    assert(strcmp(request.title_id, "PPSA12345") == 0);
+    assert(request.operation == expected_op);
+    if (expected_op == SM_SHELLCORE_REQUEST_VIDEO_READY_VALUE)
+      assert(request.title_id[0] == '\0' && request.pid == 42 &&
+             request.module_handle == 5);
+    else if (expected_op == SM_SHELLCORE_REQUEST_PROCESS_SPAWNED_VALUE)
+      assert(request.title_id[0] == '\0' && request.pid == 42 &&
+             request.app_id == 0 && request.module_handle == 0);
+    else if (expected_op == SM_SHELLCORE_REQUEST_SANDBOX_READY_VALUE)
+      assert(request.title_id[0] == '\0' && request.pid == 0 &&
+             request.app_id == 9);
+    else
+      assert(strcmp(request.title_id, "PPSA12345") == 0);
     response = sm_shellcore_response(session_id, request.operation,
                                     request.request_id, EBUSY);
     if (mode == 1)
@@ -88,6 +120,16 @@ static void patch_pointer(uint8_t *copy, const uint8_t *slot,
   memcpy(copy + offset, &pointer, sizeof(pointer));
 }
 
+static int fake_spawn(uint32_t app_id, int32_t *out_pid, uint64_t a3,
+                      uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7,
+                      uint64_t a8, uint64_t a9, uint64_t a10) {
+  assert(app_id == 9 && out_pid && a3 == 3 && a4 == 4 && a5 == 5 &&
+         a6 == 6 && a7 == 7 && a8 == 8 && a9 == 9 && a10 == 10);
+  *out_pid = 42;
+  spawn_called++;
+  return spawn_result;
+}
+
 int main(void) {
   size_t size = (size_t)(sm_shellcore_bridge_base_end -
                          sm_shellcore_bridge_blob_start);
@@ -102,18 +144,40 @@ int main(void) {
   patch_pointer(copy, sm_shellcore_bridge_read, (uintptr_t)fake_read);
   patch_pointer(copy, sm_shellcore_bridge_write, (uintptr_t)fake_write);
   patch_pointer(copy, sm_shellcore_bridge_close, (uintptr_t)fake_close);
+  patch_pointer(copy, sm_shellcore_bridge_sandbox_original,
+                (uintptr_t)fake_spawn);
   assert(mprotect(copy, 0x4000, PROT_READ | PROT_EXEC) == 0);
-  int (*exchange)(uint16_t, const char *) =
+  int (*exchange)(uint16_t, const char *, uint32_t, int32_t, uint32_t) =
       (void *)(copy + (sm_shellcore_bridge_exchange -
                        sm_shellcore_bridge_blob_start));
   for (mode = 0; mode < 4; ++mode) {
     memset(written, 0, sizeof(written));
     written_size = read_size = 0;
     closes = 0;
-    int result = exchange(SM_SHELLCORE_REQUEST_LAUNCH_VALUE, "PPSA12345");
+    int result = exchange(SM_SHELLCORE_REQUEST_LAUNCH_VALUE, "PPSA12345",
+                          0, 0, 0);
     assert(result == (mode == 0 ? EBUSY : -1));
     assert(closes == 1);
   }
+  mode = 0;
+  expected_op = SM_SHELLCORE_REQUEST_VIDEO_READY_VALUE;
+  written_size = read_size = 0;
+  closes = 0;
+  assert(exchange(expected_op, NULL, 0, 42, 5) == EBUSY);
+  assert(closes == 1);
+  test_spawn = 1;
+  closes = 0;
+  int32_t spawned_pid = 0;
+  int (*spawn)(uint32_t, int32_t *, uint64_t, uint64_t, uint64_t, uint64_t,
+               uint64_t, uint64_t, uint64_t, uint64_t) =
+      (void *)(copy + (sm_shellcore_bridge_sandbox_hook -
+                       sm_shellcore_bridge_blob_start));
+  assert(spawn(9, &spawned_pid, 3, 4, 5, 6, 7, 8, 9, 10) == 0);
+  assert(spawned_pid == 42 && spawn_called == 1 && closes == 2);
+  spawn_result = -EIO;
+  closes = 0;
+  assert(spawn(9, &spawned_pid, 3, 4, 5, 6, 7, 8, 9, 10) == -EIO);
+  assert(spawn_called == 2 && closes == 1);
   assert(munmap(copy, 0x4000) == 0);
   return 0;
 }

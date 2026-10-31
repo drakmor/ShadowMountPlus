@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-// Install/remove the fail-open SceShellCore lifecycle bridge.
+// Install/remove the lifecycle bridge. Owned memory budgets require confirmation.
 bool sm_shellcore_hooks_start(void);
 void sm_shellcore_hooks_stop(void);
 

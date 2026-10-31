@@ -29,6 +29,7 @@
 #include "sm_install.h"
 #include "sm_appdb.h"
 #include "sm_kstuff.h"
+#include "sm_ps4_memory.h"
 #include "sm_limits.h"
 #include "sm_mdbg.h"
 #include "sm_paths.h"
@@ -550,6 +551,7 @@ static void stop_conflicting_backpork(void) {
 }
 
 int main(void) {
+  bool memory_restored;
   bool restarted_previous_instance = false;
   pid_t existing_pid = 0;
 
@@ -621,17 +623,18 @@ int main(void) {
   }
   stop_conflicting_backpork();
   sm_mdbg_init();
-  if (!sm_shellcore_service_start())
+  bool shellcore_service_ready = sm_shellcore_service_start();
+  if (!shellcore_service_ready)
     log_debug("  [SHELLCORE] Unix socket service unavailable: %s",
               strerror(errno));
-  else if (!sm_shellcore_hooks_start()) {
+  if (!refresh_game_lifecycle_watcher())
+    log_debug("  [GAME] lifecycle watcher unavailable");
+  if (shellcore_service_ready && !sm_shellcore_hooks_start()) {
     log_debug("  [SHELLCORE] lifecycle hooks unavailable; stock behavior kept");
     notify_system_l10n(SM_L10N_SHELLCORE_HOOKS_FAILED);
   }
   if (startup_cfg.api_enabled)
     sm_shell_icon_install_if_missing();
-  if (!refresh_game_lifecycle_watcher())
-    log_debug("  [GAME] lifecycle watcher unavailable");
   // Publish the initial AppFocus only after its lifecycle consumer.
   if (!sm_shellcore_flags_start())
     log_debug("  [SHELLFLAG] monitor unavailable");
@@ -686,11 +689,16 @@ int main(void) {
   sm_scanner_run_loop();
 
 shutdown:
+  // Keep the existing bridge/service alive until its owned DATA is restored.
+  memory_restored = sm_ps4_memory_shutdown();
   sm_ampr_updater_stop();
   sm_api_service_stop();
   // Stop ShellCore producers before their lifecycle and mount-state owners.
   sm_shellcore_flags_stop();
-  sm_shellcore_hooks_stop();
+  if (memory_restored)
+    sm_shellcore_hooks_stop();
+  else
+    log_debug("[SHUTDOWN] guarded bridge retained after uncertain PS4 DATA; reboot required");
   stop_game_lifecycle_watcher();
   sm_shellcore_service_stop();
   sm_scanner_shutdown();

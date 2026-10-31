@@ -16,6 +16,9 @@
 #include "sm_mdbg.h"
 #include "sm_path_utils.h"
 #include "sm_pkg_backport.h"
+#include "sm_ps4_memory.h"
+#include "sm_ps4_profiles.h"
+#include "sm_ps4_video.h"
 #include "sm_runtime.h"
 #include "sm_scan.h"
 #include "sm_scanner.h"
@@ -23,7 +26,13 @@
 #include "sm_time.h"
 
 #define MAX_PENDING_GAME_EXEC_CANDIDATES 32
+#define MAX_LIFECYCLE_SIGNALS 32
 #define GAME_SANDBOX_ROOT "/mnt/sandbox"
+
+typedef struct {
+  pid_t pid;
+  bool video_ready;
+} lifecycle_signal_t;
 
 typedef struct {
   bool active;
@@ -60,6 +69,8 @@ static bool g_game_lifecycle_start_ready = false;
 static bool g_game_lifecycle_start_success = false;
 static _Atomic pid_t g_active_game_pid = 0;
 static _Atomic bool g_game_exit_handoff_pending = false;
+static lifecycle_signal_t g_lifecycle_signals[MAX_LIFECYCLE_SIGNALS];
+static size_t g_lifecycle_signal_head, g_lifecycle_signal_count;
 // One atomic snapshot for background policy and the protected live title.
 // The lifecycle thread remains the only publisher.
 #define GAME_BACKGROUND_IDLE 0u
@@ -147,6 +158,12 @@ static void publish_active_game(pid_t pid, const char *title_id,
     g_active_game_app_id = 0;
   }
   publish_active_game_pid(pid);
+  if (pid <= 0) sm_ps4_video_reset();
+  if (pid > 0) {
+    sm_ps4_memory_on_exec(pid, title_id, app_id);
+    sm_ps4_profiles_on_exec(title_id);
+    sm_ps4_video_on_exec(pid, title_id);
+  }
 }
 
 static bool consume_active_game(pid_t pid, char title_id_out[MAX_TITLE_ID],
@@ -639,6 +656,8 @@ static const struct timespec *compute_game_wait_timeout(
                                 sm_pkg_backport_next_cleanup_us());
   next_wake_us = min_nonzero_u64(
       next_wake_us, sm_shellcore_service_next_exit_cleanup_us(now_us));
+  next_wake_us = min_nonzero_u64(next_wake_us, sm_ps4_memory_next_wake_us());
+  next_wake_us = min_nonzero_u64(next_wake_us, sm_ps4_video_next_wake_us());
   if (next_wake_us == 0)
     return NULL;
 
@@ -666,6 +685,7 @@ static void poll_game_modules(int kq) {
       pid_t pid = entry->pid;
       uint64_t exec_time_us = entry->exec_time_us;
       if (is_supported_game_title_id(title_id)) {
+        sm_ps4_video_on_exec(pid, title_id);
         entry->deadline_us = exec_time_us == 0 ? 0 :
             exec_time_us + GAME_RUNTIME_PREPARE_TIMEOUT_US;
         if (entry->deadline_us == 0 || now_us == 0 ||
@@ -734,6 +754,7 @@ static void handle_game_exec(int kq, pid_t pid) {
   uint32_t app_id = 0;
   if (resolve_game_title_id(pid, title_id, &app_id)) {
     if (is_supported_game_title_id(title_id)) {
+      sm_ps4_video_on_exec(pid, title_id);
       if (dispatch_game_launch(kq, pid, now_us, title_id, app_id))
         clear_all_pending_game_launches();
       else
@@ -749,8 +770,24 @@ static void handle_game_exec(int kq, pid_t pid) {
     queue_pending_game_launch(pid, now_us, now_us);
 }
 
+static void handle_process_spawned(pid_t pid) {
+  if (pid <= 0 || !is_process_alive(pid))
+    return;
+  char title_id[MAX_TITLE_ID];
+  uint32_t app_id = 0;
+  if (resolve_game_title_id(pid, title_id, &app_id)) {
+    if (is_supported_game_title_id(title_id))
+      sm_ps4_video_on_exec(pid, title_id);
+    return;
+  }
+  uint64_t now_us = monotonic_time_us();
+  if (now_us && !find_pending_game_launch(pid))
+    queue_pending_game_launch(pid, now_us, now_us);
+}
+
 static void finalize_game_exit(pid_t pid, uint64_t exit_time_us,
                                const char *fallback_title_id) {
+  sm_ps4_memory_on_exit(pid);
   sm_mdbg_game_on_exit(pid);
   char owned_title_id[MAX_TITLE_ID] = {0};
   bool owned_exit =
@@ -1140,9 +1177,27 @@ static void *game_lifecycle_watcher_main(void *arg) {
 
     if (runtime_sleep_mode_active())
       continue;
+    for (size_t i = 0; i < MAX_LIFECYCLE_SIGNALS; ++i) {
+      pthread_mutex_lock(&g_game_lifecycle_start_mutex);
+      if (!g_lifecycle_signal_count) {
+        pthread_mutex_unlock(&g_game_lifecycle_start_mutex);
+        break;
+      }
+      lifecycle_signal_t signal = g_lifecycle_signals[g_lifecycle_signal_head];
+      g_lifecycle_signal_head =
+          (g_lifecycle_signal_head + 1) % MAX_LIFECYCLE_SIGNALS;
+      --g_lifecycle_signal_count;
+      pthread_mutex_unlock(&g_game_lifecycle_start_mutex);
+      if (signal.video_ready)
+        sm_ps4_video_note_module_ready(signal.pid);
+      else
+        handle_process_spawned(signal.pid);
+    }
     poll_game_modules(kq);
     sm_fakelib_game_poll_cleanup();
     sm_pkg_backport_poll_cleanup();
+    sm_ps4_memory_poll();
+    sm_ps4_video_poll();
     (void)sm_shellcore_service_release_exited_titles();
   }
 
@@ -1181,6 +1236,7 @@ bool start_game_lifecycle_watcher(void) {
   atomic_store(&g_app_focus_state, 0);
   clear_pending_game_exit();
   pthread_mutex_lock(&g_game_lifecycle_start_mutex);
+  g_lifecycle_signal_head = g_lifecycle_signal_count = 0;
   g_game_lifecycle_wake_pipe[0] = wake_pipe[0];
   g_game_lifecycle_wake_pipe[1] = wake_pipe[1];
   g_game_lifecycle_start_ready = false;
@@ -1212,23 +1268,61 @@ bool start_game_lifecycle_watcher(void) {
   return true;
 }
 
-void wake_game_lifecycle_watcher(void) {
-  pthread_mutex_lock(&g_game_lifecycle_start_mutex);
-  if (g_game_lifecycle_wake_pipe[1] < 0) {
-    pthread_mutex_unlock(&g_game_lifecycle_start_mutex);
-    return;
-  }
-
+static int write_game_lifecycle_wake_locked(void) {
+  if (g_game_lifecycle_wake_pipe[1] < 0)
+    return ENOENT;
   char wake = 'x';
   ssize_t written;
   do {
     written = write(g_game_lifecycle_wake_pipe[1], &wake, sizeof(wake));
   } while (written < 0 && errno == EINTR);
-  int write_errno = written < 0 ? errno : 0;
+  if (written == sizeof(wake) ||
+      (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)))
+    return 0;
+  return written < 0 ? errno : EIO;
+}
+
+void wake_game_lifecycle_watcher(void) {
+  pthread_mutex_lock(&g_game_lifecycle_start_mutex);
+  int write_errno = write_game_lifecycle_wake_locked();
   pthread_mutex_unlock(&g_game_lifecycle_start_mutex);
-  if (write_errno != 0 && write_errno != EAGAIN && write_errno != EWOULDBLOCK) {
+  if (write_errno != 0 && write_errno != ENOENT) {
     log_debug("  [GAME] wake pipe write failed: %s", strerror(write_errno));
   }
+}
+
+static bool queue_lifecycle_signal(pid_t pid, bool video_ready) {
+  if (pid <= 0)
+    return false;
+  pthread_mutex_lock(&g_game_lifecycle_start_mutex);
+  bool queued = g_game_lifecycle_wake_pipe[1] >= 0 &&
+                !atomic_load_explicit(&g_game_lifecycle_stop_requested,
+                                      memory_order_relaxed) &&
+                g_lifecycle_signal_count < MAX_LIFECYCLE_SIGNALS;
+  if (queued) {
+    size_t tail = (g_lifecycle_signal_head + g_lifecycle_signal_count) %
+                  MAX_LIFECYCLE_SIGNALS;
+    g_lifecycle_signals[tail] = (lifecycle_signal_t){pid, video_ready};
+    ++g_lifecycle_signal_count;
+  }
+  int write_errno = queued ? write_game_lifecycle_wake_locked() : 0;
+  if (write_errno) {
+    --g_lifecycle_signal_count;
+    queued = false;
+  }
+  pthread_mutex_unlock(&g_game_lifecycle_start_mutex);
+  if (write_errno)
+    log_debug("  [GAME] lifecycle signal wake failed: %s",
+              strerror(write_errno));
+  return queued;
+}
+
+bool sm_game_lifecycle_note_video_ready(pid_t pid) {
+  return queue_lifecycle_signal(pid, true);
+}
+
+bool sm_game_lifecycle_note_process_spawned(pid_t pid) {
+  return queue_lifecycle_signal(pid, false);
 }
 
 void stop_game_lifecycle_watcher(void) {
@@ -1241,11 +1335,14 @@ void stop_game_lifecycle_watcher(void) {
 
   (void)pthread_join(g_game_lifecycle_thread, NULL);
   g_game_lifecycle_thread_started = false;
-  atomic_store_explicit(&g_game_lifecycle_stop_requested, false,
-                        memory_order_relaxed);
   atomic_store(&g_app_focus_state, 0);
+  pthread_mutex_lock(&g_game_lifecycle_start_mutex);
+  g_lifecycle_signal_head = g_lifecycle_signal_count = 0;
+  pthread_mutex_unlock(&g_game_lifecycle_start_mutex);
   publish_active_game(0, NULL, 0);
   close_game_lifecycle_wake_pipe();
+  atomic_store_explicit(&g_game_lifecycle_stop_requested, false,
+                        memory_order_relaxed);
 }
 
 bool sm_game_lifecycle_has_active_game(void) {

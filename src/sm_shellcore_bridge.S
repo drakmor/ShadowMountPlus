@@ -4,6 +4,7 @@
     .text
     .p2align 4
     .global sm_shellcore_bridge_blob_start
+    .global sm_shellcore_bridge_memory_guard
     .global sm_shellcore_bridge_exchange
     .global sm_shellcore_bridge_base_end
     .global sm_shellcore_bridge_blob_end
@@ -57,35 +58,49 @@ sm_shellcore_bridge_launch_hook:
     pushq %rcx
     pushq %r8
     pushq %r9
-    subq $8, %rsp
+    pushq %rax
     movl $SM_SHELLCORE_REQUEST_LAUNCH_VALUE, %edi
+    xorl %edx, %edx
+    xorl %ecx, %ecx
+    xorl %r8d, %r8d
     /* RSI still contains title_id. */
     call sm_shellcore_bridge_exchange
-    addq $8, %rsp
+    pushq $-1                 /* negative RDX marks launch, not a uint32 appId */
+    popq %rdx                 /* title is in the preserved R12 */
+    call .Lmemory_check
+    popq %r10
     popq %r9
     popq %r8
     popq %rcx
     popq %rdx
     popq %rsi
     popq %rdi
-    subq $8, %rsp
+    testb %al, %al
+    je .Llaunch_run
+    movl $SM_SHELLCORE_MEMORY_LAUNCH_ERROR, %eax
+    jmp .Llaunch_result
+.Llaunch_run:
+    pushq %rax
     call .Llaunch_trampoline
-    addq $8, %rsp
+    popq %r10
+.Llaunch_result:
     movq %rax, %rbx
     testl %eax, %eax
     jns 1f
     movl $SM_SHELLCORE_REQUEST_LAUNCH_FAILED_VALUE, %edi
     movq %r12, %rsi
-    subq $8, %rsp
+    xorl %edx, %edx
+    xorl %ecx, %ecx
+    xorl %r8d, %r8d
+    pushq %rax
     call sm_shellcore_bridge_exchange
-    addq $8, %rsp
+    popq %r10
 1:
     movq %rbx, %rax
     popq %r12
     popq %rbx
     ret
 
-    .p2align 4
 sm_shellcore_bridge_sandbox_hook:
     pushq %rdi
     pushq %rsi
@@ -93,24 +108,72 @@ sm_shellcore_bridge_sandbox_hook:
     pushq %rcx
     pushq %r8
     pushq %r9
-    subq $8, %rsp
+    pushq %rax
+    movl %edi, %edx             /* appId of the actual Spawn2 call */
     movl $SM_SHELLCORE_REQUEST_SANDBOX_READY_VALUE, %edi
     xorl %esi, %esi
+    xorl %ecx, %ecx
+    xorl %r8d, %r8d
     call sm_shellcore_bridge_exchange
-    addq $8, %rsp
+    movl 48(%rsp), %edx        /* original Spawn2 appId, still saved */
+    call .Lmemory_check
+    popq %r10
     popq %r9
     popq %r8
     popq %rcx
     popq %rdx
     popq %rsi
     popq %rdi
+    testb %al, %al
+    jz .Lsandbox_run
+    movl $SM_SHELLCORE_MEMORY_LAUNCH_ERROR, %eax
+    ret
+.Lsandbox_run:
+    /* Spawn2 has four stack arguments on every supported retail profile.
+     * Copy them to a call frame so the original sees its exact ABI. */
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    subq $40, %rsp
+    movq %rsi, %rbx               /* outPid */
+    movq 16(%rbp), %r10
+    movq %r10, 0(%rsp)
+    movq 24(%rbp), %r10
+    movq %r10, 8(%rsp)
+    movq 32(%rbp), %r10
+    movq %r10, 16(%rsp)
+    movq 40(%rbp), %r10
+    movq %r10, 24(%rsp)
     .byte 0x49, 0xbb               /* movabsq $original, %r11 */
 sm_shellcore_bridge_sandbox_original:
     .quad 0
-    jmp *%r11
+    call *%r11
+    movl %eax, %r12d
+    testl %eax, %eax
+    js .Lsandbox_return
+    testq %rbx, %rbx
+    je .Lsandbox_return
+    movl (%rbx), %r13d
+    testl %r13d, %r13d
+    jle .Lsandbox_return
+    movl $SM_SHELLCORE_REQUEST_PROCESS_SPAWNED_VALUE, %edi
+    xorl %esi, %esi
+    xorl %edx, %edx
+    movl %r13d, %ecx
+    xorl %r8d, %r8d
+    call sm_shellcore_bridge_exchange
+.Lsandbox_return:
+    movl %r12d, %eax
+    addq $40, %rsp
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
 
-    .p2align 4
-/* int exchange(uint16_t operation, const char *title_id) */
+/* int exchange(op, title_id, app_id, pid, module_handle) */
 sm_shellcore_bridge_exchange:
     pushq %rbp
     movq %rsp, %rbp
@@ -131,6 +194,9 @@ sm_shellcore_bridge_exchange:
     movw $SM_SHELLCORE_PROTOCOL_VERSION, 4(%rax)
     movw %di, 6(%rax)
     movl $SM_SHELLCORE_REQUEST_SIZE, 36(%rax)
+    movl %edx, SM_SHELLCORE_REQUEST_APP_ID_OFFSET(%rax)
+    movl %ecx, 24(%rax)
+    movl %r8d, 32(%rax)
     testq %rsi, %rsi
     je 2f
     leaq SM_SHELLCORE_REQUEST_TITLE_OFFSET(%rax), %rdi
@@ -164,6 +230,14 @@ sm_shellcore_bridge_exchange:
     movb $SM_SHELLCORE_BRIDGE_SANDBOX_TIMEOUT_SEC, -160(%rbp)
 3:
     andq $0, -152(%rbp)
+    cmpw $SM_SHELLCORE_REQUEST_VIDEO_READY_VALUE, -106(%rbp)
+    je 4f
+    cmpw $SM_SHELLCORE_REQUEST_PROCESS_SPAWNED_VALUE, -106(%rbp)
+    jne 5f
+4:
+    movq $0, -160(%rbp)
+    movq $SM_SHELLCORE_BRIDGE_VIDEO_TIMEOUT_USEC, -152(%rbp)
+5:
     .byte 0x49, 0xbd
 sm_shellcore_bridge_setsockopt:
     .quad 0
@@ -288,6 +362,36 @@ sm_shellcore_bridge_setsockopt:
     addq $8, %rsp
     ret
 
+.Lmemory_check:
+    cmpl $SM_SHELLCORE_MEMORY_DENIED, %eax
+    je .Lmemory_deny
+    incl %eax                 /* only transport failure (-1) becomes zero */
+    jne .Lmemory_allow
+    .p2align 2
+    .byte 0x0f, 0x1f, 0x00    /* align the mutable DWORD immediate */
+    .byte 0xb8                /* atomic movl $owner_app_id, %eax; XOM */
+sm_shellcore_bridge_memory_guard:
+    .long 0                   /* 0=off, -1=pending/unknown, else exact owner */
+    testl %eax, %eax
+    je .Lmemory_allow
+    testq %rdx, %rdx
+    js .Lmemory_launch
+    incl %eax
+    je .Lmemory_deny_one
+    decl %eax
+    cmpl %edx, %eax
+    je .Lmemory_deny_one
+.Lmemory_allow:
+    xorl %eax, %eax
+    ret
+.Lmemory_launch:
+    cmpl $0x5358504e, (%r12)   /* NPXS launches remain available during sleep */
+    je .Lmemory_allow
+.Lmemory_deny_one:
+    movb $1, %al
+.Lmemory_deny:
+    ret
+
     /*
      * C replaces these reserved blocks with the copied prologue followed by
      * an absolute jump back into SceShellCore. Direct branches keep the
@@ -302,7 +406,7 @@ sm_shellcore_bridge_launch_trampoline:
      * compatibility bridge follows it in the allocated executable page.
      */
     .p2align 4
-    .org sm_shellcore_bridge_blob_start + 0x400
+    .org sm_shellcore_bridge_blob_start + 0x500
 sm_shellcore_bridge_base_end:
 
 /*
@@ -343,6 +447,6 @@ sm_shellcore_bridge_install_all_trampoline:
     .fill SM_SHELLCORE_BRIDGE_TRAMPOLINE_SIZE, 1, 0x90
 
     .p2align 3
-    .org sm_shellcore_bridge_blob_start + 0x500
+    .org sm_shellcore_bridge_blob_start + 0x600
 sm_shellcore_bridge_blob_end:
     .section .note.GNU-stack,"",@progbits

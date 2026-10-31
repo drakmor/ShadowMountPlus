@@ -59,6 +59,14 @@ version = 2
 # Delay: 1..86400 seconds.
 # remove_delay_seconds = 300
 
+[ps4]
+# Defaults for PS4 games without individual overrides. All default to off.
+# Changes apply on the next launch; off leaves the game's stock behavior intact.
+# force_pro = off
+# cpu_boost = off
+# gpu_boost = off
+# 8 GB is per-game only; see profiles.ini.example.
+
 [fakelib]
 # Sandbox fakelib overlays. Disable the standalone BackPork payload when enabled.
 # enabled = on

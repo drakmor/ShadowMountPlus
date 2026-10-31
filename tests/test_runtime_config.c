@@ -268,7 +268,7 @@ static void test_editing(void) {
   assert(get_fakelib_mode_for_title("PPSA13197") == SM_FAKELIB_FULL);
   assert(!is_global_fakelib_excluded_for_title("PPSA13197"));
   assert(sm_config_write_web_settings(false, true, true, false, false, 300,
-      true, 0, NULL, 0, SM_FAKELIB_FULL));
+      true, 0, NULL, 0, SM_FAKELIB_FULL, false, false, false));
   data = get_file(CONFIG_FILE);
   assert(strstr(data, "# keep main comment") && strstr(data, "# debug comment") &&
       strstr(data, "untouched = value # custom comment") && strstr(data, "# keep [header comment]")); free(data);
@@ -318,9 +318,12 @@ static void *settings_writer(void *arg) {
   for (unsigned i = 0; i < 8; ++i) {
     if (kind == 0)
       assert(sm_config_write_web_settings(i & 1, false, true, false, false, 300,
-          true, 0, NULL, 0, SM_FAKELIB_FULL));
-    else if (kind == 1)
+          true, 0, NULL, 0, SM_FAKELIB_FULL, false, false, false));
+    else if (kind == 1) {
       assert(sm_config_set_title_fakelib_mode("PPSA13197", SM_FAKELIB_EMULATORS));
+      assert(sm_config_set_title_ps4_profile("CUSA27145",
+          &(sm_ps4_settings_t){SM_PS4_DEFAULT, SM_PS4_ON, SM_PS4_OFF, SM_PS4_ON, SM_PS4_DEFAULT, 0}));
+    }
     else if (kind == 2)
       assert(upsert_image_sector_size_autotune("Game.exfat", 512, NULL));
     else {
@@ -346,8 +349,129 @@ static void test_concurrent_writers(void) {
   assert(get_image_sector_size_override("Game.exfat", &sector) && sector == 512);
   sm_smb_connection_t c;
   assert(!sm_config_smb_get("NAS", &c) && !strcmp(c.password, " #secret7;\\\" "));
+  uint64_t revision;
+  assert(sm_config_get_title_ps4_policy("CUSA27145", &revision) == 13);
   reset_files();
   puts("config migration: recovery, credentials, validation, manual edits and concurrent writers passed");
+}
+
+static uint8_t ps4_policy(const char *title) {
+  uint64_t revision;
+  uint8_t policy = sm_config_get_title_ps4_policy(title, &revision);
+  assert(revision == runtime_config().ps4_revision);
+  return policy;
+}
+
+static void test_ps4_settings(void) {
+  put_file(CONFIG_FILE, "[config]\nversion=2\n");
+  put_file(PROFILES_FILE, "[config]\nversion=2\n");
+  assert(load_runtime_config());
+  uint64_t default_revision;
+  assert(!sm_config_ps4_hooks_needed(&default_revision));
+  assert(ps4_policy("CUSA27145") == 0 && ps4_policy("PPSA13197") == 0);
+  put_file(CONFIG_FILE, "[config]\nversion=2\n[api]\nport=10102\n[ps4]\nforce_pro=off\n");
+  put_file(PROFILES_FILE, "[config]\nversion=2\n[game:CUSA27145] # keep game comment\n"
+      "fakelib=emulators\nignore_global_fakelib=on\nps4_pro=off # keep Pro comment\n"
+      "ps4_cpu_boost=off\nps4_gpu_boost=on\n"
+      "[image:Game.exfat]\nsector_size=512\n");
+  assert(load_runtime_config());
+  for (unsigned mask = 0; mask < 8; ++mask) {
+    char *profiles_before = get_file(PROFILES_FILE);
+    assert(sm_config_write_web_settings(false, false, true, false, false, 300,
+        false, 0, NULL, 0, SM_FAKELIB_FULL, mask & 1, mask & 2, mask & 4));
+    char *profiles_after = get_file(PROFILES_FILE);
+    assert(!strcmp(profiles_before, profiles_after)); free(profiles_before); free(profiles_after);
+    bool changed;
+    assert(reload_runtime_config_if_changed(&changed));
+    assert(runtime_config().api_port == 10102);
+    assert(ps4_policy("CUSA27145") == 2); // Explicit off overrides all globals.
+    assert(ps4_policy("CUSA00001") == ((mask & 1 ? 4 : 0) | (mask & 2 ? 1 : 0) | (mask & 4 ? 2 : 0)));
+  }
+  char *main_before = get_file(CONFIG_FILE);
+  sm_ps4_settings_t settings = {SM_PS4_DEFAULT, SM_PS4_OFF, SM_PS4_ON, SM_PS4_ON, SM_PS4_DEFAULT, 0};
+  uint64_t revision = runtime_config().ps4_revision;
+  assert(sm_config_set_title_ps4_profile("cusa27145", &settings));
+  assert(ps4_policy("CUSA27145") == 14 && runtime_config().ps4_revision == revision + 1);
+  revision = runtime_config().ps4_revision;
+  assert(sm_config_set_title_ps4_profile("CUSA27145", &settings));
+  assert(runtime_config().ps4_revision == revision);
+  assert(get_fakelib_mode_for_title("CUSA27145") == SM_FAKELIB_EMULATORS);
+  assert(is_global_fakelib_excluded_for_title("CUSA27145"));
+  char *main_after = get_file(CONFIG_FILE);
+  assert(!strcmp(main_before, main_after)); free(main_before); free(main_after);
+  char *profiles = get_file(PROFILES_FILE);
+  assert(strstr(profiles, "# keep game comment") && strstr(profiles, "# keep Pro comment") &&
+      strstr(profiles, "[image:Game.exfat]")); free(profiles);
+  settings.pro = SM_PS4_OFF;
+  assert(!sm_config_set_title_ps4_profile("CUSA27145", &settings) && errno == EINVAL);
+  settings.pro = SM_PS4_DEFAULT;
+  assert(!sm_config_set_title_ps4_profile("PPSA13197", &settings) && errno == EINVAL);
+  settings.gpu = (sm_ps4_setting_t)99;
+  assert(!sm_config_set_title_ps4_profile("CUSA27145", &settings) && errno == EINVAL);
+  assert(runtime_config().ps4_revision == revision && ps4_policy("CUSA27145") == 14);
+  settings = (sm_ps4_settings_t){0};
+  assert(sm_config_set_title_ps4_profile("CUSA27145", &settings));
+  assert(runtime_config().ps4_rule_count == 0 && ps4_policy("CUSA27145") == 7);
+  assert(is_global_fakelib_excluded_for_title("CUSA27145"));
+
+  // A fakelib save must not publish a pending manual PS4 edit without hook refresh.
+  put_file(PROFILES_FILE, "[config]\nversion=2\n[game:CUSA27145]\nps4_cpu_boost=off\n");
+  revision = runtime_config().ps4_revision;
+  assert(sm_config_set_title_fakelib_mode("CUSA27145", SM_FAKELIB_FULL));
+  assert(runtime_config().ps4_revision == revision && ps4_policy("CUSA27145") == 7);
+  bool changed;
+  assert(reload_runtime_config_if_changed(&changed) && changed);
+  assert(runtime_config().ps4_revision == revision + 1 && ps4_policy("CUSA27145") == 6);
+  // Conversely PS4 saves must leave unrelated runtime settings for the scanner.
+  put_file(PROFILES_FILE, "[config]\nversion=2\n[game:CUSA27145]\nfakelib=disabled\n");
+  settings = (sm_ps4_settings_t){SM_PS4_ON, SM_PS4_OFF, SM_PS4_OFF, SM_PS4_OFF, SM_PS4_DEFAULT, 0};
+  assert(sm_config_set_title_ps4_profile("CUSA27145", &settings));
+  assert(get_fakelib_mode_for_title("CUSA27145") == SM_FAKELIB_FULL);
+  assert(reload_runtime_config_if_changed(&changed) && changed);
+  assert(get_fakelib_mode_for_title("CUSA27145") == SM_FAKELIB_DISABLED);
+  assert(ps4_policy("CUSA27145") == 4);
+  revision = runtime_config().ps4_revision;
+  put_file(PROFILES_FILE, "[config]\nversion=2\n[game:CUSA27145]\nps4_pro=off\nps4_8gb=on\n");
+  assert(!reload_runtime_config_if_changed(&changed) && runtime_config().ps4_revision == revision);
+  assert(ps4_policy("CUSA27145") == 4);
+  put_file(PROFILES_FILE, "[config]\nversion=2\n[game:PPSA13197]\nps4_pro=on\n");
+  assert(!reload_runtime_config_if_changed(&changed));
+  // Split duplicate sections still resolve each field by its last occurrence.
+  put_file(PROFILES_FILE, "[config]\nversion=2\n[game:CUSA27145]\nps4_pro=off\nps4_8gb=on\n"
+      "[game:cusa27145]\nps4_pro=default\nps4_cpu_boost=off\nps4_gpu_boost=off\n");
+  assert(reload_runtime_config_if_changed(&changed) && changed);
+  assert(ps4_policy("CUSA27145") == 12);
+  // New options survive saves/reloads, force GPU independently, and reject invalid MHz.
+  settings = (sm_ps4_settings_t){.cpu = SM_PS4_OFF, .gpu = SM_PS4_OFF, .video_120hz = SM_PS4_ON, .gpu_mhz = 2350};
+  assert(sm_config_set_title_ps4_profile("CUSA27145", &settings));
+  assert(ps4_policy("CUSA27145") == (4 | 2 | 16 | 32));
+  assert(load_runtime_config() && ps4_policy("CUSA27145") == (4 | 2 | 16 | 32));
+  settings.gpu_mhz = 2400;
+  assert(!sm_config_set_title_ps4_profile("CUSA27145", &settings) && errno == EINVAL);
+  put_file(PROFILES_FILE, "[config]\nversion=2\n[game:CUSA27145]\nps4_gpu_clock=2351\n");
+  assert(!load_runtime_config() && ps4_policy("CUSA27145") == (4 | 2 | 16 | 32));
+  put_file(PROFILES_FILE, "[config]\nversion=2\n[game:CUSA27145]\nps4_120hz=on\n");
+  assert(load_runtime_config() && ps4_policy("CUSA27145") == (7 | 32));
+  settings = (sm_ps4_settings_t){0};
+  settings.pro = SM_PS4_ON;
+  // The 128-rule limit must reject a new entry without changing files or live state.
+  FILE *file = fopen(PROFILES_FILE, "w"); assert(file);
+  fputs("[config]\nversion=2\n", file);
+  for (unsigned i = 0; i < MAX_PS4_PROFILE_RULES; ++i)
+    fprintf(file, "[game:CUSA%05u]\nps4_pro=on\n", i);
+  assert(!fclose(file) && load_runtime_config());
+  profiles = get_file(PROFILES_FILE);
+  assert(!sm_config_set_title_ps4_profile("CUSA99999", &settings) && errno == ENOSPC);
+  char *unchanged = get_file(PROFILES_FILE); assert(!strcmp(profiles, unchanged)); free(profiles); free(unchanged);
+  assert(runtime_config().ps4_rule_count == MAX_PS4_PROFILE_RULES);
+  revision = runtime_config().ps4_revision;
+  char *valid_main = get_file(CONFIG_FILE);
+  put_file(CONFIG_FILE, "[config]\nversion=2\n[ps4]\nforce_pro=invalid\n");
+  assert(!reload_runtime_config_if_changed(&changed) && runtime_config().ps4_revision == revision);
+  put_file(CONFIG_FILE, valid_main); free(valid_main);
+  assert(load_runtime_config() && runtime_config().ps4_revision == revision);
+  reset_files();
+  puts("PS4 config v2: defaults, inheritance, 8 GB, limits and revision publication passed");
 }
 
 int main(void) {
@@ -367,6 +491,7 @@ int main(void) {
   test_editing();
   test_concurrent_writers();
   test_logging_flags();
+  test_ps4_settings();
   write_config(1);
   assert(load_runtime_config());
   runtime_config_t retained = runtime_config();

@@ -9,9 +9,12 @@
 #include "sm_limits.h"
 #include "sm_kstuff.h"
 #include "sm_log.h"
+#include "sm_ps4_profiles.h"
+#include "sm_ps4_memory.h"
 #include "sm_runtime.h"
 #include "sm_shellcore_hooks.h"
 #include "sm_shellcore_protocol_defs.h"
+#include "sm_shellcore_protocol.h"
 #include "sm_shellcore_remote.h"
 
 #define SHELLCORE_BASE_HOOK_COUNT 2u
@@ -25,6 +28,9 @@ static const uint8_t k_expected_function_prologue[] = {0x55, 0x48, 0x89, 0xe5};
 
 _Static_assert(MAX_TITLE_ID == SM_SHELLCORE_REQUEST_TITLE_ID_SIZE,
                "ShellCore bridge title id size mismatch");
+_Static_assert(offsetof(sm_shellcore_request_t, app_id) == SM_SHELLCORE_REQUEST_APP_ID_OFFSET &&
+               sizeof(sm_shellcore_request_t) == SM_SHELLCORE_REQUEST_SIZE,
+               "ShellCore app identity payload mismatch");
 _Static_assert(SM_SHELLCORE_BRIDGE_INSTALL_STRING_SIZE % sizeof(uint64_t) == 0,
                "ShellCore bridge install string alignment mismatch");
 _Static_assert(sizeof(SM_SHELLCORE_SOCKET_PATH) + 2 ==
@@ -64,6 +70,7 @@ extern const uint8_t sm_shellcore_bridge_connect[];
 extern const uint8_t sm_shellcore_bridge_read[];
 extern const uint8_t sm_shellcore_bridge_write[];
 extern const uint8_t sm_shellcore_bridge_close[];
+extern const uint8_t sm_shellcore_bridge_memory_guard[];
 
 typedef struct {
   const uint8_t *slot;
@@ -211,6 +218,19 @@ static bool patch_remote_call(pid_t pid, uintptr_t source,
          memcmp(verify, patch, sizeof(patch)) == 0;
 }
 
+static bool spawn_call_abi_matches(pid_t pid, uintptr_t callsite) {
+  const uint8_t expected_cleanup[] = {0x48, 0x83, 0xc4, 0x20};
+  uint8_t args[4], cleanup[sizeof(expected_cleanup)];
+  return callsite >= sizeof(args) &&
+         sm_remote_process_read(pid, callsite - sizeof(args), args,
+                                sizeof(args)) &&
+         sm_remote_process_read(pid, callsite + 5, cleanup,
+                                sizeof(cleanup)) &&
+         args[0] >= 0x50 && args[0] <= 0x57 && args[1] == 0x41 &&
+         args[2] >= 0x50 && args[2] <= 0x57 && args[3] == 0x50 &&
+         memcmp(cleanup, expected_cleanup, sizeof(cleanup)) == 0;
+}
+
 static bool verify_remote_bytes(pid_t pid, uintptr_t address,
                                 const void *expected, size_t size) {
   uint8_t buffer[256];
@@ -244,8 +264,8 @@ static bool remote_range_is_zero(pid_t pid, uintptr_t address, size_t size) {
   return true;
 }
 
-static bool bridge_cave_is_available(pid_t pid, uintptr_t bridge_address,
-                                     size_t bridge_size) {
+static bool bridge_mapping_is_available(pid_t pid, uintptr_t bridge_address,
+                                        size_t bridge_size) {
   if (bridge_size < BRIDGE_SIGNATURE_SIZE)
     return false;
   return remote_range_is_zero(pid, bridge_address, bridge_size) ||
@@ -688,6 +708,11 @@ static bool install_hooks_for_pid(pid_t pid) {
     log_debug("  [SHELLCORE] hook pages retained: anchor=1 sites=%zu", hook_count);
   }
 
+  // Adopt mutable ownership before recovery can replace a retained bridge.
+  if (verify_remote_bytes(pid, bridge_address, sm_shellcore_bridge_blob_start,
+                           BRIDGE_SIGNATURE_SIZE) &&
+      !sm_ps4_memory_bind_bridge(pid, bridge_address))
+    goto done;
   if (!recover_stale_bridge(pid, &hooks.remote, hooks.hooks, hook_count,
                             bridge_address, blob_size)) {
     log_debug("  [SHELLCORE] existing hook is not a recoverable bridge");
@@ -710,6 +735,7 @@ static bool install_hooks_for_pid(pid_t pid) {
           hooks.remote.offsets->sandbox_call_target_offset;
       uintptr_t decoded_target = 0;
       if (patch_size != SM_SHELLCORE_BRIDGE_RELATIVE_JUMP_SIZE ||
+          !spawn_call_abi_matches(pid, target_address) ||
           !parse_relative_call(hook->original, target_address,
                                &decoded_target) ||
           decoded_target != original_target) {
@@ -744,8 +770,8 @@ static bool install_hooks_for_pid(pid_t pid) {
     goto done;
   }
 
-  if (!bridge_cave_is_available(pid, bridge_address, blob_size)) {
-    log_debug("  [SHELLCORE] bridge cave is occupied: address=0x%lx "
+  if (!bridge_mapping_is_available(pid, bridge_address, blob_size)) {
+    log_debug("  [SHELLCORE] bridge mapping is occupied: address=0x%lx "
               "size=0x%zx",
               (unsigned long)bridge_address, blob_size);
     goto done;
@@ -818,6 +844,9 @@ static bool install_hooks_for_pid(pid_t pid) {
     }
   }
 
+  // Publish/arm the memory guard while ShellCore is still stopped.
+  if (!sm_ps4_memory_bind_bridge(pid, bridge_address))
+    goto done;
   hooks.status = SHELLCORE_HOOKS_READY;
   hooks.enabled = true;
   ok = true;
@@ -850,7 +879,7 @@ done:
         bridge_address +
         (uintptr_t)(sm_shellcore_bridge_launch_trampoline -
                     sm_shellcore_bridge_blob_start);
-    log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld cave=0x%lx+0x%zx "
+    log_debug("  [SHELLCORE] hooks installed: fw=%s pid=%ld mapping=0x%lx+0x%zx "
               "launch=1 sandbox=1 trampoline=0x%lx install=%d",
               hooks.remote.offsets->name, (long)pid,
               (unsigned long)bridge_address, blob_size,
@@ -887,8 +916,14 @@ static bool verify_installed_bridge(pid_t pid) {
       !populate_bridge(&g_hooks, bridge)) {
     return false;
   }
-  // Title/dir immediates are mutable. Code, imports, trampolines and the
-  // disarmed flag must still match the bridge installed in this process.
+  // Memory owner and title/dir immediates are mutable. Verify the remaining
+  // code, imports, trampolines and disarmed install flag byte for byte.
+  size_t guard_offset;
+  if (!bridge_symbol_offset(sm_shellcore_bridge_memory_guard, sizeof(uint32_t),
+                            g_hooks.bridge_size, &guard_offset) ||
+      !sm_remote_process_read(pid, remote_bridge_symbol(sm_shellcore_bridge_memory_guard),
+                              bridge + guard_offset, sizeof(uint32_t)))
+    return false;
   if (g_hooks.hook_count == SHELLCORE_MAX_HOOK_COUNT) {
     for (size_t i = 0; i < 2; ++i) {
       size_t title_offset, dir_offset;
@@ -912,13 +947,12 @@ static bool verify_installed_bridge(pid_t pid) {
 
 // Caller owns g_install_mutex. Restore only our own missing patches, never
 // replace the live cave or bytes installed by another payload.
-static bool refresh_hooks_locked(void) {
+static bool refresh_hooks_locked(pid_t pid) {
   if (!g_hooks.enabled ||
       (g_hooks.status != SHELLCORE_HOOKS_READY &&
        g_hooks.status != SHELLCORE_HOOKS_STALE) || should_stop_requested()) {
     return false;
   }
-  pid_t pid = find_shellcore_pid();
   if (pid <= 0)
     return false;
   if (pid != g_hooks.remote.pid) {
@@ -1006,7 +1040,14 @@ done:
 
 bool sm_shellcore_hooks_refresh(void) {
   pthread_mutex_lock(&g_install_mutex);
-  bool ok = !g_hooks.enabled || refresh_hooks_locked();
+  bool ok = true;
+  if (g_hooks.enabled) {
+    pid_t pid = find_shellcore_pid();
+    if (g_hooks.status != SHELLCORE_HOOKS_ROLLBACK_PENDING &&
+        !should_stop_requested())
+      sm_ps4_profiles_sync(pid);
+    ok = refresh_hooks_locked(pid);
+  }
   pthread_mutex_unlock(&g_install_mutex);
   return ok;
 }
@@ -1025,7 +1066,12 @@ bool sm_shellcore_hooks_start(void) {
     pthread_mutex_unlock(&g_install_mutex);
     return false;
   }
+  // Prepare policy consumers before exposing the pre-launch callback.
+  if (!should_stop_requested())
+    sm_ps4_profiles_sync(pid);
   bool ok = install_hooks_for_pid(pid);
+  // A late refresh after stop stays inert even if the bridge was unavailable.
+  g_hooks.enabled = true;
   pthread_mutex_unlock(&g_install_mutex);
   return ok;
 }
@@ -1135,7 +1181,14 @@ static void stop_bridge_locked(void) {
 
 void sm_shellcore_hooks_stop(void) {
   pthread_mutex_lock(&g_install_mutex);
+  // Release the subsystem that owns an earlier stop first. The optional
+  // hooks must not resume a bridge with unconfirmed executable writes.
+  bool defer_profiles = g_hooks.attached;
+  if (!defer_profiles)
+    sm_ps4_profiles_stop();
   stop_bridge_locked();
+  if (defer_profiles && !g_hooks.attached)
+    sm_ps4_profiles_stop();
   pthread_mutex_unlock(&g_install_mutex);
 }
 
@@ -1156,7 +1209,7 @@ bool sm_shellcore_install_title_dir(const char *title_id,
   }
 
   pthread_mutex_lock(&g_install_mutex);
-  if (!refresh_hooks_locked() ||
+  if (!refresh_hooks_locked(find_shellcore_pid()) ||
       g_hooks.hook_count < SHELLCORE_MAX_HOOK_COUNT) {
     pthread_mutex_unlock(&g_install_mutex);
     return false;

@@ -19,6 +19,10 @@
 #include "sm_paths.h"
 
 static const char *const k_default_scan_paths[] = SM_DEFAULT_SCAN_PATHS_INITIALIZER;
+static const char *const k_ps4_global_keys[] = {"force_pro", "cpu_boost", "gpu_boost"};
+static const char *const k_ps4_profile_keys[] = {
+  "ps4_pro", "ps4_cpu_boost", "ps4_gpu_boost", "ps4_8gb", "ps4_120hz"
+};
 
 typedef struct {
   char filename[MAX_PATH];
@@ -393,6 +397,90 @@ bool get_image_sector_size_override(const char *filename,
 
   pthread_mutex_unlock(&g_runtime_state_mutex);
   return false;
+}
+
+bool sm_config_is_ps4_title(const char *title_id) {
+  static const char prefixes[][5] = {"CUSA", "PLAS", "PCAS", "PCJS", "PLJS", "PLJM", "PCKS"};
+  if (!title_id || strlen(title_id) != 9 || strspn(title_id + 4, "0123456789") != 5)
+    return false;
+  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+    if (memcmp(title_id, prefixes[i], 4) == 0)
+      return true;
+  }
+  return false;
+}
+
+const char *sm_config_ps4_setting_name(sm_ps4_setting_t setting) {
+  switch (setting) {
+  case SM_PS4_DEFAULT: return "default";
+  case SM_PS4_OFF: return "off";
+  case SM_PS4_ON: return "on";
+  default: return NULL;
+  }
+}
+
+bool sm_config_parse_ps4_setting(const char *value, sm_ps4_setting_t *setting) {
+  if (!value || !setting)
+    return false;
+  for (unsigned i = SM_PS4_DEFAULT; i <= SM_PS4_ON; ++i) {
+    if (strcasecmp(value, sm_config_ps4_setting_name((sm_ps4_setting_t)i)) == 0) {
+      *setting = (sm_ps4_setting_t)i;
+      return true;
+    }
+  }
+  return false;
+}
+
+sm_ps4_settings_t sm_config_title_ps4_override(const runtime_config_t *cfg,
+                                               const char *title_id) {
+  if (cfg && sm_config_is_ps4_title(title_id)) {
+    for (uint32_t i = 0; i < cfg->ps4_rule_count; ++i) {
+      if (strcmp(cfg->ps4_rules[i].title_id, title_id) == 0)
+        return cfg->ps4_rules[i].settings;
+    }
+  }
+  return (sm_ps4_settings_t){0};
+}
+
+uint8_t sm_config_title_ps4_policy(const runtime_config_t *cfg, const char *title_id) {
+  if (!cfg || !sm_config_is_ps4_title(title_id))
+    return 0;
+  sm_ps4_settings_t settings = sm_config_title_ps4_override(cfg, title_id);
+  bool memory = settings.memory == SM_PS4_ON;
+  return ((settings.cpu == SM_PS4_ON ||
+           (settings.cpu == SM_PS4_DEFAULT && cfg->ps4_cpu_boost)) ? 1u : 0u) |
+         ((settings.gpu == SM_PS4_ON ||
+           (settings.gpu == SM_PS4_DEFAULT && cfg->ps4_gpu_boost) || settings.gpu_mhz == 2350) ? 2u : 0u) |
+         ((settings.pro == SM_PS4_ON ||
+           (settings.pro == SM_PS4_DEFAULT && (cfg->ps4_force_pro || memory))) ? 4u : 0u) |
+         (memory ? 8u : 0u) |
+         (settings.gpu_mhz == 2350 ? 16u : 0u) |
+         (settings.video_120hz == SM_PS4_ON ? 32u : 0u);
+}
+
+uint8_t sm_config_get_title_ps4_policy(const char *title_id, uint64_t *revision) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  uint8_t policy = sm_config_title_ps4_policy(&g_runtime_state.cfg, title_id);
+  *revision = g_runtime_state.cfg.ps4_revision;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return policy;
+}
+
+bool sm_config_ps4_hooks_needed(uint64_t *revision) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  const runtime_config_t *cfg = &g_runtime_state.cfg;
+  bool needed = cfg->ps4_force_pro || cfg->ps4_cpu_boost || cfg->ps4_gpu_boost;
+  for (uint32_t i = 0; !needed && i < cfg->ps4_rule_count; ++i) {
+    const sm_ps4_settings_t *settings = &cfg->ps4_rules[i].settings;
+    needed = settings->pro == SM_PS4_ON || settings->cpu == SM_PS4_ON ||
+             settings->gpu == SM_PS4_ON || settings->memory == SM_PS4_ON ||
+             settings->gpu_mhz == 2350;
+  }
+  *revision = cfg->ps4_revision;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return needed;
 }
 
 const char *sm_config_fakelib_mode_name(sm_fakelib_mode_t mode) {
@@ -788,6 +876,92 @@ static bool add_global_fakelib_exclude_rule(runtime_config_state_t *state,
   return true;
 }
 
+static bool set_title_ps4_rule(sm_ps4_rule_t *rules, uint32_t *count,
+                               const char *title_id,
+                               const sm_ps4_settings_t *settings) {
+  bool inherit = settings->pro == SM_PS4_DEFAULT &&
+                 settings->cpu == SM_PS4_DEFAULT && settings->gpu == SM_PS4_DEFAULT &&
+                 settings->memory == SM_PS4_DEFAULT &&
+                 settings->video_120hz == SM_PS4_DEFAULT && !settings->gpu_mhz;
+  for (uint32_t i = 0; i < *count; ++i) {
+    if (strcmp(rules[i].title_id, title_id) != 0)
+      continue;
+    if (inherit) {
+      --*count;
+      memmove(&rules[i], &rules[i + 1], (*count - i) * sizeof(*rules));
+      memset(&rules[*count], 0, sizeof(*rules));
+    } else {
+      rules[i].settings = *settings;
+    }
+    return true;
+  }
+  if (inherit)
+    return true;
+  if (*count >= MAX_PS4_PROFILE_RULES)
+    return false;
+  sm_ps4_rule_t *rule = &rules[(*count)++];
+  (void)strlcpy(rule->title_id, title_id, sizeof(rule->title_id));
+  rule->settings = *settings;
+  return true;
+}
+
+static bool read_ps4_settings(const sm_ini_t *main, const sm_ini_t *profiles,
+                               runtime_config_t *cfg) {
+  bool *globals[] = {&cfg->ps4_force_pro, &cfg->ps4_cpu_boost, &cfg->ps4_gpu_boost};
+  for (size_t i = 0; i < main->count; ++i) {
+    const sm_ini_line_t *line = &main->lines[i];
+    if (!line->key || strcasecmp(line->section, "ps4")) continue;
+    size_t field = 0;
+    while (field < 3 && strcasecmp(line->key, k_ps4_global_keys[field])) ++field;
+    if (field == 3) {
+      log_debug("  [CFG] unknown [ps4] setting: %s", line->key);
+      continue;
+    }
+    if (sm_ini_get(main, line->section, line->key) != line->value) continue;
+    if (!parse_bool_ini(line->value, globals[field])) {
+      log_debug("  [CFG] invalid [ps4] %s", line->key);
+      errno = EINVAL; return false;
+    }
+  }
+  for (size_t i = 0; i < profiles->count; ++i) {
+    const sm_ini_line_t *line = &profiles->lines[i];
+    if (!line->header || strncasecmp(line->section, "game:", 5)) continue;
+    sm_ps4_settings_t settings = {0};
+    sm_ps4_setting_t *fields[] = {&settings.pro, &settings.cpu, &settings.gpu, &settings.memory, &settings.video_120hz};
+    bool present = false;
+    for (size_t j = 0; j < sizeof(k_ps4_profile_keys) / sizeof(k_ps4_profile_keys[0]); ++j) {
+      const char *value = sm_ini_get(profiles, line->section, k_ps4_profile_keys[j]);
+      if (!value) continue;
+      present = true;
+      if (!sm_config_parse_ps4_setting(value, fields[j])) {
+        log_debug("  [CFG] invalid [%s] %s", line->section, k_ps4_profile_keys[j]);
+        errno = EINVAL; return false;
+      }
+    }
+    const char *clock = sm_ini_get(profiles, line->section, "ps4_gpu_clock");
+    if (clock) {
+      present = true;
+      if (!strcasecmp(clock, "2350")) settings.gpu_mhz = 2350;
+      else if (strcasecmp(clock, "default")) {
+        log_debug("  [CFG] invalid [%s] ps4_gpu_clock", line->section);
+        errno = EINVAL; return false;
+      }
+    }
+    if (!present) continue;
+    char title[MAX_TITLE_ID];
+    if (!normalize_title_id_value(line->section + 5, title) || !sm_config_is_ps4_title(title) ||
+        (settings.memory == SM_PS4_ON && settings.pro == SM_PS4_OFF)) {
+      log_debug("  [CFG] invalid PS4 profile: [%s]", line->section);
+      errno = EINVAL; return false;
+    }
+    if (!set_title_ps4_rule(cfg->ps4_rules, &cfg->ps4_rule_count, title, &settings)) {
+      log_debug("  [CFG] PS4 profile limit reached: [%s]", line->section);
+      errno = ENOSPC; return false;
+    }
+  }
+  return true;
+}
+
 static bool read_documents(sm_ini_t *main, sm_ini_t *profiles) {
   return sm_ini_read(CONFIG_FILE, main, false) && sm_ini_version(main) &&
          sm_ini_read(PROFILES_FILE, profiles, false) &&
@@ -797,7 +971,7 @@ static bool read_documents(sm_ini_t *main, sm_ini_t *profiles) {
 static bool flatten_documents(const sm_ini_t *main, const sm_ini_t *profiles, sm_ini_t *flat) {
   for (size_t i = 0; i < main->count; ++i) {
     const sm_ini_line_t *line = &main->lines[i];
-    if (!line->key || !strcasecmp(line->section, "config")) continue;
+    if (!line->key || !strcasecmp(line->section, "config") || !strcasecmp(line->section, "ps4")) continue;
     if (!strncasecmp(line->section, "smb:", 4)) {
       if (strcasecmp(line->key, "path") && strcasecmp(line->key, "username") &&
           strcasecmp(line->key, "password") && strcasecmp(line->key, "active") &&
@@ -829,6 +1003,10 @@ static bool flatten_documents(const sm_ini_t *main, const sm_ini_t *profiles, sm
       if (!normalize_title_id_value(line->section + 5, title) || !is_supported_game_title_id(title)) {
         errno = EINVAL; return false;
       }
+      bool ps4_key = !strcasecmp(line->key, "ps4_gpu_clock");
+      for (size_t j = 0; j < sizeof(k_ps4_profile_keys) / sizeof(k_ps4_profile_keys[0]); ++j)
+        if (!strcasecmp(line->key, k_ps4_profile_keys[j])) ps4_key = true;
+      if (ps4_key) continue; // Validated as one complete profile by read_ps4_settings().
       if (!strcasecmp(line->key, "fakelib")) {
         key = "fakelib_mode"; snprintf(value, sizeof(value), "%s:%s", title, line->value);
       } else if (!strcasecmp(line->key, "ignore_global_fakelib")) {
@@ -896,7 +1074,8 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
   init_runtime_config_defaults(state);
 
   sm_ini_t flat = {0};
-  if (!flatten_documents(main, profiles, &flat) ||
+  if (!read_ps4_settings(main, profiles, &state->cfg) ||
+      !flatten_documents(main, profiles, &flat) ||
       !read_smb_connections(main, state->smb, &state->smb_count)) {
     sm_ini_free(&flat);
     return CONFIG_LOAD_ERROR;
@@ -1452,6 +1631,16 @@ bool sm_config_prepare_files(void) {
   return ok;
 }
 
+static void prepare_ps4_revision(runtime_config_t *parsed,
+                                  const runtime_config_t *current) {
+  bool changed = parsed->ps4_force_pro != current->ps4_force_pro ||
+                 parsed->ps4_cpu_boost != current->ps4_cpu_boost ||
+                 parsed->ps4_gpu_boost != current->ps4_gpu_boost ||
+                 parsed->ps4_rule_count != current->ps4_rule_count ||
+                 memcmp(parsed->ps4_rules, current->ps4_rules, sizeof(parsed->ps4_rules)) != 0;
+  parsed->ps4_revision = current->ps4_revision + (changed ? 1u : 0u);
+}
+
 bool load_runtime_config(void) {
   ensure_runtime_config_ready();
   pthread_mutex_lock(&g_config_file_mutex);
@@ -1464,6 +1653,7 @@ bool load_runtime_config(void) {
   }
   bool loaded = status == CONFIG_LOAD_OK;
   pthread_mutex_lock(&g_runtime_state_mutex);
+  prepare_ps4_revision(&g_runtime_parse_state.cfg, &g_runtime_state.cfg);
   memcpy(&g_runtime_state, &g_runtime_parse_state, sizeof(g_runtime_state));
   pthread_mutex_unlock(&g_runtime_state_mutex);
   g_config_file_stamp = main_stamp;
@@ -1494,6 +1684,7 @@ bool reload_runtime_config_if_changed(bool *reloaded_out) {
   }
 
   pthread_mutex_lock(&g_runtime_state_mutex);
+  prepare_ps4_revision(&parsed->cfg, &g_runtime_state.cfg);
   bool changed = !runtime_config_states_equal(&g_runtime_state, parsed);
   if (changed)
     memcpy(&g_runtime_state, parsed, sizeof(g_runtime_state));
@@ -1509,13 +1700,16 @@ bool reload_runtime_config_if_changed(bool *reloaded_out) {
 
 // The shared file lock also owns the loader's scratch state. Reuse its
 // validators; only the modified domain is published before scanner reload.
-static bool save_document(sm_ini_t *main, sm_ini_t *profiles, bool individual, bool smb) {
+typedef enum { CONFIG_SAVE_MAIN, CONFIG_SAVE_PROFILES, CONFIG_SAVE_PS4, CONFIG_SAVE_SMB } config_save_domain_t;
+
+static bool save_document(sm_ini_t *main, sm_ini_t *profiles, config_save_domain_t domain) {
+  bool individual = domain == CONFIG_SAVE_PROFILES || domain == CONFIG_SAVE_PS4;
   bool ok = sm_ini_set(individual ? profiles : main, "config", "version", "2") &&
       parse_runtime_config_state(&g_runtime_parse_state, main, profiles, false) == CONFIG_LOAD_OK &&
       sm_ini_write(individual ? PROFILES_FILE : CONFIG_FILE, individual ? profiles : main);
-  if (ok && (individual || smb)) {
+  if (ok && domain != CONFIG_SAVE_MAIN) {
     pthread_mutex_lock(&g_runtime_state_mutex);
-    if (individual) {
+    if (domain == CONFIG_SAVE_PROFILES) {
       runtime_config_t *dst = &g_runtime_state.cfg, *src = &g_runtime_parse_state.cfg;
       dst->fakelib_rule_count = src->fakelib_rule_count;
       memcpy(dst->fakelib_rules, src->fakelib_rules, sizeof(dst->fakelib_rules));
@@ -1525,7 +1719,14 @@ static bool save_document(sm_ini_t *main, sm_ini_t *profiles, bool individual, b
       memcpy(g_runtime_state.image_mode_rules, g_runtime_parse_state.image_mode_rules,
              sizeof(g_runtime_state.image_mode_rules));
     }
-    if (smb) {
+    if (domain == CONFIG_SAVE_PS4) {
+      runtime_config_t *dst = &g_runtime_state.cfg, *src = &g_runtime_parse_state.cfg;
+      if (dst->ps4_rule_count != src->ps4_rule_count ||
+          memcmp(dst->ps4_rules, src->ps4_rules, sizeof(dst->ps4_rules))) ++dst->ps4_revision;
+      dst->ps4_rule_count = src->ps4_rule_count;
+      memcpy(dst->ps4_rules, src->ps4_rules, sizeof(dst->ps4_rules));
+    }
+    if (domain == CONFIG_SAVE_SMB) {
       g_runtime_state.smb_count = g_runtime_parse_state.smb_count;
       memcpy(g_runtime_state.smb, g_runtime_parse_state.smb, sizeof(g_runtime_state.smb));
     }
@@ -1547,7 +1748,7 @@ static bool write_title_fakelib_policy(const char *title_id, sm_fakelib_mode_t m
       : mode == SM_FAKELIB_DEFAULT ? NULL : sm_config_fakelib_mode_name(mode);
   bool ok = read_documents(&main, &profiles) &&
       sm_ini_set(&profiles, section, global_only ? "ignore_global_fakelib" : "fakelib", value) &&
-      save_document(&main, &profiles, true, false);
+      save_document(&main, &profiles, CONFIG_SAVE_PROFILES);
   int error = errno;
   sm_ini_free(&main); sm_ini_free(&profiles);
   pthread_mutex_unlock(&g_config_file_mutex);
@@ -1563,7 +1764,7 @@ bool upsert_image_sector_size_autotune(const char *filename, uint32_t sector_siz
   pthread_mutex_lock(&g_config_file_mutex);
   sm_ini_t main = {0}, profiles = {0};
   bool ok = read_documents(&main, &profiles) && sm_ini_set(&profiles, section, "sector_size", value) &&
-      save_document(&main, &profiles, true, false);
+      save_document(&main, &profiles, CONFIG_SAVE_PROFILES);
   int error = errno;
   sm_ini_free(&main); sm_ini_free(&profiles);
   pthread_mutex_unlock(&g_config_file_mutex);
@@ -1617,7 +1818,7 @@ int sm_config_smb_update(const char *previous, const sm_smb_connection_t *connec
          sm_ini_set(&main, section, "active", connection->active ? "on" : "off") &&
          sm_ini_set(&main, section, "read_only", connection->read_only ? "on" : "off");
   }
-  if (ok) ok = save_document(&main, &profiles, false, true);
+  if (ok) ok = save_document(&main, &profiles, CONFIG_SAVE_SMB);
   status = ok ? 0 : (errno ? errno : EIO);
   sm_ini_free(&main); sm_ini_free(&profiles);
   pthread_mutex_unlock(&g_config_file_mutex);
@@ -1648,7 +1849,9 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   uint32_t fan_target_temperature_c,
                                   const char *const *scan_paths,
                                   size_t scan_path_count,
-                                  sm_fakelib_mode_t fakelib_default_mode) {
+                                  sm_fakelib_mode_t fakelib_default_mode,
+                                  bool ps4_force_pro, bool ps4_cpu_boost,
+                                  bool ps4_gpu_boost) {
   if (auto_remove_missing_delay_seconds <
           MIN_AUTO_REMOVE_MISSING_DELAY_SECONDS ||
       auto_remove_missing_delay_seconds >
@@ -1701,6 +1904,9 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
   if (fan_target_temperature_c == FAN_TARGET_TEMPERATURE_SYSTEM) strlcpy(temperature, "system", sizeof(temperature));
   else snprintf(temperature, sizeof(temperature), "%u", fan_target_temperature_c);
   bool ok = read_documents(&main, &profiles) &&
+      sm_ini_set(&main, "ps4", "force_pro", ps4_force_pro ? "on" : "off") &&
+      sm_ini_set(&main, "ps4", "cpu_boost", ps4_cpu_boost ? "on" : "off") &&
+      sm_ini_set(&main, "ps4", "gpu_boost", ps4_gpu_boost ? "on" : "off") &&
       sm_ini_set(&main, "general", "debug", debug_enabled ? "on" : "off") &&
       sm_ini_set(&main, "general", "quiet_mode", quiet_mode ? "on" : "off") &&
       sm_ini_set(&main, "emulators", "update_enabled", update_emulators_enabled ? "on" : "off") &&
@@ -1713,10 +1919,36 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
       sm_ini_set(&main, "scan", "path", NULL);
   for (size_t i = 0; ok && i < normalized_count; ++i)
     ok = sm_ini_append(&main, "scan", "path", normalized_paths[i]);
-  if (ok) ok = save_document(&main, &profiles, false, false);
+  if (ok) ok = save_document(&main, &profiles, CONFIG_SAVE_MAIN);
   int error = errno;
   free(normalized_paths);
   sm_ini_free(&main); sm_ini_free(&profiles);
   pthread_mutex_unlock(&g_config_file_mutex);
   errno = error; return ok;
+}
+
+bool sm_config_set_title_ps4_profile(const char *title_id, const sm_ps4_settings_t *settings) {
+  char title[MAX_TITLE_ID], section[MAX_TITLE_ID + 8];
+  if (!settings || !normalize_title_id_value(title_id, title) || !sm_config_is_ps4_title(title) ||
+      (settings->memory == SM_PS4_ON && settings->pro == SM_PS4_OFF) ||
+      (settings->gpu_mhz && settings->gpu_mhz != 2350)) { errno = EINVAL; return false; }
+  const sm_ps4_setting_t fields[] = {settings->pro, settings->cpu, settings->gpu, settings->memory, settings->video_120hz};
+  for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
+    if (!sm_config_ps4_setting_name(fields[i])) { errno = EINVAL; return false; }
+  snprintf(section, sizeof(section), "game:%s", title);
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_config_file_mutex);
+  sm_ini_t main = {0}, profiles = {0};
+  bool ok = read_documents(&main, &profiles);
+  for (size_t i = 0; ok && i < sizeof(fields) / sizeof(fields[0]); ++i)
+    ok = sm_ini_set(&profiles, section, k_ps4_profile_keys[i],
+        fields[i] == SM_PS4_DEFAULT ? NULL : sm_config_ps4_setting_name(fields[i]));
+  if (ok) ok = sm_ini_set(&profiles, section, "ps4_gpu_clock",
+                           settings->gpu_mhz ? "2350" : NULL);
+  if (ok) ok = save_document(&main, &profiles, CONFIG_SAVE_PS4);
+  int error = errno;
+  sm_ini_free(&main); sm_ini_free(&profiles);
+  pthread_mutex_unlock(&g_config_file_mutex);
+  errno = error;
+  return ok;
 }

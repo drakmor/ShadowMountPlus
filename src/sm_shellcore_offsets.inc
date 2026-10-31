@@ -136,6 +136,14 @@
     .targets = {{.offset = 0x432630u, .patch_size = 12u}, {.offset = 0x46f9f3u, .patch_size = 5u}, {.offset = 0x226c20u, .patch_size = 12u}, {.offset = 0x225e40u, .patch_size = 12u}},
   },
   {
+    .firmware = 0x0402u,
+    .name = "4.02",
+    .bridge_cave_offset = 0x13bf990u,
+    .bridge_cave_size = 0x670u,
+    .sandbox_call_target_offset = 0x13ba040u,
+    .targets = {{.offset = 0x432630u, .patch_size = 12u}, {.offset = 0x46f9f3u, .patch_size = 5u}, {.offset = 0x226c20u, .patch_size = 12u}, {.offset = 0x225e40u, .patch_size = 12u}},
+  },
+  {
     .firmware = 0x0403u,
     .name = "4.03",
     .bridge_cave_offset = 0x13bf990u,

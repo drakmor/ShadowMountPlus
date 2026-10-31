@@ -162,6 +162,7 @@ Main sections (see the commented template for defaults and ranges):
 | `[scan]` | `depth`, repeatable `path`, `interval_seconds`, `stability_wait_seconds` |
 | `[mount]` | `mode` (`ro/rw`), `force`, `persistent_images`, `exfat_backend`, `ufs_backend`, `nested_pfs_index_cache` |
 | `[library]` | `install_all`, `remove_missing`, `remove_with_dlc`, `remove_delay_seconds` |
+| `[ps4]` | `force_pro`, `cpu_boost`, `gpu_boost` (defaults for PS4 games) |
 | `[fakelib]` | `enabled`, `default_mode`, `global_enabled`, `global_path`, `global_priority` |
 | `[emulators]` | `update_enabled`, `path`, `auto_update_ampr`, `ampr_update_url` |
 | `[fan]` | `target_temperature` (`system` or `50..91`) |
@@ -184,6 +185,27 @@ sector_size = 512
 ```
 
 Game `fakelib` accepts `default`, `full`, `emulators`, `disabled`; `ignore_global_fakelib` accepts a boolean or `default` (off). Image `mount_mode` accepts `default`, `ro`, `rw`; `sector_size` accepts `default` or a power of two from 512 to 1048576. Up to 128 explicit fakelib rules, 128 global exclusions and 128 image rules are supported. Images are matched **only by filename**, so matching names on different drives share the same profile. Paths are not valid image profile identities.
+
+PS4 overrides share the same game sections in `profiles.ini`:
+
+```ini
+[game:CUSA27145]
+ps4_pro = default
+ps4_cpu_boost = on
+ps4_gpu_boost = on
+ps4_8gb = off
+ps4_120hz = off
+ps4_gpu_clock = default
+```
+
+The switches accept `default/on/off`; individual values override `[ps4]` defaults.
+`ps4_120hz` defaults to off and requests supported 120 Hz output without unlocking FPS.
+`ps4_gpu_clock` accepts `default` or `2350`; 2350 forces the GPU target independently
+of the boost switch. Default follows GPU boost (stock or 2200 MHz target).
+8 GB is per-game only and defaults to off. Enabling it also enables Pro when
+Pro is `default`; explicit Pro `off` with 8 GB `on` is rejected. All-default
+PS4 fields may be removed without removing the game's fakelib settings.
+Changes apply at the next launch.
 
 ### Configuration migration
 

@@ -16,6 +16,21 @@ version = 2
 # ignore_global_fakelib: on/off/default (default is off).
 # [game:CUSA27145]
 # fakelib = full
+# ps4_pro = default
+# ps4_cpu_boost = on
+# ps4_gpu_boost = on
+# ps4_8gb = off
+# ps4_120hz = off
+# ps4_gpu_clock = default
+
+# PS4 switches accept default/on/off independently, up to 128 PS4 profiles.
+# default inherits [ps4] force_pro/cpu_boost/gpu_boost from config.ini.
+# ps4_8gb has no global switch: default is off. When on, it also enables Pro
+# if ps4_pro=default. Explicit ps4_pro=off with ps4_8gb=on is invalid.
+# ps4_120hz defaults to off and requires display support; it does not unlock FPS.
+# ps4_gpu_clock accepts default or 2350. Default follows GPU boost (2200 if on);
+# 2350 forces a target independently of the GPU boost switch. Actual MHz may differ.
+# These fields are accepted only for PS4 title IDs. Removing them restores defaults.
 
 # Image profiles use ONLY the filename, never the full path. Names are
 # case-insensitive; identically named images on different drives share settings.
