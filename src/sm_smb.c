@@ -1,14 +1,13 @@
 /* Copyright (C) 2025 John Törnblom
  * SMB2/3 connection setup follows ps5-payload-dev/websrv
- * src/smb.c (GPL-3.0-or-later). Named connection storage is owned here.
+ * src/smb.c (GPL-3.0-or-later). Named connection storage is owned by sm_config_mount.
  * See licenses/SMB-NOTICES.txt. */
 #include "sm_platform.h"
 #include "sm_smb.h"
 #include "sm_log.h"
-#include "sm_paths.h"
+#include "sm_config_mount.h"
 #include "sm_runtime.h"
 #include <ctype.h>
-#include <json-c/json.h>
 #include <pthread.h>
 #include <smb2/smb2.h>
 #include <smb2/libsmb2.h>
@@ -16,14 +15,6 @@
 #include <strings.h>
 #include <sys/socket.h>
 
-#ifndef SM_SMB_CONFIG_FILE
-#define SM_SMB_CONFIG_FILE LOG_DIR "/smb.json"
-#endif
-#define SMB_CONFIG_MAX (128u * 1024u)
-static sm_smb_connection_t connections[SM_SMB_CONNECTIONS_MAX];
-static size_t connection_count;
-static pthread_once_t config_once = PTHREAD_ONCE_INIT;
-static pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void sm_smb_lock(void) {
@@ -97,239 +88,29 @@ int sm_smb_validate(const sm_smb_connection_t *c) {
     return EINVAL;
   for (const unsigned char *p = (const unsigned char *)c->name; *p; ++p)
     if (*p < 32 || *p == 127 || strchr("/\\:@?#%", *p)) return EINVAL;
+  const char *credentials[] = {c->username, c->password};
+  for (size_t i = 0; i < 2; ++i)
+    for (const unsigned char *p = (const unsigned char *)credentials[i]; *p; ++p)
+      if (*p < 32 || *p == 127) return EINVAL;
   sm_smb_address_t address;
   return base_address(c, &address);
 }
 
-static bool json_string(struct json_object *o, const char *key, char *out, size_t size) {
-  struct json_object *v;
-  if (!json_object_object_get_ex(o, key, &v) || !json_object_is_type(v, json_type_string))
-    return false;
-  const char *value = json_object_get_string(v);
-  if (strlen(value) != (size_t)json_object_get_string_len(v) || strlen(value) >= size) return false;
-  strlcpy(out, value, size);
-  return true;
-}
-
-static void load_connections(void) {
-  int fd = open(SM_SMB_CONFIG_FILE, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
-  if (fd < 0) {
-    if (errno != ENOENT) log_debug("  [SMB] settings unavailable: status=%d", errno);
-    return;
-  }
-  struct stat st;
-  bool valid =
-      fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_size <= SMB_CONFIG_MAX;
-  char *data = valid ? calloc(1, (size_t)st.st_size + 1) : NULL;
-  size_t used = 0;
-  while (data && used < (size_t)st.st_size) {
-    ssize_t count = read(fd, data + used, (size_t)st.st_size - used);
-    if (count < 0 && errno == EINTR) continue;
-    if (count <= 0) {
-      valid = false;
-      break;
-    }
-    used += (size_t)count;
-  }
-  close(fd);
-  struct json_object *array = NULL;
-  struct json_tokener *tokener = data && valid ? json_tokener_new() : NULL;
-  if (tokener) {
-    json_tokener_set_flags(tokener, JSON_TOKENER_STRICT | JSON_TOKENER_VALIDATE_UTF8);
-    array = json_tokener_parse_ex(tokener, data, (int)used);
-    size_t end = json_tokener_get_parse_end(tokener);
-    while (end < used && isspace((unsigned char)data[end]))
-      ++end;
-    if (json_tokener_get_error(tokener) != json_tokener_success || end != used) {
-      if (array) json_object_put(array);
-      array = NULL;
-    }
-    json_tokener_free(tokener);
-  }
-  free(data);
-  valid = array && json_object_is_type(array, json_type_array) &&
-          json_object_array_length(array) <= SM_SMB_CONNECTIONS_MAX;
-  for (size_t i = 0; valid && i < json_object_array_length(array); ++i) {
-    struct json_object *item = json_object_array_get_idx(array, i), *active;
-    sm_smb_connection_t c = {0};
-    valid = json_object_is_type(item, json_type_object) &&
-            json_string(item, "name", c.name, sizeof(c.name)) &&
-            json_string(item, "path", c.path, sizeof(c.path)) &&
-            json_string(item, "username", c.username, sizeof(c.username)) &&
-            json_string(item, "password", c.password, sizeof(c.password)) &&
-            json_object_object_get_ex(item, "active", &active) &&
-            json_object_is_type(active, json_type_boolean);
-    if (!valid) break;
-    c.active = json_object_get_boolean(active);
-    struct json_object *read_only;
-    if (json_object_object_get_ex(item, "read_only", &read_only)) {
-      if (!json_object_is_type(read_only, json_type_boolean)) { valid = false; break; }
-      c.read_only = json_object_get_boolean(read_only);
-    }
-    if (sm_smb_validate(&c)) {
-      valid = false;
-      break;
-    }
-    for (size_t j = 0; j < connection_count; ++j)
-      if (!strcmp(connections[j].name, c.name)) valid = false;
-    if (valid) connections[connection_count++] = c;
-  }
-  if (array) json_object_put(array);
-  if (!valid) {
-    memset(connections, 0, sizeof(connections));
-    connection_count = 0;
-    log_debug("  [SMB] invalid settings ignored: %s", SM_SMB_CONFIG_FILE);
-  }
-}
-
 size_t sm_smb_snapshot(sm_smb_connection_t out[SM_SMB_CONNECTIONS_MAX]) {
-  pthread_once(&config_once, load_connections);
-  pthread_mutex_lock(&config_mutex);
-  size_t count = connection_count;
-  memcpy(out, connections, count * sizeof(*out));
-  pthread_mutex_unlock(&config_mutex);
-  return count;
+  return sm_config_smb_snapshot(out);
 }
 
 int sm_smb_get(const char *name, sm_smb_connection_t *out) {
-  if (!name || !out) return EINVAL;
-  pthread_once(&config_once, load_connections);
-  pthread_mutex_lock(&config_mutex);
-  int status = ENOENT;
-  for (size_t i = 0; i < connection_count; ++i)
-    if (!strcmp(name, connections[i].name)) {
-      *out = connections[i];
-      status = 0;
-      break;
-    }
-  pthread_mutex_unlock(&config_mutex);
-  return status;
-}
-
-static int write_connections(const sm_smb_connection_t *items, size_t count) {
-  struct json_object *array = json_object_new_array();
-  if (!array) return ENOMEM;
-  for (size_t i = 0; i < count; ++i) {
-    struct json_object *o = json_object_new_object();
-    if (!o) {
-      json_object_put(array);
-      return ENOMEM;
-    }
-    const char *keys[] = {"name", "path", "username", "password", "active", "read_only"};
-    const char *values[] = {items[i].name, items[i].path, items[i].username, items[i].password};
-    for (size_t j = 0; j < 6; ++j) {
-      struct json_object *value =
-          j >= 4 ? json_object_new_boolean(j == 4 ? items[i].active : items[i].read_only)
-                 : json_object_new_string(values[j]);
-      if (!value || json_object_object_add(o, keys[j], value)) {
-        if (value) json_object_put(value);
-        json_object_put(o);
-        json_object_put(array);
-        return ENOMEM;
-      }
-    }
-    if (json_object_array_add(array, o)) {
-      json_object_put(o);
-      json_object_put(array);
-      return ENOMEM;
-    }
-  }
-  char temp[MAX_PATH];
-  int length = snprintf(temp, sizeof(temp), "%s.tmp", SM_SMB_CONFIG_FILE);
-  if (length < 0 || (size_t)length >= sizeof(temp)) {
-    json_object_put(array);
-    return ENAMETOOLONG;
-  }
-  char parent[MAX_PATH];
-  strlcpy(parent, SM_SMB_CONFIG_FILE, sizeof(parent));
-  char *slash = strrchr(parent, '/');
-  if (slash) {
-    *slash = 0;
-    if (parent[0]) (void)mkdir(parent, 0700);
-  }
-  int fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_NONBLOCK, 0600);
-  int status = fd < 0 ? errno : 0;
-  struct stat st;
-  if (!status && fstat(fd, &st) != 0) status = errno;
-  if (!status && !S_ISREG(st.st_mode)) status = EINVAL;
-  const char *data = json_object_to_json_string_ext(array, JSON_C_TO_STRING_PRETTY);
-  if (!data && !status) status = ENOMEM;
-  size_t size = data ? strlen(data) : 0, used = 0;
-  if (!status && fchmod(fd, 0600)) status = errno;
-  while (!status && used < size) {
-    ssize_t written = write(fd, data + used, size - used);
-    if (written < 0 && errno == EINTR) continue;
-    if (written <= 0)
-      status = written < 0 ? errno : EIO;
-    else
-      used += (size_t)written;
-  }
-  if (!status && fsync(fd)) status = errno;
-  if (fd >= 0 && close(fd) && !status) status = errno;
-  if (!status && rename(temp, SM_SMB_CONFIG_FILE)) status = errno;
-  if (status) (void)unlink(temp);
-  json_object_put(array);
-  return status;
+  return sm_config_smb_get(name, out);
 }
 
 int sm_smb_save(const char *previous, const sm_smb_connection_t *c) {
-  int status = sm_smb_validate(c);
-  if (status) return status;
-  pthread_once(&config_once, load_connections);
-  pthread_mutex_lock(&config_mutex);
-  size_t index = connection_count;
-  if (previous && *previous) {
-    for (size_t i = 0; i < connection_count; ++i)
-      if (!strcmp(previous, connections[i].name)) index = i;
-    if (index == connection_count) status = ENOENT;
-  }
-  for (size_t i = 0; i < connection_count; ++i)
-    if (i != index && !strcmp(c->name, connections[i].name)) status = EEXIST;
-  if (index == connection_count && connection_count == SM_SMB_CONNECTIONS_MAX) status = ENOSPC;
-  sm_smb_connection_t *next = calloc(SM_SMB_CONNECTIONS_MAX, sizeof(*next));
-  if (!next) {
-    pthread_mutex_unlock(&config_mutex);
-    return ENOMEM;
-  }
-  memcpy(next, connections, sizeof(connections));
-  size_t count = connection_count;
-  if (!status) {
-    next[index] = *c;
-    if (index == count) ++count;
-    status = write_connections(next, count);
-    if (!status) {
-      memcpy(connections, next, sizeof(connections));
-      connection_count = count;
-    }
-  }
-  memset(next, 0, sizeof(connections));
-  free(next);
-  pthread_mutex_unlock(&config_mutex);
-  return status;
+  if (!c) return EINVAL;
+  return sm_config_smb_update(previous, c);
 }
 
 int sm_smb_remove(const char *name) {
-  if (!name || !*name) return EINVAL;
-  pthread_once(&config_once, load_connections);
-  pthread_mutex_lock(&config_mutex);
-  sm_smb_connection_t *next = calloc(SM_SMB_CONNECTIONS_MAX, sizeof(*next));
-  if (!next) {
-    pthread_mutex_unlock(&config_mutex);
-    return ENOMEM;
-  }
-  size_t count = 0;
-  for (size_t i = 0; i < connection_count; ++i)
-    if (strcmp(name, connections[i].name)) next[count++] = connections[i];
-  int status = count == connection_count ? ENOENT : write_connections(next, count);
-  if (!status) {
-    memset(connections, 0, sizeof(connections));
-    memcpy(connections, next, count * sizeof(*next));
-    connection_count = count;
-  }
-  memset(next, 0, sizeof(connections));
-  free(next);
-  pthread_mutex_unlock(&config_mutex);
-  return status;
+  return sm_config_smb_update(name, NULL);
 }
 
 int sm_smb_parse_address(const char *path, sm_smb_address_t *a) {

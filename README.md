@@ -1,5 +1,7 @@
 # ShadowMountPlus (PS5)
 
+> **Configuration format changed (v2).** On the first launch, ShadowMountPlus converts the old `config.ini`, `autotune.ini` and `smb.json`. Global settings and SMB connections now live in `config.ini`; individual game/image settings live in `profiles.ini`. Originals are kept in `/data/shadowmount/config-v1-backup/`. Do not copy an old configuration over the new files. See [configuration migration](#configuration-migration) before downgrading.
+
 **Repository:** https://github.com/drakmor/shadowMountPlus
 
 **Discord:** https://discord.gg/x2Ppvzwjhm
@@ -115,7 +117,7 @@ Browser streaming negotiates up to four outstanding 1 MiB uploads within its
 existing 32 MiB cache. HTTP sends each ready segment immediately, including
 unaligned ranges. Older pages and servers retain the two-upload window.
 
-Up to 16 connections are saved in `/data/shadowmount/smb.json`, including
+Up to 16 connections are saved as `[smb:NAME]` sections in `/data/shadowmount/config.ini`, including
 credentials, with owner-only file permissions. API responses never include
 passwords. Leaving the password empty when editing preserves it; use **Clear
 saved password** to remove it. Connection changes are refused while a storage
@@ -138,53 +140,61 @@ locale handles and sharing mutable locale state between API workers.
 - Use **exFAT (`.exfat`)** only for games that do not work correctly unless they are handled like external-drive content.
 - If you create an **exFAT (`.exfat`)** image manually, use a **`64 KB` cluster size**. Smaller clusters can cause a noticeable performance loss.
 
-## Runtime config (`/data/shadowmount/config.ini`)
+## Runtime configuration
 
-This file is optional. If it does not exist, ShadowMountPlus creates it from the bundled `config.ini.example` template on startup and uses built-in defaults until you uncomment overrides.
+Files under `/data/shadowmount/`:
 
-Supported keys (all optional):
-- `debug=1|0` (`1` enables `log_debug` output to console + `/data/shadowmount/debug.log`; default is `1`)
-- `quiet_mode=1|0` (`1` suppresses plain informational popups but keeps rich toasts; default is `0`)
-- `language=auto|<locale>` (notification language; `auto` uses the console system language, e.g. `en-US`, `ru-RU`; default: `auto`)
-- `api_bind_address=<IPv4>` (HTTP/JSON API bind address; default: `0.0.0.0` for network access; use `127.0.0.1` for PS5-only access)
-- `api_port=<1..65535>` (HTTP/JSON API port; default: `10101`)
-- `mount_read_only=1|0` (default: `1`)
-- `force_mount=1|0` (mounting even damaged file systems; default: `0`)
-- `persistent_image_mounts=1|0` (`1` keeps discovered images mounted between game launches; default: `0`)
-- `app_install_all=1|0` (`1` stages new titles and submits them through the stock batch `sceAppInstUtilAppInstallAll`; default: `0` on every firmware. On FW `12.00+`, the default per-title path is provided by the SceShellCore TitleDir bridge.)
-- `auto_remove_missing_games=1|0` (`1` automatically removes games from the system library when their source is no longer available; default: `0`)
-- `auto_remove_games_with_dlc=1|0` (`1` allows automatic removal of games that have installed DLC; default: `0`)
-- `auto_remove_missing_delay_seconds=<1..86400>` (how long a source must remain unavailable before removal; default: `300`)
-- `image_ro=<image_filename>` (repeatable; force read-only mode for this image filename)
-- `image_rw=<image_filename>` (repeatable; force read-write mode for this image filename)
-- `image_sector=<image_filename>:<sector_size>` (repeatable; force the logical device sector size, not the filesystem cluster size)
-- `scan_depth=<1..2>` (`1` = scan only first-level subfolders, `2` = also scan one additional nested level; default: `1`)
-- `recursive_scan=1|0` (deprecated compatibility key; `1` forces `scan_depth=2`)
-- `scan_interval_seconds=<1..3600>` (full scan loop interval; default: `15`)
-- `stability_wait_seconds=<0..3600>` (minimum source age before processing; default: `10`)
-- `exfat_backend=lvd|md` (default: `lvd`)
-- `ufs_backend=lvd|md` (default: `lvd`)
-- `nested_pfs_index_cache=1|0` (request the containing PFS compressed-file index cache before attaching a nested image; default: `0`)
-- `backport_fakelib=1|0` (`1` mounts sandbox `fakelib` overlays for running games; default: `1`)
-- `fakelib_default_mode=full|emulators|disabled` (mode for games without an individual override; default: `full`; also available in web settings)
-- `fakelib_mode=<TITLE_ID>:default|full|emulators|disabled` (per-game mode, repeatable; `default` restores inheritance; shared limit of 128 explicit title rules)
-- `fakelib_exclude=<TITLE_ID>` (legacy alias for `disabled`; repeatable, up to 128 titles; disables all fakelib overlays for matching PS4, PS5, or homebrew IDs; default: no exclusions)
-- `update_emulators=1|0` (`1` updates matching emulator files for folder/image games; installed PKGs and `fakelib2` are excluded; default: `1`)
-- `emulators_path=<absolute_path>` (folder containing emulator update files; default: `/data/shadowmount/emus`)
-- `auto_update_ampr=1|0` (check for a new `libSceAmpr.sprx` 30 seconds after startup and every four hours; default: `0`)
-- `ampr_update_url=<http_or_https_url>` (AMPR emulator download URL; default: `https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx`)
-- `global_fakelib=1|0` (`1` enables the global fakelib overlay when the folder exists; `fakelib2` remains exclusive; default: `1`)
-- `global_fakelib_path=<absolute_path>` (global fakelib folder; default: `/data/shadowmount/fakelib`)
-- `global_fakelib_priority=game|global` (overlay priority when both global and game fakelib exist; default: `game`)
-- `global_fakelib_exclude=<TITLE_ID>` (repeatable; disables the global fakelib overlay for matching titles)
-- `fan_target_temperature=system|<50..91>` (automatic fan-controller target in degrees Celsius, applied when a game starts; `system` leaves fan control to the console and is the default)
-- `/data/shadowmount/autotune.ini` can override `image_sector` rules from `config.ini` using `image_sector=<image_filename>:<sector_size>`.
-- `scanpath=<absolute_path>` (can be repeated on multiple lines; default: built-in scan path list below)
-- `lvd_exfat_sector_size=<value>` (default: `512`)
-- `lvd_ufs_sector_size=<value>` (default: `4096`)
-- `lvd_pfs_sector_size=<value>` (default: `4096`; the optimized profile uses a `65536`-byte LVD mapping unit)
-- `md_exfat_sector_size=<value>` (default: `512`)
-- `md_ufs_sector_size=<value>` (default: `4096`)
+| File | Contents |
+| --- | --- |
+| `config.ini` | Global settings, scan roots, SMB connections |
+| `profiles.ini` | Individual game settings by title ID; image settings by filename |
+
+Both files start with `[config]` and `version = 2`. Keep this marker. Settings are grouped into INI sections; an absent setting uses its default. Boolean values accept `on/off`, `true/false`, `yes/no` or `1/0`. Section/key names and image/title identities are case-insensitive. Scalar duplicates use the last value; `[scan] path` is repeatable. Quote values containing `#`, `;`, double quotes, backslashes or leading/trailing spaces; inside quotes use `\\` for a backslash and `\"` for a double quote.
+
+Fresh installations get the bundled [config.ini.example](config.ini.example) and an empty versioned `profiles.ini`. See [profiles.ini.example](profiles.ini.example) for individual overrides. Web settings, SMB edits and automatic sector corrections use the same files and preserve unrelated settings and comments. Manual changes are reloaded by file events; invalid recognized values reject the reload and retain the last valid configuration. Unknown keys are logged and preserved by edits. Game/image changes take effect at the next launch/mount, without disrupting active mounts.
+
+Main sections (see the commented template for defaults and ranges):
+
+| Section | Keys |
+| --- | --- |
+| `[general]` | `debug`, `quiet_mode`, `language` |
+| `[api]` | `enabled`, `bind_address`, `port` |
+| `[scan]` | `depth`, repeatable `path`, `interval_seconds`, `stability_wait_seconds` |
+| `[mount]` | `mode` (`ro/rw`), `force`, `persistent_images`, `exfat_backend`, `ufs_backend`, `nested_pfs_index_cache` |
+| `[library]` | `install_all`, `remove_missing`, `remove_with_dlc`, `remove_delay_seconds` |
+| `[fakelib]` | `enabled`, `default_mode`, `global_enabled`, `global_path`, `global_priority` |
+| `[emulators]` | `update_enabled`, `path`, `auto_update_ampr`, `ampr_update_url` |
+| `[fan]` | `target_temperature` (`system` or `50..91`) |
+| `[sectors]` | `lvd_exfat`, `lvd_ufs`, `lvd_pfs`, `md_exfat`, `md_ufs` |
+| `[smb:NAME]` | `path`, `username`, `password`, `active`, `read_only` |
+
+Example `profiles.ini`:
+
+```ini
+[config]
+version = 2
+
+[game:PPSA13197]
+fakelib = emulators
+ignore_global_fakelib = on
+
+[image:My Game.exfat]
+mount_mode = ro
+sector_size = 512
+```
+
+Game `fakelib` accepts `default`, `full`, `emulators`, `disabled`; `ignore_global_fakelib` accepts a boolean or `default` (off). Image `mount_mode` accepts `default`, `ro`, `rw`; `sector_size` accepts `default` or a power of two from 512 to 1048576. Up to 128 explicit fakelib rules, 128 global exclusions and 128 image rules are supported. Images are matched **only by filename**, so matching names on different drives share the same profile. Paths are not valid image profile identities.
+
+### Configuration migration
+
+1. The old instance is stopped before migration. Original files are copied, byte for byte, into `config-v1-backup/`, and the converted settings are validated before publication.
+2. Old global keys become sectioned main settings. `scanpath` becomes repeatable `[scan] path`; `recursive_scan=1` becomes `[scan] depth=2`. Game/image rules move to `profiles.ini`; SMB credentials move from JSON to `[smb:NAME]` sections.
+3. Old autotune sector overrides retain their priority over old manual overrides. Future automatic corrections update `profiles.ini` directly. Active `autotune.ini` and `smb.json` are removed only after successful migration; their backups remain.
+4. `profiles.ini` is published first and `config.ini` with `version=2` last. An interrupted migration resumes from its prepared backup on the next launch. Existing unrelated profiles and source changes during an interrupted migration cause an error instead of being overwritten.
+
+If conversion fails, startup stops with a configuration error. Fix invalid legacy input and retry. After an interrupted publication, preserve the entire directory before making changes; to restart migration from edited legacy sources, move aside the generated `profiles.ini` and `config-v1-backup/` together. Unsupported old keys remain in the original backup and are reported in the log. Version numbers newer than this build supports are rejected.
+
+To downgrade, stop SM+, save both current v2 files separately, then restore the original `config.ini`, `autotune.ini` and `smb.json` from `config-v1-backup/` before starting an old build. Settings changed after migration are not automatically converted back. Backups include SMB passwords: new files use owner-only permissions, but credentials are plaintext, so protect copies too.
 
 Supported notification languages:
 
@@ -226,41 +236,30 @@ The public API routes and JSON schemas are documented in [docs/api.md](docs/api.
 and available as an [OpenAPI manifest](docs/openapi.yaml).
 
 Per-image mode override behavior:
-- Match is done by image file name (without path).
-- File names with spaces are supported.
-- If multiple rules target the same file name, the last one in config wins.
-- If no rule matches, global `mount_read_only` is used.
-- Example:
-```ini
-mount_read_only=1
-image_rw=PPSA1234-my-image.ffpfs
-image_rw=MYGame 123.exfat
-image_ro=legacy_dump.ffpkg
-image_sector=legacy-512-sector.exfat:512
-```
+- Use `[image:FILENAME] mount_mode` in `profiles.ini`; spaces and brackets in names are supported.
+- The last value for the same filename wins. Without an override, `[mount] mode` applies.
 
 Persistent image mount behavior:
-- With `persistent_image_mounts=0` (default), backing images are mounted when a game starts and released after it exits.
-- With `persistent_image_mounts=1`, images discovered during scans remain mounted between launches. Per-title runtime and backport layers are still mounted only when needed.
+- With `[mount] persistent_images=0` (default), backing images are mounted when a game starts and released after it exits.
+- With `[mount] persistent_images=1`, images discovered during scans remain mounted between launches. Per-title runtime and backport layers are still mounted only when needed.
 - USB-backed images are always released during suspend and mounted again by the resume scan.
 - Persistent mode consumes one backing device per mounted image layer and is intended for libraries that fit the available LVD/MD device capacity.
 
 Per-image sector override behavior:
 - Match is done by image file name (without path).
-- `image_sector` in `/data/shadowmount/autotune.ini` has the highest priority for matching image files.
+- `[image:FILENAME] sector_size` in `profiles.ini` supplies the individual override.
 - If no per-image rule matches, the backend-specific global sector size defaults are used.
-- When image validation fails because the mounted file-system cluster size is smaller than the selected device sector size, ShadowMountPlus writes `image_sector=<image_filename>:<cluster_size>` into `/data/shadowmount/autotune.ini` and asks you to try mounting again.
-- For the exFAT LVD/BFS fast path, leave the logical sector at its default `512`. The required `65536` values are the exFAT allocation unit and the internal LVD `secondary_unit`; do not set `image_sector=...:65536` to request this mode.
+- When image validation fails because the mounted file-system cluster size is smaller than the selected device sector size, ShadowMountPlus writes `sector_size=<cluster_size>` into `[image:FILENAME]` in `profiles.ini` and asks you to try mounting again.
+- For the exFAT LVD/BFS fast path, leave the logical sector at its default `512`. The required `65536` values are the exFAT allocation unit and the internal LVD `secondary_unit`; do not set `sector_size=65536` to request this mode.
 
 Scan path behavior:
-- If at least one `scanpath=...` is present, only those custom paths are used.
+- If at least one `[scan] path=...` is present, only those custom paths are used.
 - `/mnt/shadowmnt/pfsc` and `/mnt/shadowmnt` are always added automatically, even with custom paths.
-- With `scan_depth=1` (default), only first-level subfolders are checked.
-- With `scan_depth=2`, one additional nested level is checked.
-- If `recursive_scan=1` is set, ShadowMount+ forces `scan_depth=2`.
-- Full scan loop runs every `scan_interval_seconds` (default: `15`).
-- Sources newer than `stability_wait_seconds` are deferred until stable (default: `10`).
-- With `auto_remove_missing_games=1`, a game is removed from the system library only after its source remains unavailable for `auto_remove_missing_delay_seconds`. If the source becomes available again before removal, the pending removal is cancelled.
+- With `[scan] depth=1` (default), only first-level subfolders are checked.
+- With `[scan] depth=2`, one additional nested level is checked.
+- Full scan loop runs every `[scan] interval_seconds` (default: `15`).
+- Sources newer than `[scan] stability_wait_seconds` are deferred until stable (default: `10`).
+- With `[library] remove_missing=1`, a game is removed from the system library only after its source remains unavailable for `[library] remove_delay_seconds`. If the source becomes available again before removal, the pending removal is cancelled.
 - Direct folder installs use `<game>/sce_sys` for this check; image and backport sources use the target path itself.
 
 Backport overlay behavior:
@@ -274,19 +273,19 @@ Backport overlay behavior:
 - If multiple scan paths provide the same title backport, the game's own scan path wins; otherwise scan path order is used, followed by the internal fallback.
 - Within each scan path, the exact `<TITLE_ID>` directory wins. Otherwise, the first directory name beginning with the full title ID in byte order is selected. Files and nested directories are not candidates.
 - ShadowMount+ checks the selected backport for `fakelib2` and then `fakelib`; if neither exists, it checks the original game source in the same order. The selected directory is mounted into the running game's sandbox `common/lib`. A selected `fakelib2` remains exclusive: neither emulator updates nor the global fakelib can replace or supplement it. Per-game filtering and removal of `libkernel.sprx` still apply, using a cache when needed.
-- For folder/image games, `update_emulators=1` makes matching files from `emulators_path` replace files in the selected game fakelib, except when `fakelib2` is selected. Installed PKGs never compose `emulators_path` into their fakelib. The cache is refreshed when its sources change and expires after seven days without a game launch.
+- For folder/image games, `[emulators] update_enabled=1` makes matching files from `[emulators] path` replace files in the selected game fakelib, except when `fakelib2` is selected. Installed PKGs never compose `[emulators] path` into their fakelib. The cache is refreshed when its sources change and expires after seven days without a game launch.
 - Before preparing and mounting fakelib for an installed PPR PKG, ShadowMount+ deletes `libSceAmpr.sprx` and `libScePlayGo.sprx` from the selected `/data/homebrew/backports/<TITLE_ID><suffix>/fakelib` (the suffix may be empty). Missing files are harmless skips; a deletion failure stops the fakelib mount.
-- With `auto_update_ampr=1`, ShadowMount+ checks for AMPR updates 30 seconds after startup and every four hours. It downloads a missing or newer emulator and displays a notification after a successful update.
+- With `[emulators] auto_update_ampr=1`, ShadowMount+ checks for AMPR updates 30 seconds after startup and every four hours. It downloads a missing or newer emulator and displays a notification after a successful update.
 - When the mounted fakelib contains only the supported emulator libraries, the notification says `Emulators applied`. Otherwise the backport notification adds `Emulators updated` when emulator files were replaced.
-- If both global and per-game fakelib exist, they are combined in the game cache according to `global_fakelib_priority`, unless the selected backport contains `fakelib2`. Without a per-game fakelib, the global folder is used on its own, with a filtered cache when required.
-- Use repeatable `global_fakelib_exclude=<TITLE_ID>` entries to skip the global fakelib for specific games without disabling per-game fakelib.
-- The game card in the web interface offers `Default`, `Full`, `Emulators only` and `Disabled` fakelib modes. `Default` inherits `fakelib_default_mode` from web settings or `config.ini` (initially `full`). An explicit per-game mode overrides that default, including `full`. Modes apply to the selected game fakelib (including `fakelib2`) and global fakelib on the next launch; active mounts stay unchanged. Equivalent config entries are `fakelib_mode=PPSA12345:emulators` and `fakelib_mode=PPSA12345:full`; `default` removes the override. The last valid entry for a title wins, including legacy `fakelib_exclude` entries.
+- If both global and per-game fakelib exist, they are combined in the game cache according to `[fakelib] global_priority`, unless the selected backport contains `fakelib2`. Without a per-game fakelib, the global folder is used on its own, with a filtered cache when required.
+- Use `[game:TITLE_ID] ignore_global_fakelib=on` in `profiles.ini` to skip the global fakelib for specific games without disabling per-game fakelib.
+- The game card in the web interface offers `Default`, `Full`, `Emulators only` and `Disabled` fakelib modes. `Default` inherits `[fakelib] default_mode` from web settings or `config.ini` (initially `full`). An explicit per-game mode overrides that default, including `full`. Modes apply to the selected game fakelib (including `fakelib2`) and global fakelib on the next launch; active mounts stay unchanged. Set `fakelib=emulators` or `fakelib=full` under `[game:PPSA12345]` in `profiles.ini`; `default` restores inheritance.
 - `Emulators only` mounts available regular files named `libSceAppContent.sprx`, `libSceGameUpdate.sprx` and `libSceNpEntitlementAccess.sprx` for installed PKGs. Folder/image games also allow `libSceAmpr.sprx` and `libScePlayGo.sprx`. Missing files are silently skipped; an empty selection creates no fakelib overlay. Emulator updates obey the same allowlist.
 - With fakelib enabled, `libkernel.sprx` is removed from the selected writable folder fakelib and participating global fakelib. For image games and installed PKGs, source files remain unchanged and a cache omitting this library is mounted instead. If a required filtered cache cannot be created, the unfiltered source is never mounted.
-- Use repeatable `fakelib_exclude=<TITLE_ID>` entries to disable per-game `fakelib`, `fakelib2`, global fakelib and cache preparation for specific games. `/data`, sandbox storage aliases and PKG `app0` backports remain enabled. Reloaded exclusions apply on the next launch; existing mounts remain until game exit. Title IDs are case-insensitive and must have a supported prefix followed by five digits; invalid entries and entries beyond the 128-title limit are logged and ignored.
+- Use `[game:TITLE_ID] fakelib=disabled` in `profiles.ini` to disable per-game `fakelib`, `fakelib2`, global fakelib and cache preparation for specific games. `/data`, sandbox storage aliases and PKG `app0` backports remain enabled. Reloaded exclusions apply on the next launch; existing mounts remain until game exit. Title IDs are case-insensitive and must have a supported prefix followed by five digits; invalid entries and entries beyond the 128-title limit reject the reload, retaining the last valid settings.
 - `/data` is mounted through writable `nullfs` for PS5 (`PPSA*`), PS4 (`CUSA*`) and homebrew titles. Sandbox `/mnt` remains a local directory: only mounted volumes at `/mnt/usb0` through `/mnt/usb7`, `/mnt/ext0` through `/mnt/ext1` and `/mnt/disc` receive individual writable `nullfs` aliases. Empty mount directories and other host `/mnt` entries are skipped. Storage aliases follow filesystem mount/unmount events, including USB hotplug and disc insertion/ejection. All aliases are removed on game process exit.
-- `backport_fakelib=0` disables the sandbox `fakelib` watcher, including global fakelib and emulator updates.
-- For `backport_fakelib` to work correctly, the standalone `BackPork` payload must be disabled. Running both at the same time will conflict.
+- `[fakelib] enabled=0` disables the sandbox `fakelib` watcher, including global fakelib and emulator updates.
+- For `[fakelib] enabled` to work correctly, the standalone `BackPork` payload must be disabled. Running both at the same time will conflict.
 
 Game error monitoring:
 
@@ -422,7 +421,7 @@ Default scan locations:
 - `/mnt/shadowmnt/pfsc` (mounted PFSC container scan)
 - `/mnt/shadowmnt` (mounted image content scan)
 
-You can override scan roots with `scanpath=...` entries in `/data/shadowmount/config.ini`.
+You can override scan roots with `[scan] path=...` entries in `/data/shadowmount/config.ini`.
 
 ## Manual install list
 
@@ -463,13 +462,13 @@ workflow, then add the resulting game folder path or image file path to
 `manual.lst`.
 
 Recommended folder structure:
-- Default mode (`scan_depth=1`):
+- Default mode (`[scan] depth=1`):
   - `/data/homebrew/<TITLE_ID>/`
   - `/data/etaHEN/games/<TITLE_ID>/`
   - `/data/homebrew/backports/<TITLE_ID>/`
   - `/data/etaHEN/games/backports/<TITLE_ID>/`
    
-- Nested mode (`scan_depth=2`):
+- Nested mode (`[scan] depth=2`):
   - `/data/homebrew/PS5/<AnyFolder>/<TITLE_ID>/`
   - `/mnt/ext0/etaHEN/games/<Collection>/<TITLE_ID>/`
   - `/mnt/ext0/etaHEN/games/backports/<TITLE_ID>/`
@@ -500,7 +499,7 @@ All of the following are required for the kernel to consider that fast path:
 - Format exFAT with a fixed 64 KiB allocation unit. The supplied Linux, macOS,
   and Windows builders now always use this value, including small-file images.
 - Keep `lvd_exfat_sector_size=512` and do not add an
-  `image_sector=<name>.exfat:65536` override. A logical sector and an exFAT
+  `[image:<name>.exfat] sector_size=65536` override. A logical sector and an exFAT
   allocation unit are different geometries.
 - Make the image size a multiple of 64 KiB; the supplied builders round it to
   1 MiB and therefore satisfy this automatically.
@@ -605,16 +604,16 @@ kstuff.elf
 ## Troubleshooting
 
 If a game is not mounted:
-- Debug log is enabled by default; if disabled, set `debug=1` in `/data/shadowmount/config.ini`.
+- Debug log is enabled by default; if disabled, set `[general] debug=on` in `/data/shadowmount/config.ini`.
 - Check `/data/shadowmount/debug.log` and system notifications from ShadowMount+.
 - Verify scan roots:
-  - if `scanpath=...` is set, only these paths are scanned;
+  - if `[scan] path=...` is set, only these paths are scanned;
   - `/mnt/shadowmnt/pfsc` and `/mnt/shadowmnt` are always scanned.
 - Verify scan depth:
-  - `scan_depth=1` scans only first-level subfolders;
-  - `scan_depth=2` scans one additional nested level;
-  - `recursive_scan=1` is treated as deprecated compatibility mode and forces `scan_depth=2`.
-- If logs show `source not stable yet`, adjust `stability_wait_seconds` (or wait for source copy/write to finish).
+  - `[scan] depth=1` scans only first-level subfolders;
+  - `[scan] depth=2` scans one additional nested level;
+  - `recursive_scan=1` is treated as deprecated compatibility mode and forces `[scan] depth=2`.
+- If logs show `source not stable yet`, adjust `[scan] stability_wait_seconds` (or wait for source copy/write to finish).
 - Verify game structure:
   - folder game: `<GAME_DIR>/sce_sys/param.json` or `<GAME_DIR>/sce_sys/param.sfo`;
   - image game (`.ffpkg` / `.exfat` / `.ffpfs`): `sce_sys/param.json` or `sce_sys/param.sfo` must be at image root (no extra top-level folder);
