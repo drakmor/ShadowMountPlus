@@ -21,17 +21,34 @@ static int privileged_ptrace(int request, pid_t pid, void *address, int data) {
   uint64_t saved_authid = kernel_get_ucred_authid(self);
   if (!saved_authid || kernel_get_ucred_caps(self, saved_caps) != 0)
     return -1;
-  if (kernel_set_ucred_authid(self, SCE_AUTHID_DEBUGGER) != 0 ||
-      kernel_set_ucred_caps(self, k_priv_caps) != 0) {
-    (void)kernel_set_ucred_authid(self, saved_authid);
-    (void)kernel_set_ucred_caps(self, saved_caps);
+  bool change_authid = saved_authid != SCE_AUTHID_DEBUGGER;
+  bool change_caps = memcmp(saved_caps, k_priv_caps, sizeof(saved_caps)) != 0;
+  if ((change_authid &&
+       kernel_set_ucred_authid(self, SCE_AUTHID_DEBUGGER) != 0) ||
+      (change_caps && kernel_set_ucred_caps(self, k_priv_caps) != 0)) {
+    int saved_errno = errno;
+    if (change_authid)
+      (void)kernel_set_ucred_authid(self, saved_authid);
+    if (change_caps)
+      (void)kernel_set_ucred_caps(self, saved_caps);
+    errno = saved_errno;
     return -1;
   }
 
   int result = ptrace(request, pid, (caddr_t)address, data);
-  bool restored = kernel_set_ucred_authid(self, saved_authid) == 0;
-  restored = kernel_set_ucred_caps(self, saved_caps) == 0 && restored;
-  return restored ? result : -1;
+  int saved_errno = errno;
+  bool restored = !change_authid ||
+                  kernel_set_ucred_authid(self, saved_authid) == 0;
+  if (change_caps && kernel_set_ucred_caps(self, saved_caps) != 0)
+    restored = false;
+  if (!restored)
+    log_debug("  [SHELLCORE] ptrace credentials restore failed: pid=%ld "
+              "request=%d result=%d", (long)pid, request, result);
+  // Attach/detach ownership follows the actual ptrace result. Reporting a
+  // successful attach as failure leaves an unowned stopped ShellCore; doing
+  // the same for detach makes callers patch a process that is already running.
+  errno = saved_errno;
+  return result;
 }
 
 static bool wait_for_remote_stop(pid_t pid) {
