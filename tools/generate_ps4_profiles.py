@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 import re
 import struct
+from capstone import CS_ARCH_X86, CS_MODE_64, Cs
+from capstone.x86 import X86_OP_MEM, X86_OP_REG, X86_REG_EAX, X86_REG_RBP, X86_REG_RSP
 from generate_shellcore_offsets import ShellCore
 
 
@@ -20,6 +22,36 @@ def rows(path):
     if not result or len({row[0] for row in result}) != len(result):
         raise ValueError(f'{path}: empty or duplicate firmware table')
     return result
+
+
+def verify_hfr_attribute(image, attribute):
+    """Verify ATTRIBUTE3's member from the SFO reader, not a fixed firmware ABI."""
+    segment = image.executable
+    text = image.data[segment.file_offset:segment.file_offset + segment.file_size]
+    keys = set(image.string_addresses(b'ATTRIBUTE3\0', use_string_start=False))
+    md = Cs(CS_ARCH_X86, CS_MODE_64)
+    md.detail = True
+    stores = set()
+    for match in re.finditer(rb'\x48\x8d\x35(....)', text, re.S):
+        address = segment.virtual_address + match.start()
+        if address + 7 + struct.unpack('<i', match[1])[0] not in keys:
+            continue
+        called = False
+        for instruction in md.disasm(text[match.start():match.start() + 0x40], address):
+            if instruction.mnemonic == 'call':
+                called = True
+            operands = instruction.operands
+            if not called or instruction.mnemonic != 'mov' or len(operands) != 2:
+                continue
+            dst, src = operands
+            if (dst.type == X86_OP_MEM and dst.size == 4
+                and dst.mem.base not in (X86_REG_RBP, X86_REG_RSP) and not dst.mem.index
+                and 0x100 <= dst.mem.disp < 0x400
+                and src.type == X86_OP_REG and src.reg == X86_REG_EAX):
+                stores.add(dst.mem.disp)
+                break
+    if stores != {attribute + 8}:
+        raise ValueError(f'{image.path}: SFO ATTRIBUTE3 member mismatch: {stores}')
 
 
 def main():
@@ -48,6 +80,7 @@ def main():
         evidence[version] = []
         for path in paths:
             image = ShellCore(path)
+            verify_hfr_attribute(image, attribute)
             digest = hashlib.sha256(image.data).hexdigest()
             clock_proof = next((a for a in audit[version] if a['sha256'] == digest), None)
             pro_proof = next((a for a in pro_audit[version] if a['sha256'] == digest), None)
