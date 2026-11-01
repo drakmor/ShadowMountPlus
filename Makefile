@@ -14,6 +14,7 @@ MHD_LIB := $(HOMEBREW_ROOT)/lib/libmicrohttpd.a
 PNG_LIB := $(HOMEBREW_ROOT)/lib/libpng16.a
 JPEG_LIB := $(HOMEBREW_ROOT)/lib/libturbojpeg.a
 ZLIB_LIB := $(HOMEBREW_ROOT)/lib/libz.a
+EXPAT_LIB := $(HOMEBREW_ROOT)/lib/libexpat.a
 SMB_LIB := $(HOMEBREW_ROOT)/lib/libsmb2.a
 CFLAGS := -O3 -flto=thin -DNDEBUG -ffunction-sections -fdata-sections -Wall -Wextra -Wstrict-prototypes -Wmissing-prototypes -Werror=strict-prototypes -Werror=missing-prototypes -D_BSD_SOURCE -std=gnu11 -Iinclude -Isrc
 CFLAGS += -DSHADOWMOUNT_VERSION=\"$(VERSION_TAG)\"
@@ -24,7 +25,7 @@ CFLAGS += -I$(JSON_C_PREFIX)/include
 LDFLAGS := -flto=thin -Wl,--gc-sections
 
 # Libraries
-LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lSceNet -lSceSsl -lSceHttp -lSceIpmi -lsqlite3 $(JSON_C_LIB) $(MHD_LIB) $(PNG_LIB) $(JPEG_LIB) $(ZLIB_LIB) $(SMB_LIB) -lpthread -lm
+LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lSceNet -lSceSsl -lSceHttp -lSceIpmi -lsqlite3 $(JSON_C_LIB) $(MHD_LIB) $(PNG_LIB) $(JPEG_LIB) $(ZLIB_LIB) $(SMB_LIB) $(EXPAT_LIB) -lpthread -lm
 PS5_SCE_STUBS_DIR ?= $(PS5_PAYLOAD_SDK)/src/sce_stubs
 KERNEL_SYS_STUB_SO := src/libkernel_sys_ext.so
 KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUBS_DIR)/libkernel_sys.c src/libkernel_sys_ext.c
@@ -76,6 +77,7 @@ src/shell_icon_param_asset.c: assets/shell_icon_param.json
 
 src/sm_api_service.o src/sm_icon_thumb.o src/sm_gameinfo.o src/sm_pkg.o: CFLAGS += $(HOMEBREW_CFLAGS)
 src/sm_smb.o src/sm_vfs.o: CFLAGS += $(HOMEBREW_CFLAGS)
+src/sm_patch_xml.o: CFLAGS += $(HOMEBREW_CFLAGS)
 src/main.o src/sm_image_index.o: CFLAGS += -DSHADOWMOUNT_BUILD_TIME=\"$(BUILD_TIME)\"
 src/main.o src/sm_image_index.o: FORCE
 

@@ -4,12 +4,15 @@
 #include <stdatomic.h>
 #include <sys/event.h>
 #include <sys/select.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
 
 #include "sm_appdb.h"
 #include "sm_fan.h"
 #include "sm_fakelib.h"
 #include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
+#include "sm_game_patches.h"
 #include "sm_gameinfo.h"
 #include "sm_limits.h"
 #include "sm_log.h"
@@ -158,10 +161,14 @@ static void publish_active_game(pid_t pid, const char *title_id,
     g_active_game_app_id = 0;
   }
   publish_active_game_pid(pid);
-  if (pid <= 0) sm_ps4_video_reset();
+  if (pid <= 0) {
+    sm_game_patches_reset();
+    sm_ps4_video_reset();
+  }
   if (pid > 0) {
     sm_ps4_memory_on_exec(pid, title_id, app_id);
     sm_ps4_profiles_on_exec(title_id);
+    sm_game_patches_on_exec(pid, title_id);
     sm_ps4_video_on_exec(pid, title_id);
   }
 }
@@ -658,6 +665,7 @@ static const struct timespec *compute_game_wait_timeout(
       next_wake_us, sm_shellcore_service_next_exit_cleanup_us(now_us));
   next_wake_us = min_nonzero_u64(next_wake_us, sm_ps4_memory_next_wake_us());
   next_wake_us = min_nonzero_u64(next_wake_us, sm_ps4_video_next_wake_us());
+  next_wake_us = min_nonzero_u64(next_wake_us, sm_game_patches_next_wake_us());
   if (next_wake_us == 0)
     return NULL;
 
@@ -685,6 +693,7 @@ static void poll_game_modules(int kq) {
       pid_t pid = entry->pid;
       uint64_t exec_time_us = entry->exec_time_us;
       if (is_supported_game_title_id(title_id)) {
+        sm_game_patches_on_exec(pid, title_id);
         sm_ps4_video_on_exec(pid, title_id);
         entry->deadline_us = exec_time_us == 0 ? 0 :
             exec_time_us + GAME_RUNTIME_PREPARE_TIMEOUT_US;
@@ -754,6 +763,7 @@ static void handle_game_exec(int kq, pid_t pid) {
   uint32_t app_id = 0;
   if (resolve_game_title_id(pid, title_id, &app_id)) {
     if (is_supported_game_title_id(title_id)) {
+      sm_game_patches_on_exec(pid, title_id);
       sm_ps4_video_on_exec(pid, title_id);
       if (dispatch_game_launch(kq, pid, now_us, title_id, app_id))
         clear_all_pending_game_launches();
@@ -776,8 +786,10 @@ static void handle_process_spawned(pid_t pid) {
   char title_id[MAX_TITLE_ID];
   uint32_t app_id = 0;
   if (resolve_game_title_id(pid, title_id, &app_id)) {
-    if (is_supported_game_title_id(title_id))
+    if (is_supported_game_title_id(title_id)) {
+      sm_game_patches_on_exec(pid, title_id);
       sm_ps4_video_on_exec(pid, title_id);
+    }
     return;
   }
   uint64_t now_us = monotonic_time_us();
@@ -1197,6 +1209,7 @@ static void *game_lifecycle_watcher_main(void *arg) {
     sm_fakelib_game_poll_cleanup();
     sm_pkg_backport_poll_cleanup();
     sm_ps4_memory_poll();
+    sm_game_patches_poll();
     sm_ps4_video_poll();
     (void)sm_shellcore_service_release_exited_titles();
   }
@@ -1348,6 +1361,38 @@ void stop_game_lifecycle_watcher(void) {
 bool sm_game_lifecycle_has_active_game(void) {
   return atomic_load(&g_active_game_pid) > 0 ||
          atomic_load(&g_game_exit_handoff_pending);
+}
+
+bool sm_game_lifecycle_active_title(char title_id[MAX_TITLE_ID]) {
+  title_id[0] = '\0';
+  pid_t pid = atomic_load(&g_active_game_pid);
+  if (pid > 0 && resolve_game_title_id(pid, title_id, NULL) &&
+      is_supported_game_title_id(title_id)) return true;
+  title_id[0] = '\0';
+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PROC, 0};
+  size_t size = 0;
+  if (sysctl(mib, 4, NULL, &size, NULL, 0) || !size || size > 4u * 1024u * 1024u) return false;
+  uint8_t *data = malloc(size);
+  if (!data) return false;
+  bool found = false;
+  if (!sysctl(mib, 4, data, &size, NULL, 0)) {
+    for (size_t offset = 0; offset + sizeof(int) <= size;) {
+      int record_size;
+      memcpy(&record_size, data + offset, sizeof(record_size));
+      if (record_size <= 0 || (size_t)record_size > size - offset ||
+          (size_t)record_size < offsetof(struct kinfo_proc, ki_tdname) + sizeof(((struct kinfo_proc *)0)->ki_tdname)) break;
+      const struct kinfo_proc *process = (const struct kinfo_proc *)(data + offset);
+      if (process->ki_pid > 0 && !strncmp(process->ki_tdname, "eboot", 5) &&
+          resolve_game_title_id(process->ki_pid, title_id, NULL) && is_supported_game_title_id(title_id)) {
+        found = true;
+        break;
+      }
+      offset += (size_t)record_size;
+    }
+  }
+  free(data);
+  if (!found) title_id[0] = '\0';
+  return found;
 }
 
 bool sm_game_lifecycle_background_title(char title_id[MAX_TITLE_ID]) {

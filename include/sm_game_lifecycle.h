@@ -13,6 +13,9 @@ void wake_game_lifecycle_watcher(void);
 void stop_game_lifecycle_watcher(void);
 // Return true when a supported game is currently being tracked as running.
 bool sm_game_lifecycle_has_active_game(void);
+// Read the live game identity; includes a read-only process fallback after SM+
+// was restarted while a game was already running. Does not publish runtime state.
+bool sm_game_lifecycle_active_title(char title_id[MAX_TITLE_ID]);
 // Copy the protected live title even when returning false, or an empty string
 // when no confirmed live title is available. Confirmed games allow unrelated
 // work regardless of focus. Return false during a pending exit/handoff or

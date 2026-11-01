@@ -396,6 +396,10 @@
     .content-delete { min-height: 36px; padding: 6px 10px; }
     .content-dlc-row .content-delete { min-width: 0; min-height: 38px; padding: 6px 10px; font-size: 14px; }
     .content-dlc-row + .content-dlc-row { border-top: 1px solid var(--line); }
+    .xml-patch-list { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+    .xml-patch-description { min-width: 0; overflow-wrap: anywhere; }
+    .xml-patch-description p { margin: 4px 0; font-size: 12px; }
+    .xml-patch-toggle { min-width: 90px; }
     .content-dlc-title { min-width: 0; overflow-wrap: anywhere; }
     .content-dlc-title strong { display: block; font-weight: 500; }
     .content-dlc-title small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
@@ -546,6 +550,9 @@
     .games { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 26px 20px; align-items: start; }
     .game-card { display: block; position: relative; min-width: 0; min-height: 0; padding: 9px; border: 2px solid transparent; border-radius: 18px; background: rgba(17, 30, 50, .7); transition: border-color .15s, background .15s; }
     .game-card:hover { background: #1b304c; }
+    .game-card.is-active { border-color: #42d6ad; background: #12392f; }
+    .game-card.is-active .game-title { color: #a2ffe1; }
+    .badge.active-game { border-color: #42d6ad; background: #154437; color: #a2ffe1; }
     .game-card.is-focused { border-color: #e3f3ff; background: #1c3554; box-shadow: 0 0 0 4px rgba(104, 181, 255, .25), 0 12px 36px #0005; }
     .game-card .cover { width: 100%; height: 0; padding-bottom: 100%; border: 0; border-radius: 10px; background: linear-gradient(135deg, #2c5381, #12233e); }
     .game-card .cover-fallback { position: absolute; inset: 0; font-size: 30px; letter-spacing: .08em; }
@@ -618,6 +625,7 @@
     .control-note { margin-left: auto; color: var(--muted); font-size: 13px; }
     body.dialog-open { overflow: hidden; }
     .modal { z-index: 10; grid-template-columns: minmax(0, 1fr); padding: 24px; background: rgba(3, 8, 17, .9); }
+    #modal { padding: 16px; }
     #destinationModal, #logModal { z-index: 11; }
     #pathModal { z-index: 12; }
     #confirmModal { z-index: 13; }
@@ -646,19 +654,28 @@
     .confirm-message { white-space: pre-wrap; overflow-wrap: anywhere; padding: 24px; }
     .unpack-option { margin: 0 18px 18px; }
     .modal-card { display: flex; flex-direction: column; width: 1000px; min-width: 0; max-width: 100%; max-height: 90vh; overflow: hidden; border-color: #536e90; background: #111f34; }
-    .modal-card.details-card { display: grid; grid-template-columns: 272px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; height: calc(100vh - 48px); max-height: 620px; }
+    .modal-card.details-card { display: grid; grid-template-columns: 280px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; width: 1440px; height: calc(100vh - 32px); max-height: 960px; }
     .modal-head { flex-shrink: 0; padding: 24px; }
     .modal-head h2 { font-size: 26px; }
     .details-card .modal-head { grid-column: 2; grid-row: 1; min-width: 0; padding: 12px 20px 12px 0; }
     .details-card .modal-head > div { min-width: 0; }
-    .details-card .modal-head h2 { font-size: 24px; }
+    .details-card .modal-head h2 { font-size: 24px; overflow-wrap: anywhere; }
     .details-card .close { width: 44px; height: 44px; min-height: 44px; }
     .modal-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
     .modal-meta .badges { margin: 0; }
+    .game-version { text-transform: none; }
+    .detail-content-id { margin: 7px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; user-select: text; }
+    .detail-activity { display: grid; gap: 10px; margin-top: 12px; }
+    .game-activity-item { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #0b1829; }
+    .game-activity-item span { display: block; color: var(--muted); font-size: 12px; }
+    .game-activity-item strong { display: block; margin-top: 5px; font-size: 16px; overflow-wrap: anywhere; }
+    .game-activity-item time { display: block; margin-top: 5px; font-size: 14px; overflow-wrap: anywhere; }
     .details { display: block; grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 8px 20px 8px 0; }
     .details:focus, .log-view:focus { outline-offset: -4px; }
-    .detail-sidebar { grid-column: 1; grid-row: 1 / 3; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px 12px; }
-    .detail-sidebar .cover { width: 232px; height: 232px; margin: 0 auto; }
+    .detail-sidebar { grid-column: 1; grid-row: 1 / 3; min-width: 0; min-height: 0; padding: 16px 20px 12px; }
+    .detail-sidebar .cover { width: 100%; height: auto; margin: 0 auto; align-self: start; }
+    .detail-sidebar .cover::before { content: ""; display: block; padding-top: 100%; }
+    .detail-sidebar .cover-fallback { position: absolute; top: 0; left: 0; }
     .fakelib-controls { display: grid; min-width: 0; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: #0b1829; }
     .fakelib-controls h3 { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
     .fakelib-controls .btn { width: 100%; min-width: 0; min-height: 48px; padding: 9px 12px; text-align: left; font-size: 14px; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
@@ -671,6 +688,18 @@
     [aria-checked="true"] .switch-track { background: #2383c4; }
     [aria-checked="true"] .switch-track::after { transform: translateX(14px); }
     .fakelib-controls .fakelib-hint { font-size: 12px; line-height: 1.4; }
+    .details .fakelib-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .details .fakelib-controls h3, .details .fakelib-hint { grid-column: 1 / -1; }
+    .details .ps4-profile-controls .btn { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; }
+    .policy-label { color: var(--muted); font-size: 12px; }
+    .policy-value { font-weight: 650; }
+    .details .ps4-profile-controls .btn:not([value="default"]), .details .fakelib-mode:not([value="default"]), .details .btn[aria-pressed="true"]:not([value="default"]), .details .btn[aria-checked="true"] { border-color: #42d6ad; background: #154437; color: #c6ffeb; box-shadow: inset 3px 0 0 #42d6ad; }
+    .details .ps4-profile-controls .btn[value="off"], .details .fakelib-mode[value="disabled"] { border-color: #6999d6; background: #1a304c; color: #d5e7ff; box-shadow: inset 3px 0 0 #6999d6; }
+    .details .btn[aria-pressed="true"]:not([value="default"]) .policy-label { color: #a4dccc; }
+    .xml-patches { margin-top: 18px; }
+    @media (min-width: 1100px) {
+      .details .ps4-profile-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
     .detail-grid { margin-top: 0; font-size: 16px; line-height: 1.45; grid-template-columns: 160px minmax(0, 1fr); gap: 8px 16px; }
     .modal-actions { flex-shrink: 0; gap: 12px; padding: 18px 24px 24px; border-top: 1px solid var(--line); }
     .details-card .modal-actions { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 8px; padding: 12px 18px; }
@@ -699,6 +728,13 @@
       .view-tab { padding: 0 16px; }
     }
     @media (max-width: 850px) {
+      .modal-card.details-card { grid-template-columns: 120px minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+      .detail-sidebar { display: contents; }
+      .detail-sidebar .cover { grid-column: 1; grid-row: 1; width: calc(100% - 16px); margin: 16px 0 12px 16px; }
+      .detail-activity { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; padding: 0 20px 12px; }
+      .details-card .modal-head { padding: 16px 18px 12px 16px; }
+      .details { grid-column: 1 / -1; grid-row: 3; padding: 12px 20px; }
+      .details-card .modal-actions { grid-row: 4; }
       .console-workbench { grid-template-columns: minmax(0, 1fr); gap: 20px; }
       .console-nav { position: static; grid-template-columns: repeat(5, minmax(0, 1fr)); }
       .console-section { padding: 8px; text-align: center; white-space: normal; font-size: 14px; }
@@ -749,16 +785,16 @@
       .transfer-heading .badge { max-width: 100%; font-size: 10px; }
       .transfer-stats { font-size: 12px; gap: 4px 10px; }
       .operation-popup .btn.small { min-height: 44px; padding: 0 10px; font-size: 14px; }
-      .modal-card.details-card { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; height: calc(100vh - 24px); }
-      .details-card .modal-head { grid-column: 1; grid-row: 1; padding: 16px 18px; }
-      .detail-sidebar { grid-column: 1; grid-row: 2; display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 12px; align-items: start; max-height: 190px; padding: 12px 18px; }
-      .detail-sidebar .cover { width: 160px; height: 160px; }
-      .detail-sidebar .fakelib-controls { margin-top: 0; }
-      .detail-sidebar .fakelib-controls .btn { padding: 8px; font-size: 12px; }
-      .detail-sidebar .fakelib-switch { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-      .detail-sidebar .switch-label { flex-basis: 100%; }
-      .details { grid-column: 1; grid-row: 3; }
-      .details-card .modal-actions { grid-row: 4; }
+      #modal { padding: 8px; }
+      .modal-card.details-card { grid-template-columns: 100px minmax(0, 1fr); height: calc(100vh - 16px); }
+      .details-card .modal-head { padding: 12px; gap: 10px; }
+      .detail-sidebar .cover { width: calc(100% - 12px); margin: 12px 0 12px 12px; }
+      .detail-activity { padding: 0 12px 10px; gap: 6px; }
+      .game-activity-item { padding: 8px; }
+      .game-activity-item strong, .game-activity-item time { font-size: 13px; }
+      .details .fakelib-controls .btn { padding: 8px; font-size: 13px; }
+      .details .fakelib-switch { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+      .details .switch-label { flex-basis: 100%; }
       .modal-head, .details { padding: 18px; }
       .modal-head h2 { font-size: 21px; }
       .details { grid-template-columns: 1fr; }
@@ -1099,6 +1135,7 @@
             <p class="subtle" id="modalSubtitle"></p>
             <div class="badges" id="modalBadges"></div>
           </div>
+          <p id="modalContentId" class="detail-content-id" hidden></p>
         </div>
         <button class="btn close" id="closeModal" type="button" aria-label="Close" data-i18n-aria-label="close">&times;</button>
       </div>
@@ -3077,6 +3114,24 @@
         if (values.length !== extendedTranslationKeys.length) throw new Error(`Invalid extended translation catalog: ${locale}`);
         Object.assign(translations[locale], Object.fromEntries(extendedTranslationKeys.map((key, index) => [key, values[index]])));
       }
+      Object.assign(translations["en-US"], {
+        activeGame: "Running", playedTime: "Time played", installedAt: "Installed",
+        relativeAgo: "{time} ago", timeDay: "d", timeHour: "h", timeMinute: "min", timeJustNow: "Less than a minute ago",
+        beforePatchVersion: "before update {version}",
+        xmlPatches: "XML patches", xmlPatchEmpty: "No XML patches found. Add {title}.xml to {directory}.",
+        xmlPatchHint: "Changes apply on the next game launch. Patches must match the installed game version.",
+        xmlPatchVersion: "Game versions: {version} · Module: {module}", xmlPatchRequires: "Requires: {modes}",
+        xmlPatchMismatch: "Different game version", xmlPatchUnsupported: "Unsupported patch", xmlPatchSaved: "Patch selection saved"
+      });
+      Object.assign(translations["ru-RU"], {
+        activeGame: "Игра запущена", playedTime: "Время в игре", installedAt: "Установлена",
+        relativeAgo: "{time} назад", timeDay: "дн.", timeHour: "ч", timeMinute: "мин.", timeJustNow: "Менее минуты назад",
+        beforePatchVersion: "до патча {version}",
+        xmlPatches: "XML-патчи", xmlPatchEmpty: "XML-патчи не найдены. Добавьте {title}.xml в {directory}.",
+        xmlPatchHint: "Изменения применяются при следующем запуске игры. Патчи должны соответствовать установленной версии игры.",
+        xmlPatchVersion: "Версии игры: {version} · Модуль: {module}", xmlPatchRequires: "Требуется: {modes}",
+        xmlPatchMismatch: "Другая версия игры", xmlPatchUnsupported: "Патч не поддерживается", xmlPatchSaved: "Выбор патчей сохранён"
+      });
       translations["en-GB"] = translations["en-US"];
       translations["es-MX"] = translations["es-ES"];
       translations["fr-CA"] = translations["fr-FR"];
@@ -3372,6 +3427,7 @@
 
       function gameCard(game) {
         const card = node("article", "game-card");
+        card.classList.toggle("is-active", Boolean(game.active));
         card.append(coverFor(game));
         const body = node("div", "game-main");
         const heading = node("div", "game-heading");
@@ -3386,6 +3442,7 @@
         }
         body.append(heading);
         const badges = node("div", "badges");
+        if (game.active) badges.append(badge(t("activeGame"), "active-game"));
         badges.append(badge(game.platform || t("unknown")));
         badges.append(badge(game.source_type === "pkg" ? "PKG" : game.image_backed ? (game.image_type || t("image")) : t("folder"), game.image_backed ? "image" : ""));
         if (game.mounted) badges.append(badge(t("mounted"), "live"));
@@ -3401,7 +3458,7 @@
         details.className = "game-open";
         details.type = "button";
         details.setAttribute("data-title-id", game.title_id);
-        details.setAttribute("aria-label", `${game.title_name || game.title_id} · ${t("details")}`);
+        details.setAttribute("aria-label", `${game.title_name || game.title_id} · ${game.active ? `${t("activeGame")} · ` : ""}${t("details")}`);
         details.tabIndex = playStationBrowser ? 0 : -1;
         details.addEventListener("click", () => showDetails(game.title_id));
         actions.append(details);
@@ -3413,7 +3470,7 @@
       function filteredGames() {
         const query = $("search").value.trim().toLocaleLowerCase(currentLanguage);
         const filter = $("filter").value;
-        return state.games.filter((game) => {
+        const games = state.games.filter((game) => {
           const matchesFilter = filter === "all" ||
             (filter === "folder" && game.source_type === "folder") ||
             (filter === "image" && game.image_backed) ||
@@ -3424,6 +3481,9 @@
           return [game.title_name, game.title_id, game.content_id, game.path]
             .some((value) => String(value || "").toLocaleLowerCase(currentLanguage).includes(query));
         });
+        const active = games.findIndex(game => game.active);
+        if (active > 0) games.unshift(games.splice(active, 1)[0]);
+        return games;
       }
 
       function renderGames() {
@@ -4338,21 +4398,139 @@
         return section;
       }
 
+      function gameXmlPatches(game) {
+        const section = node("section", "installed-content xml-patches");
+        section.append(node("h3", "subtle", t("xmlPatches")));
+        const list = node("div", "xml-patch-list", t("loading"));
+        section.append(list, node("p", "subtle fakelib-hint", t("xmlPatchHint")));
+        const draw = (result) => {
+          replaceContent(list);
+          if (!result.patches?.length) {
+            list.append(node("p", "subtle", t("xmlPatchEmpty", { title: game.title_id, directory: result.directory })));
+            return;
+          }
+          for (const patch of result.patches) {
+            const row = node("div", "content-dlc-row xml-patch-row");
+            const label = node("div", "xml-patch-description");
+            label.append(node("strong", "", patch.name), node("p", "subtle", t("xmlPatchVersion", { version: patch.app_version, module: patch.module })));
+            if (patch.author) label.append(node("p", "subtle", patch.author));
+            if (patch.note) label.append(node("p", "subtle", patch.note));
+            if (patch.requires) label.append(node("p", "subtle", t("xmlPatchRequires", { modes: patch.requires })));
+            if (!patch.compatible) label.append(badge(t("xmlPatchMismatch")));
+            if (!patch.supported) label.append(node("p", "subtle", patch.error || t("xmlPatchUnsupported")));
+            const button = actionButton(t(patch.enabled ? "ps4ProfileOn" : "ps4ProfileOff"), async () => {
+              if (section.dataset.saving) return;
+              section.dataset.saving = "1";
+              const focused = patch.id;
+              for (const control of section.querySelectorAll("button")) control.disabled = true;
+              try {
+                const updated = await api("/games/patches", { title_id: game.title_id, id: patch.id, enabled: !patch.enabled });
+                if (state.selected !== game || !section.isConnected) return;
+                draw(updated);
+                toast(t("xmlPatchSaved"));
+                focusControl(section.querySelector(`[data-patch-id="${focused}"]`));
+              } catch (error) {
+                if (state.selected === game && section.isConnected) {
+                  draw(result);
+                  toast(errorMessage(error), true);
+                  focusControl(section.querySelector(`[data-patch-id="${focused}"]`));
+                }
+              } finally { delete section.dataset.saving; }
+            }, "xml-patch-toggle");
+            button.setAttribute("aria-label", `${patch.name}: ${t(patch.enabled ? "ps4ProfileOn" : "ps4ProfileOff")}`);
+            button.setAttribute("aria-pressed", String(Boolean(patch.enabled)));
+            button.dataset.patchId = patch.id;
+            button.disabled = !patch.enabled && (!patch.compatible || !patch.supported);
+            row.append(label, button);
+            list.append(row);
+          }
+        };
+        api("/games/patches", { title_id: game.title_id }).then((result) => {
+          if (state.selected === game && section.isConnected) draw(result);
+        }).catch((error) => {
+          if (state.selected === game && section.isConnected) replaceContent(list, node("p", "subtle", errorMessage(error)));
+        });
+        return section;
+      }
+
+      function parseGameDate(value) {
+        if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(value)) return null;
+        let iso = value.trim().replace(" ", "T");
+        if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso)) iso += "Z";
+        const date = new Date(iso);
+        return Number.isFinite(date.getTime()) ? date : null;
+      }
+
+      function formatGameDate(value) {
+        const date = parseGameDate(value);
+        return date ? date.toLocaleString(currentLanguage, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : t("unavailable");
+      }
+
+      function formatPlayTime(seconds, days = false) {
+        if (!Number.isFinite(seconds) || seconds < 0) return t("unavailable");
+        let minutes = Math.floor(seconds / 60);
+        const parts = [];
+        if (days && minutes >= 1440) {
+          parts.push(`${Math.floor(minutes / 1440)} ${t("timeDay")}`);
+          minutes %= 1440;
+        }
+        if (minutes >= 60) { parts.push(`${Math.floor(minutes / 60)} ${t("timeHour")}`); minutes %= 60; }
+        parts.push(`${minutes} ${t("timeMinute")}`);
+        return parts.join(" ");
+      }
+
+      function formatLastLaunch(value) {
+        const date = parseGameDate(value);
+        if (!date) return t("unavailable");
+        const seconds = Math.max(0, (Date.now() - date.getTime()) / 1000);
+        return seconds < 60 ? t("timeJustNow") : t("relativeAgo", { time: formatPlayTime(seconds, true) });
+      }
+
+      function refreshDetailClock(game) {
+        clearTimeout(state.detailClockTimer);
+        if ($("modal").hidden || state.selected !== game) return;
+        const last = $("detailSidebar").querySelector("[data-last-launch]");
+        if (last) last.textContent = game.active ? t("activeGame") : formatLastLaunch(game.last_access_time);
+        state.detailClockTimer = setTimeout(() => refreshDetailClock(game), 60000);
+      }
+
       function renderDetails(game, focusRuntimeAction = false) {
         state.selected = game;
         $("modalTitle").textContent = game.title_name || game.title_id;
         $("modalSubtitle").textContent = `${game.title_id} · ${(game.platform || t("unknown")).toUpperCase()}`;
+        $("modalContentId").hidden = !game.content_id;
+        $("modalContentId").textContent = game.content_id || "";
         const details = $("details");
         replaceContent(details);
         const sidebar = $("detailSidebar");
         replaceContent(sidebar);
         sidebar.append(coverFor(game, true));
+        const activity = node("section", "detail-activity");
+        const installed = node("div", "game-activity-item detail-install");
+        installed.append(node("span", "", t("installedAt")), node("time", "", formatGameDate(game.install_time)));
+        activity.append(installed);
+        sidebar.append(activity);
         const content = node("div");
         const badges = $("modalBadges");
         replaceContent(badges);
         badges.append(badge(game.source_type === "folder" ? t("folder") : game.source_type === "image" ? t("image") : game.source_type));
         if (game.image_type) badges.append(badge(game.image_type, "image"));
         if (game.mounted) badges.append(badge(t("mounted"), "live"));
+        if (game.active) badges.append(badge(t("activeGame"), "active-game"));
+        let versionText = `${t("gameVersion")}: ${game.version || t("unavailable")}`;
+        if (game.patch_info_status === 0 && game.patch?.installed)
+          versionText += ` (${t("beforePatchVersion", { version: game.base_version || t("unavailable") })})`;
+        badges.append(badge(versionText, "game-version"));
+        for (const [label, value, lastLaunch] of [
+          ["lastLaunch", game.active ? t("activeGame") : formatLastLaunch(game.last_access_time), true],
+          ["playedTime", formatPlayTime(game.play_time_seconds), false]
+        ]) {
+          const item = node("div", "game-activity-item");
+          const text = node("strong", "", value);
+          if (lastLaunch) { text.dataset.lastLaunch = ""; text.title = formatGameDate(game.last_access_time); }
+          item.append(node("span", "", t(label)), text);
+          activity.append(item);
+        }
         const grid = node("div", "detail-grid");
         const sizes = node("section", "detail-sizes");
         sizes.setAttribute("aria-label", t("detailSizes"));
@@ -4388,17 +4566,9 @@
           }
         });
         sizes.append(total, bar, legend);
-        detailRow(grid, t("contentId"), game.content_id);
-        const version = detailRow(grid, t("gameVersion"), game.version);
-        if (game.patch_info_status === 0 && game.patch?.installed) {
-          version.append(node("span", "detail-base-version", t("baseVersionBeforePatch", { version: game.base_version || t("unavailable") })));
-        }
         detailRow(grid, t("source"), game.path);
         detailRow(grid, t("runtimePath"), game.runtime_path);
         if (game.backport_path) detailRow(grid, t("backport"), game.backport_path);
-        detailRow(grid, t("systemSize"), formatBytes(game.app_db_size_bytes), t("systemSizeHint"));
-        detailRow(grid, t("installed"), game.install_time);
-        detailRow(grid, t("lastLaunch"), game.last_access_time);
         content.append(sizes, installedContentFor(game), grid);
         if (game.can_configure_ps4_profile) {
           const policy = node("section", "fakelib-controls ps4-profile-controls");
@@ -4430,13 +4600,19 @@
               setGamePolicy(game, button, settings, "ps4-profile");
             }, `ps4-profile-${field}`);
             button.value = mode;
+            const effective = game.ps4_profile_effective?.[field] ??
+              (mode === "default" ? Boolean(game.ps4_profile_default?.[field]) : mode !== "off");
+            button.setAttribute("aria-pressed", String(Boolean(effective)));
+            button.setAttribute("aria-label", `${t(label)}: ${value}`);
+            replaceContent(button);
+            button.append(node("span", "policy-label", t(label)), node("span", "policy-value", value));
             button.disabled = Boolean(state.gamePolicySaving);
             policy.append(button);
           }
           policy.append(node("p", "subtle fakelib-hint", t("fakelibNextLaunch")));
           policy.append(node("p", "subtle fakelib-hint", t("ps4VideoHint")));
           policy.append(node("p", "subtle fakelib-hint", t(game.ps4_memory_supported === false ? "ps4MemoryUnavailable" : "ps4MemoryHint")));
-          sidebar.append(policy);
+          content.append(policy);
         }
         if (game.can_toggle_fakelib) {
           const policy = node("section", "fakelib-controls");
@@ -4448,6 +4624,7 @@
           const modeButton = actionButton(t(modeKeys[mode], { mode: t(defaultModeKey) }), () =>
             setGamePolicy(game, modeButton, { mode: modes[(modes.indexOf(mode) + 1) % modes.length] }), "fakelib-mode");
           modeButton.value = mode;
+          modeButton.setAttribute("aria-pressed", String(Boolean(game.fakelib_effective_enabled)));
           modeButton.title = t("changeFakelibMode");
           modeButton.setAttribute("aria-label", `${t("fakelibMode")}: ${modeButton.textContent}. ${t("changeFakelibMode")}`);
           const ignore = actionButton("", () => setGamePolicy(game, ignore, { ignore_global_fakelib: !game.ignore_global_fakelib }), "fakelib-switch");
@@ -4459,9 +4636,11 @@
           if (game.fakelib_enabled && !game.fakelib_effective_enabled) {
             policy.append(node("p", "subtle fakelib-hint", t("fakelibGloballyDisabled")));
           }
-          sidebar.append(policy);
+          content.append(policy);
         }
+        content.append(gameXmlPatches(game));
         details.append(content);
+        refreshDetailClock(game);
 
         const actions = $("modalActions");
         replaceContent(actions);
@@ -4502,6 +4681,7 @@
       }
 
       async function showDetails(titleId) {
+        clearTimeout(state.detailClockTimer);
         const request = {};
         state.detailRequest = request;
         state.selected = null;
@@ -4509,6 +4689,8 @@
         $("modal").hidden = false;
         $("modalTitle").textContent = t("loading");
         $("modalSubtitle").textContent = titleId;
+        $("modalContentId").hidden = true;
+        $("modalContentId").textContent = "";
         replaceContent($("modalBadges"));
         replaceContent($("details"), node("div", "empty", t("loadingSource")));
         replaceContent($("modalActions"));
@@ -4523,6 +4705,7 @@
       }
 
       function closeModal() {
+        clearTimeout(state.detailClockTimer);
         state.detailRequest = null;
         $("modal").hidden = true;
         state.selected = null;
@@ -4840,7 +5023,7 @@
             renderDetails(state.selected);
             if (restoreFocus && state.selected.title_id === game.title_id) {
               const selector = kind === "ps4-profile" ? ".ps4-profile-controls button" : ".fakelib-controls:not(.ps4-profile-controls) button";
-              focusControl($("detailSidebar").querySelectorAll(selector)[focusedIndex]);
+              focusControl($("details").querySelectorAll(selector)[focusedIndex]);
             }
           }
         }
@@ -4981,6 +5164,7 @@
         window.scrollTo(0, 0);
         focusControl($({ library: "libraryTab", console: "consoleTab", packages: "packagesTab" }[view]));
         if (view === "packages") { refreshPackages(); refreshStorage(); }
+        if (view === "library") refreshLibrary();
       }
 
       function switchMainTab(direction) {

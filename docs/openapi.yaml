@@ -454,6 +454,72 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/games/patches:
+    options:
+      operationId: preflightGameXmlPatches
+      tags: [Games]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: gameXmlPatches
+      summary: List XML patches or save one selection for the next launch
+      tags: [Games]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title_id]
+              properties:
+                title_id:
+                  $ref: "#/components/schemas/TitleId"
+                id:
+                  type: string
+                  pattern: "^[0-9a-f]{16}$"
+                  description: Together with enabled, updates one catalog entry.
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Catalog and saved selections; defaults are off. Unsupported or version-mismatched entries can only be disabled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: integer, const: 0}
+                  title_id: {type: string}
+                  version: {type: string}
+                  directory: {type: string}
+                  saved: {type: boolean}
+                  applies_on_next_launch: {type: boolean, const: true}
+                  patches:
+                    type: array
+                    maxItems: 256
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        author: {type: string}
+                        note: {type: string}
+                        app_version: {type: string}
+                        module: {type: string}
+                        requires: {type: string}
+                        error: {type: string}
+                        enabled: {type: boolean}
+                        compatible: {type: boolean}
+                        supported: {type: boolean}
+                        line_count: {type: integer}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/games/fakelib:
     options:
       operationId: preflightGameFakelib
@@ -2342,6 +2408,14 @@ components:
         last_access_time:
           type: string
           description: AppInfoJson #_last_access_time value, falling back to app.db lastAccessTime, or an empty string.
+        active:
+          type: boolean
+          description: The game's process is currently running, including in the background.
+        play_time_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Foreground console user's system play-time total; omitted when unavailable.
         install_time:
           type: string
           description: AppInfoJson #_install_time value, falling back to app.db installTime, or an empty string.

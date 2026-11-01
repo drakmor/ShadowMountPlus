@@ -20,6 +20,8 @@ typedef struct {
   char metadata_path[MAX_PATH];
   int platform;
   uint64_t installed_size;
+  uint64_t play_time_seconds;
+  bool play_time_known;
 } sm_app_db_game_info_t;
 
 // Close the cached app.db handle and release related resources.

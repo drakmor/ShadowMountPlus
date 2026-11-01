@@ -128,6 +128,12 @@ jobs:
           makepkg -c -f
           sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
 
+      - name: Build PS5 expat package
+        working-directory: pacbrew-repo/expat
+        run: |
+          makepkg -c -f
+          sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+
       - name: Build PS5 libsmb2 package
         working-directory: pacbrew-repo/libsmb2
         run: |

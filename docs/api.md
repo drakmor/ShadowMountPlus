@@ -49,6 +49,8 @@ local network access must still be enabled for connections from another device.
 | `/api/v1/games` | `{"include_size":false}` | Detailed game snapshot; optional physical source-size calculation |
 | `/api/v1/games/info` | `{"title_id":"PPSA12345"}` | Detailed installed-game and source information for one game; size is always calculated |
 | `/api/v1/games/ps4-profile` | `{"title_id":"CUSA12345","pro":"default","cpu":"default","gpu":"default"}` | Save per-game PS4 profile overrides for the next launch |
+| `/api/v1/games/patches` | `{"title_id":"CUSA12345"}` | List XML patch IDs, names, versions, modules, requirements, compatibility and selection state |
+| `/api/v1/games/patches` | `{"title_id":"CUSA12345","id":"0123456789abcdef","enabled":true}` | Persist one XML patch selection for the next launch; incompatible/unsupported entries cannot be enabled |
 | `/api/v1/games/fakelib` | `{"title_id":"PPSA12345","mode":"emulators"}` | Persist the PS5 game's fakelib policy for its next launch |
 | `/api/v1/games/fakelib` | `{"title_id":"PPSA12345","ignore_global_fakelib":true}` | Ignore the global fakelib overlay for this PS5 game on its next launch |
 | `/api/v1/games/icon?title_id=PPSA12345[&size=thumb\|card\|cover]` | GET | Stream the original PNG or a cached icon variant |
@@ -242,6 +244,11 @@ Library entries include `patch_info_status` and `dlc_info_status`, with
 `base_version` reports the original base-PKG version in game details, or an
 empty string if unavailable. Patch detection and `base_version` apply only to
 PKG games.
+
+Game entries and details include `active` for the currently running game.
+Optional `play_time_seconds` reports the foreground console user's system
+play-time total. It is omitted when that statistic is unavailable.
+Unpopulated zero counters are treated as unavailable, rather than zero time played.
 
 `POST /api/v1/games/content/uninstall` removes only the patch (`kind=patch`) or
 the DLC identified by `content_id` (`kind=dlc`). Runtime protections and

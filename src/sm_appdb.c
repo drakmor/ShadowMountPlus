@@ -621,6 +621,50 @@ static void apply_app_info_metadata(sqlite3_stmt *stmt, int column,
   json_object_put(app_info);
 }
 
+static void load_game_play_times(sqlite3 *db, sm_app_db_game_info_t *entries, size_t count) {
+  if (!count) return;
+  int32_t user_id = -1;
+  if (sceUserServiceGetForegroundUser(&user_id) != 0 || user_id < 0) return;
+  const char *formats[] = {
+    "SELECT titleId,gltTotalPlayedTime,lastPlayedDateOnConsole FROM tbl_iconinfo_%010u;",
+    "SELECT primaryTitleId,totalPlayedTime,lastPlayedDateOnConsole FROM tbl_concepticoninfo_%010u;"
+  };
+  for (size_t table = 0; table < sizeof(formats) / sizeof(formats[0]); ++table) {
+    char sql[192];
+    snprintf(sql, sizeof(sql), formats[table], (unsigned)user_id);
+    sqlite3_stmt *stmt = NULL;
+    // These user-library tables/fields are optional on older firmware.
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+      sqlite3_finalize(stmt);
+      continue;
+    }
+    int result;
+    while (!should_stop_requested() && !runtime_sleep_mode_active() &&
+           (result = sqlite3_step(stmt)) == SQLITE_ROW) {
+      const char *title = (const char *)sqlite3_column_text(stmt, 0);
+      if (!title) continue;
+      const sm_app_db_game_info_t *found = app_db_find_game_info(entries, count, title);
+      if (!found) continue;
+      sm_app_db_game_info_t *entry = &entries[found - entries];
+      if (!entry->play_time_known && sqlite3_column_type(stmt, 1) == SQLITE_INTEGER) {
+        sqlite3_int64 seconds = sqlite3_column_int64(stmt, 1);
+        // Offline/unpopulated user-library entries also contain zero. Only a
+        // positive counter proves that play-time data is available; keep
+        // looking in the fallback table instead of publishing a false zero.
+        if (seconds > 0) {
+          entry->play_time_known = true;
+          entry->play_time_seconds = (uint64_t)seconds;
+        }
+      }
+      const char *played = (const char *)sqlite3_column_text(stmt, 2);
+      if (played && strlen(played) < sizeof(entry->last_access_time) &&
+          strcmp(played, entry->last_access_time) > 0)
+        strlcpy(entry->last_access_time, played, sizeof(entry->last_access_time));
+    }
+    sqlite3_finalize(stmt);
+  }
+}
+
 bool app_db_game_info_snapshot(sm_app_db_game_info_t **entries_out,
                                size_t *count_out) {
   if (!entries_out || !count_out)
@@ -715,6 +759,7 @@ bool app_db_game_info_snapshot(sm_app_db_game_info_t **entries_out,
   }
 
   (void)sqlite3_finalize(stmt);
+  if (loaded) load_game_play_times(db, entries, count);
   if (!close_sqlite_handle(&db, "game metadata snapshot"))
     loaded = false;
   if (!loaded) {
