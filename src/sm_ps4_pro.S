@@ -1,4 +1,4 @@
-/* Validate the selected title, publish its clock flags, optionally force Pro. */
+/* Validate the selected title, publish its flags, optionally enable Pro/HFR. */
 .intel_syntax noprefix
 .text
 .global sm_ps4_pro_start
@@ -30,10 +30,14 @@ sm_ps4_pro_start:
     jne 3f
     mov dl, [rip+sm_ps4_pro_policy]
     mov byte ptr [r10], dl
-    test dl, 4
-    je 4f
     mov ecx, [rip+sm_ps4_pro_attribute]
-    or dword ptr [r12+rcx], 0x00800000
+    test dl, 4
+    je 2f
+    or byte ptr [r12+rcx+2], 0x80  // ATTRIBUTE.Pro (bit 23)
+2:
+    test dl, 32
+    je 4f
+    or byte ptr [r12+rcx+8], 0x40  // ATTRIBUTE3.HFR (bit 6)
     jmp 4f
 3:
     // Missing/mismatched IPC selection: don't inherit the previous game's boost.

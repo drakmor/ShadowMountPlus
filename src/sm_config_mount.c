@@ -476,7 +476,7 @@ bool sm_config_ps4_hooks_needed(uint64_t *revision) {
     const sm_ps4_settings_t *settings = &cfg->ps4_rules[i].settings;
     needed = settings->pro == SM_PS4_ON || settings->cpu == SM_PS4_ON ||
              settings->gpu == SM_PS4_ON || settings->memory == SM_PS4_ON ||
-             settings->gpu_mhz == 2350;
+             settings->video_120hz == SM_PS4_ON || settings->gpu_mhz == 2350;
   }
   *revision = cfg->ps4_revision;
   pthread_mutex_unlock(&g_runtime_state_mutex);

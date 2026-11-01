@@ -498,7 +498,7 @@ bool sm_ps4_profiles_apply_title(const char *title_id, bool launching,
     return true;
   pthread_mutex_lock(&g_ps4_mutex);
   requested = sm_config_is_ps4_title(title_id) ? requested & 63u : 0;
-  uint8_t policy = requested & 23u;
+  uint8_t policy = requested & 55u;
   bool ok = !g_ps4.stopped_on_error;
   // Begin with both policies disarmed. The title token may be copied in parts;
   // no policy becomes visible until the complete token has been verified.
@@ -567,11 +567,11 @@ bool sm_ps4_profiles_apply_title(const char *title_id, bool launching,
   if (ok) {
     g_ps4.config_revision = revision;
     if (launching && sm_config_is_ps4_title(title_id))
-      log_debug("  [PS4] launch policy selected: %s Pro=%s CPU=%s GPU=%s memory=%s; "
+      log_debug("  [PS4] launch policy selected: %s Pro=%s CPU=%s GPU=%s memory=%s HFR=%s; "
                 "publication verified (clock request follows SFO validation)",
                 title_id, policy & 4u ? "on" : "stock",
                 policy & 1u ? "Pstate0" : "stock", policy & 16u ? "2350MHz target" : policy & 2u ? "2200MHz target" : "stock",
-                requested & 8u ? "8GB" : "stock");
+                requested & 8u ? "8GB" : "stock", policy & 32u ? "on" : "stock");
   }
   pthread_mutex_unlock(&g_ps4_mutex);
   return ok;
@@ -589,13 +589,14 @@ void sm_ps4_profiles_on_exec(const char *title_id) {
         read_bytes(pro + symbol_offset(sm_ps4_pro_policy, sm_ps4_pro_start), &flags, 1) &&
         read_bytes(clock + symbol_offset(sm_ps4_clock_policy, sm_ps4_clock_start), &clocks, 1)) {
       bool accepted = !memcmp(title, title_id, sizeof(title)) && flags && clocks == flags;
-      log_debug("  [PS4] SFO readback: %s accepted=%s Pro=%s CPU_request=%s GPU_request=%s "
+      log_debug("  [PS4] SFO readback: %s accepted=%s Pro=%s CPU_request=%s GPU_request=%s HFR=%s "
                 "flags=0x%x clocks=0x%x (hardware clocks not sampled)",
                 title_id, accepted ? "yes" : "not observed",
                 accepted && (flags & 4u) ? "enabled" : "not confirmed",
                 accepted && (flags & 1u) ? "Pstate0 armed" : "stock/unconfirmed",
                 accepted && (flags & 16u) ? "2350MHz armed" :
-                accepted && (flags & 2u) ? "2200MHz armed" : "stock/unconfirmed", flags, clocks);
+                accepted && (flags & 2u) ? "2200MHz armed" : "stock/unconfirmed",
+                accepted && (flags & 32u) ? "permitted" : "stock/unconfirmed", flags, clocks);
     } else {
       log_debug("  [PS4] SFO readback unavailable: %s", title_id);
     }

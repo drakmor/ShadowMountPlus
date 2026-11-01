@@ -369,6 +369,9 @@ static void test_ps4_settings(void) {
   uint64_t default_revision;
   assert(!sm_config_ps4_hooks_needed(&default_revision));
   assert(ps4_policy("CUSA27145") == 0 && ps4_policy("PPSA13197") == 0);
+  put_file(PROFILES_FILE, "[config]\nversion=2\n[game:CUSA27145]\nps4_120hz=on\n");
+  assert(load_runtime_config() && ps4_policy("CUSA27145") == 32);
+  assert(sm_config_ps4_hooks_needed(&default_revision));
   put_file(CONFIG_FILE, "[config]\nversion=2\n[api]\nport=10102\n[ps4]\nforce_pro=off\n");
   put_file(PROFILES_FILE, "[config]\nversion=2\n[game:CUSA27145] # keep game comment\n"
       "fakelib=emulators\nignore_global_fakelib=on\nps4_pro=off # keep Pro comment\n"
