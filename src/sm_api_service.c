@@ -3775,6 +3775,12 @@ static bool destination_is_managed(const char *destination) {
       !usb_storage_root_mounted(destination)) {
     return false;
   }
+  if (path_matches_root_or_child(destination, "/mnt/ext1")) {
+    struct statfs filesystem;
+    if (statfs("/mnt/ext1", &filesystem) != 0 ||
+        strcmp(filesystem.f_mntonname, "/mnt/ext1") != 0)
+      return false;
+  }
   for (int i = 0; i < get_scan_path_count(); ++i) {
     char scan_path[MAX_PATH];
     if (!get_scan_path(i, scan_path))
