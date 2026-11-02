@@ -19,7 +19,7 @@ bool path_matches_root_or_child(const char *path, const char *root);
 // Match equal paths or ancestor/child paths, including existing symlink aliases.
 // Lexically overlapping paths need no filesystem lookup.
 bool paths_overlap(const char *a, const char *b);
-// Return true when a path lives on USB-backed storage.
+// Return true for USB slots and extended USB storage (ext0), excluding M.2 (ext1).
 bool is_usb_storage_path(const char *path);
 // Return true when the path's USB root is mounted, not just an empty mount
 // point under /mnt.
