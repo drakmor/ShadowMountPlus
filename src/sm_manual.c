@@ -489,6 +489,22 @@ static bool rewrite_manual_list_without_deleted_entries(int entry_count) {
   return true;
 }
 
+bool sm_manual_prepare_reinstall(const char *title_id) {
+  int entry_count = load_manual_status();
+  if (entry_count < 0)
+    return false;
+  bool changed = false;
+  for (int i = 0; i < entry_count; ++i) {
+    manual_status_entry_t *entry = &g_manual_status_entries[i];
+    if (entry->status != MANUAL_STATUS_UNKNOWN &&
+        strcmp(entry->title_id, title_id) == 0) {
+      entry->status = MANUAL_STATUS_UNKNOWN;
+      changed = true;
+    }
+  }
+  return !changed || write_manual_status(entry_count);
+}
+
 bool sm_manual_reconcile_deleted_titles(
     const struct AppDbTitleList *app_db_titles, bool app_db_titles_ready) {
   if (!app_db_titles_ready || !app_db_titles)

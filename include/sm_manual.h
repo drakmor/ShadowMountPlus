@@ -16,6 +16,9 @@ bool sm_manual_for_each_path(bool (*visit)(const char *path, void *ctx),
 // replaced atomically and changed_out reports whether its contents changed.
 bool sm_manual_add_path(const char *path, bool *changed_out);
 bool sm_manual_remove_path(const char *path, bool *changed_out);
+// Keep manual sources when an explicit reinstall removes their registration.
+// The caller must hold the scanner mutation gate.
+bool sm_manual_prepare_reinstall(const char *title_id);
 // Mark previously installed manual titles as deleted when they disappear from
 // app.db, and remove their source lines from manual.lst.
 bool sm_manual_reconcile_deleted_titles(const struct AppDbTitleList *app_db_titles,

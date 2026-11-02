@@ -160,6 +160,7 @@ typedef struct runtime_config {
   bool api_enabled;
   bool debug_enabled;
   bool quiet_mode;
+  bool child_mode;
   bool mount_read_only;
   bool force_mount;
   bool persistent_image_mounts;

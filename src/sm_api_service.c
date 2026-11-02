@@ -17,6 +17,7 @@
 #include "sm_game_cache.h"
 #include "sm_game_lifecycle.h"
 #include "sm_game_patches.h"
+#include "sm_patch_sources.h"
 #include "sm_gameinfo.h"
 #include "sm_icon_thumb.h"
 #include "sm_image.h"
@@ -71,6 +72,12 @@ extern unsigned int smp_icon_png_len;
 
 int sceKernelConvertUtcToLocaltime(time_t utc, time_t *local, void *timezone,
                                   int32_t *dst_seconds);
+int sceSystemServiceLaunchApp(const char *title_id, const char **argv, void *params);
+int sceLncUtilGetAppIdOfRunningBigApp(void);
+int sceLncUtilGetAppTitleId(uint32_t app_id, char *title_id);
+int sceLncUtilKillApp(uint32_t app_id);
+
+static pthread_mutex_t g_game_control_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
   pthread_t thread;
@@ -1540,6 +1547,35 @@ static void handle_images(struct MHD_Connection *fd) {
                          image_to_json);
 }
 
+static bool add_patch_badge_fields(struct json_object *item, unsigned available, unsigned applied, unsigned enabled) {
+  return add_json_bool(item, "has_patches", (available | applied | enabled) & SM_PATCH_BADGE_PATCHES) &&
+         add_json_bool(item, "has_cheats", (available | applied | enabled) & SM_PATCH_BADGE_CHEATS) &&
+         add_json_bool(item, "patches_applied", applied & SM_PATCH_BADGE_PATCHES) &&
+         add_json_bool(item, "cheats_applied", applied & SM_PATCH_BADGE_CHEATS) &&
+         add_json_bool(item, "patches_enabled", enabled & SM_PATCH_BADGE_PATCHES) &&
+         add_json_bool(item, "cheats_enabled", enabled & SM_PATCH_BADGE_CHEATS);
+}
+
+static bool add_game_patch_badges(struct json_object *games, const sm_patch_source_config_t *sources) {
+  size_t count = json_object_array_length(games);
+  if (!count) return true;
+  sm_patch_badges_t *items = calloc(count, sizeof(*items));
+  if (!items) return false;
+  for (size_t i = 0; i < count; ++i) {
+    struct json_object *game = json_object_array_get_idx(games, i);
+    items[i].title_id = json_object_get_string(json_object_object_get(game, "title_id"));
+    items[i].version = json_object_get_string(json_object_object_get(game, "version"));
+    if (!items[i].version) items[i].version = "";
+  }
+  // A catalog error must not make the game library inaccessible.
+  (void)sm_game_patches_badges(items, count, sources);
+  bool ok = true;
+  for (size_t i = 0; ok && i < count; ++i)
+    ok = add_patch_badge_fields(json_object_array_get_idx(games, i), items[i].available, items[i].applied, items[i].enabled);
+  free(items);
+  return ok;
+}
+
 static void handle_games(struct MHD_Connection *fd,
                          struct json_object *request) {
   bool include_size = false;
@@ -1641,7 +1677,7 @@ static void handle_games(struct MHD_Connection *fd,
     send_out_of_memory_response(fd);
     return;
   }
-  if (!add_json_int(response, "count", (int64_t)json_object_array_length(games)) ||
+  if (!add_game_patch_badges(games, &cfg.patch_sources) || !add_json_int(response, "count", (int64_t)json_object_array_length(games)) ||
       !add_json_bool(response, "size_included", include_size)) {
     json_object_put(games);
     json_object_put(response);
@@ -1972,6 +2008,28 @@ static void handle_game_info(struct MHD_Connection *connection,
                         "title_id must be a valid PS4 or PS5 title ID");
     return;
   }
+  bool runtime_only = false;
+  if (!get_optional_bool(request, "runtime_only", false, &runtime_only)) {
+    send_error_response(connection, 400, EINVAL, "runtime_only must be boolean");
+    return;
+  }
+  if (runtime_only) {
+    char active_title[MAX_TITLE_ID];
+    (void)sm_game_lifecycle_active_title(active_title);
+    unsigned applied = sm_game_patches_applied_types(title_id);
+    struct json_object *response = new_status_response(0);
+    if (!response || !add_json_string(response, "title_id", title_id) ||
+        !add_json_bool(response, "active", !strcmp(title_id, active_title)) ||
+        !add_json_bool(response, "patches_applied", applied & SM_PATCH_BADGE_PATCHES) ||
+        !add_json_bool(response, "cheats_applied", applied & SM_PATCH_BADGE_CHEATS)) {
+      if (response) json_object_put(response);
+      send_out_of_memory_response(connection);
+      return;
+    }
+    (void)send_json_object(connection, 200, response);
+    json_object_put(response);
+    return;
+  }
   (void)MHD_set_connection_option(connection, MHD_CONNECTION_OPTION_TIMEOUT,
                                   0u);
 
@@ -2006,7 +2064,11 @@ static void handle_game_info(struct MHD_Connection *connection,
   }
   char active_title[MAX_TITLE_ID];
   (void)sm_game_lifecycle_active_title(active_title);
+  const char *version = json_object_get_string(json_object_object_get(response, "version"));
+  sm_patch_badges_t badges = {.title_id = title_id, .version = version ? version : ""};
+  (void)sm_game_patches_badges(&badges, 1, &cfg.patch_sources);
   if (!add_json_bool(response, "active", !strcmp(title_id, active_title)) ||
+      !add_patch_badge_fields(response, badges.available, badges.applied, badges.enabled) ||
       !add_game_data_sizes(response, title_id) ||
       !add_game_content_info(response, title_id, json_object_get_string(
           json_object_object_get(response, "content_id")), installed_pkg) ||
@@ -2138,6 +2200,7 @@ static int operation_http_status(int status) {
   case ELOOP:
     return 400;
   case ENOENT:
+  case ESRCH:
     return 404;
   case EACCES:
   case EPERM:
@@ -2614,6 +2677,7 @@ static void handle_settings(struct MHD_Connection *connection) {
                      strncmp(cfg.api_bind_address, "127.", 4) != 0) ||
       !add_json_bool(response, "debug", cfg.debug_enabled) ||
       !add_json_bool(response, "quiet_mode", cfg.quiet_mode) ||
+      !add_json_bool(response, "child_mode", cfg.child_mode) ||
       !add_json_bool(response, "update_emulators",
                      cfg.update_emulators_enabled) ||
       !add_json_string(response, "fakelib_default_mode",
@@ -2643,6 +2707,7 @@ static void handle_settings_update(struct MHD_Connection *connection,
   runtime_config_t current_cfg = runtime_config();
   bool debug_enabled = false;
   bool quiet_mode = false;
+  bool child_mode = current_cfg.child_mode;
   bool update_emulators = false;
   bool auto_update_ampr = current_cfg.auto_update_ampr_enabled;
   bool ps4_force_pro = current_cfg.ps4_force_pro;
@@ -2657,6 +2722,8 @@ static void handle_settings_update(struct MHD_Connection *connection,
   struct json_object *paths_value = NULL;
   if (!get_required_bool(request, "debug", &debug_enabled) ||
       !get_required_bool(request, "quiet_mode", &quiet_mode) ||
+      !get_optional_bool(request, "child_mode", current_cfg.child_mode,
+                         &child_mode) ||
       !get_required_bool(request, "update_emulators", &update_emulators) ||
       !get_optional_bool(request, "auto_update_ampr",
                          current_cfg.auto_update_ampr_enabled,
@@ -2747,7 +2814,7 @@ static void handle_settings_update(struct MHD_Connection *connection,
                     allow_lan_access,
                     (uint32_t)fan_value_int, paths, path_count,
                     fakelib_default_mode, ps4_force_pro, ps4_cpu_boost,
-                    ps4_gpu_boost)) {
+                    ps4_gpu_boost, child_mode)) {
     int status = valid && errno != 0 ? errno : EINVAL;
     free(paths);
     send_error_response(connection, operation_http_status(status), status,
@@ -2894,7 +2961,7 @@ static int resolve_storage_source(const char *title_id,
   return status;
 }
 
-static int request_game_uninstall(const char *title_id,
+static int request_game_uninstall(const char *title_id, bool reinstall,
                                   const char **error_out,
                                   bool *scan_queued_out) {
   *scan_queued_out = false;
@@ -2911,6 +2978,21 @@ static int request_game_uninstall(const char *title_id,
     return errno != 0 ? errno : EIO;
   if (!installed_pkg && !is_installed(title_id))
     return ENOENT;
+
+  if (reinstall) {
+    if (installed_pkg)
+      return EINVAL;
+    game_source_info_t info;
+    int status = resolve_storage_source(title_id, GAME_STORAGE_COPY, &info,
+                                         error_out);
+    if (status != 0)
+      return status;
+    struct stat st;
+    if (stat(info.physical_path, &st) != 0)
+      return errno != 0 ? errno : EIO;
+    if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
+      return EINVAL;
+  }
 
   bool title_prepared = sm_shellcore_service_title_is_prepared(title_id);
   if (sm_shellcore_service_has_prepared_mount() && !title_prepared &&
@@ -2936,13 +3018,18 @@ static int request_game_uninstall(const char *title_id,
   }
 
   bool source_missing = false;
-  if (!installed_pkg) {
+  if (!installed_pkg && !reinstall) {
     game_source_info_t info;
     const char *source_error = NULL;
     (void)resolve_storage_source(title_id, GAME_STORAGE_DELETE, &info,
                                  &source_error);
     source_missing = source_error && strcmp(source_error, "source_missing") == 0;
   }
+
+  // Reconciliation normally removes manual sources for deleted titles.
+  // An explicit reinstall must leave those sources available to the scan.
+  if (reinstall && !sm_manual_prepare_reinstall(title_id))
+    return errno != 0 ? errno : EIO;
 
   int platform_status = sceAppInstUtilAppUnInstall(title_id);
   if (platform_status != 0) {
@@ -2953,9 +3040,12 @@ static int request_game_uninstall(const char *title_id,
 
   invalidate_app_db_title_cache();
   reset_title_attempts(title_id, NULL, NULL);
-  if (source_missing)
-    *scan_queued_out = request_scan_now("HTTP API missing source uninstall requested");
-  log_debug("  [API] uninstall requested: title=%s", title_id);
+  if (source_missing || reinstall)
+    *scan_queued_out = request_scan_now(reinstall
+        ? "HTTP API game reinstall requested"
+        : "HTTP API missing source uninstall requested");
+  log_debug("  [API] %s requested: title=%s",
+            reinstall ? "reinstall" : "uninstall", title_id);
   return 0;
 }
 
@@ -2965,6 +3055,12 @@ static void handle_uninstall(struct MHD_Connection *fd,
   if (!title_id) {
     send_error_response(fd, 400, EINVAL,
                         "title_id must be a valid PS4 or PS5 title ID");
+    return;
+  }
+
+  bool reinstall = false;
+  if (!get_optional_bool(request, "reinstall", false, &reinstall)) {
+    send_error_response(fd, 400, EINVAL, "reinstall must be boolean");
     return;
   }
 
@@ -2979,7 +3075,7 @@ static void handle_uninstall(struct MHD_Connection *fd,
   }
   const char *error = NULL;
   bool scan_queued = false;
-  int status = request_game_uninstall(title_id, &error, &scan_queued);
+  int status = request_game_uninstall(title_id, reinstall, &error, &scan_queued);
   sm_shellcore_end_external_mutation();
   sm_scanner_end_external_mutation();
   if (status != 0) {
@@ -3296,9 +3392,14 @@ static void handle_game_patches(struct MHD_Connection *connection,
   sm_game_patch_list_t list;
   int error = sm_game_patches_list(title_id, version, &list);
   if (error) {
-    send_error_response(connection, operation_http_status(error), error, "XML patch catalog could not be read");
+    send_error_response(connection, operation_http_status(error), error, "patch/cheat catalog could not be read");
     return;
   }
+  sm_game_patches_runtime_state(title_id, &list);
+  struct json_object *apply = NULL;
+  bool live = json_object_object_get_ex(request, "apply", &apply);
+  if (live && !json_object_is_type(apply, json_type_boolean)) error = EINVAL;
+  live = live && json_object_get_boolean(apply);
   struct json_object *id = NULL, *enabled = NULL;
   bool update_id = json_object_object_get_ex(request, "id", &id);
   bool update_enabled = json_object_object_get_ex(request, "enabled", &enabled);
@@ -3306,32 +3407,48 @@ static void handle_game_patches(struct MHD_Connection *connection,
   if (update && (!update_id || !update_enabled ||
       !json_object_is_type(id, json_type_string) || !json_object_is_type(enabled, json_type_boolean) ||
       (size_t)json_object_get_string_len(id) != strlen(json_object_get_string(id)))) error = EINVAL;
+  if (live && !update) error = EINVAL;
   if (update && !error) {
     sm_game_patch_t *selected = NULL;
     for (size_t i = 0; i < list.count; ++i)
       if (!strcmp(list.entries[i].id, json_object_get_string(id))) selected = &list.entries[i];
     if (!selected) error = ENOENT;
     else if (json_object_get_boolean(enabled) && (!selected->compatible || !selected->supported)) error = EINVAL;
-    else {
+    else if (live) {
+      if (!strcmp(selected->format, "XML")) error = EINVAL;
+      else error = sm_game_cheat_request(title_id, selected->id, json_object_get_boolean(enabled));
+      sm_game_patches_runtime_state(title_id, &list);
+    } else {
       error = sm_game_patches_set_enabled(title_id, &list, selected->id, json_object_get_boolean(enabled));
-      if (!error) selected->enabled = json_object_get_boolean(enabled);
     }
   }
   if (error) {
     sm_game_patches_free(&list);
-    send_error_response(connection, operation_http_status(error), error, "invalid or incompatible patch selection");
+    send_error_response(connection, operation_http_status(error), error, "patch/cheat request rejected (version, process state, dependency or conflict)");
     return;
   }
   struct json_object *response = new_status_response(0), *patches = json_object_new_array();
   bool ok = response && patches;
+  unsigned available = 0, selected_types = 0;
   for (size_t i = 0; ok && i < list.count; ++i) {
     const sm_game_patch_t *p = &list.entries[i];
+    size_t chain[SM_PATCH_MAX_ENTRIES], length;
+    if (!sm_patch_dependency_chain(&list, i, chain, &length)) {
+      unsigned kind = !strcmp(p->format, "XML") ? SM_PATCH_BADGE_PATCHES : SM_PATCH_BADGE_CHEATS;
+      available |= kind;
+      if (p->enabled) selected_types |= kind;
+    }
     struct json_object *item = json_object_new_object();
     ok = item && add_json_string(item, "id", p->id) && add_json_string(item, "name", p->name) &&
          add_json_string(item, "author", p->author) && add_json_string(item, "note", p->note) &&
          add_json_string(item, "app_version", p->app_ver) && add_json_string(item, "module", p->app_elf) &&
+         add_json_string(item, "format", p->format) && add_json_string(item, "master_id", p->master_id) &&
+         add_json_string(item, "file", p->source_path ? strrchr(p->source_path, '/') + 1 : "") &&
+         add_json_bool(item, "file_deletable", p->file_deletable) &&
+         add_json_bool(item, "button", p->button) && add_json_bool(item, "applied", p->applied) &&
          add_json_string(item, "requires", p->requires) && add_json_string(item, "error", p->error) &&
          add_json_bool(item, "enabled", p->enabled) && add_json_bool(item, "compatible", p->compatible) &&
+         add_json_bool(item, "version_matched", p->version_matched) && add_json_bool(item, "signature_based", p->signature_based) &&
          add_json_bool(item, "supported", p->supported) && add_json_int(item, "line_count", p->line_count);
     if (ok) ok = json_object_array_add(patches, item) == 0;
     if (!ok && item) json_object_put(item);
@@ -3342,12 +3459,192 @@ static void handle_game_patches(struct MHD_Connection *connection,
     patches = NULL;
   }
   if (ok) ok = add_json_string(response, "title_id", title_id) && add_json_string(response, "version", version) &&
-                add_json_string(response, "directory", SM_PATCH_DIRECTORY) &&
-                add_json_bool(response, "applies_on_next_launch", true) && add_json_bool(response, "saved", update);
+                add_patch_badge_fields(response, available, sm_game_patches_applied_types(title_id), selected_types) &&
+                add_json_string(response, "directory", SM_PATCH_DIRECTORY) && add_json_string(response, "cheat_directory", SM_CHEAT_DIRECTORY) &&
+                add_json_bool(response, "applies_on_next_launch", !live) && add_json_bool(response, "saved", update && !live);
   if (patches) json_object_put(patches);
   if (ok) (void)send_json_object(connection, 200, response);
   else send_out_of_memory_response(connection);
   if (response) json_object_put(response);
+}
+
+static void handle_patch_upload(struct MHD_Connection *connection, const void *data, size_t size) {
+  const char *title = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "title_id");
+  const char *name = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "filename");
+  int error = sm_config_child_mode() ? EACCES : sm_game_patches_upload(title, name, data, size);
+  if (error) { send_error_response(connection, error == EFBIG ? 413 : operation_http_status(error), error, strerror(error)); return; }
+  struct json_object *response = new_status_response(0);
+  if (response) { send_json_object(connection, 200, response); json_object_put(response); }
+  else send_out_of_memory_response(connection);
+}
+
+static void handle_patch_delete(struct MHD_Connection *connection, struct json_object *request) {
+  const char *title = get_title_id(request);
+  struct json_object *id = NULL;
+  int error = EINVAL;
+  if (title && json_object_object_get_ex(request, "id", &id) && json_object_is_type(id, json_type_string) &&
+      (size_t)json_object_get_string_len(id) == strlen(json_object_get_string(id)))
+    error = sm_config_child_mode() ? EACCES : sm_game_patches_delete_file(title, json_object_get_string(id));
+  if (error) { send_error_response(connection, operation_http_status(error), error, strerror(error)); return; }
+  struct json_object *response = new_status_response(0);
+  if (response) { send_json_object(connection, 200, response); json_object_put(response); }
+  else send_out_of_memory_response(connection);
+}
+
+static struct json_object *patch_sources_json(const sm_patch_source_t *sources, size_t count) {
+  struct json_object *array = json_object_new_array();
+  if (!array) return NULL;
+  for (size_t i = 0; i < count; ++i) {
+    struct json_object *item = json_object_new_object();
+    if (!item || !add_json_string(item, "type", sources[i].cheats ? "cheats" : "patches") ||
+        !add_json_string(item, "url", sources[i].url) || json_object_array_add(array, item)) {
+      if (item) json_object_put(item);
+      json_object_put(array); return NULL;
+    }
+  }
+  return array;
+}
+
+static void handle_patch_sources(struct MHD_Connection *connection, struct json_object *request) {
+  const char *action = "status";
+  struct json_object *value = NULL;
+  if (json_object_object_get_ex(request, "action", &value)) {
+    if (!json_object_is_type(value, json_type_string) ||
+        strlen(json_object_get_string(value)) != (size_t)json_object_get_string_len(value)) {
+      send_error_response(connection, 400, EINVAL, "invalid action"); return;
+    }
+    action = json_object_get_string(value);
+  }
+  sm_patch_source_config_t config;
+  sm_config_patch_sources_snapshot(&config);
+  int error = 0;
+  bool saved = !strcmp(action, "save");
+  if (saved) {
+    struct json_object *period = NULL, *sources = NULL;
+    if (!json_object_object_get_ex(request, "interval_hours", &period) || !json_object_is_type(period, json_type_int) ||
+        json_object_get_int64(period) < 0 || json_object_get_int64(period) > 8760 ||
+        !json_object_object_get_ex(request, "sources", &sources) || !json_object_is_type(sources, json_type_array) ||
+        json_object_array_length(sources) > SM_PATCH_SOURCE_MAX) error = EINVAL;
+    if (!error) {
+      memset(&config, 0, sizeof(config));
+      config.interval_hours = (uint32_t)json_object_get_int64(period);
+      config.count = json_object_array_length(sources);
+      for (size_t i = 0; i < config.count; ++i) {
+        struct json_object *item = json_object_array_get_idx(sources, i), *url = NULL, *type = NULL;
+        if (!json_object_is_type(item, json_type_object) || !json_object_object_get_ex(item, "url", &url) ||
+            !json_object_is_type(url, json_type_string) || (size_t)json_object_get_string_len(url) != strlen(json_object_get_string(url)) ||
+            !json_object_object_get_ex(item, "type", &type) || !json_object_is_type(type, json_type_string) ||
+            (size_t)json_object_get_string_len(type) != strlen(json_object_get_string(type)) ||
+            (strcmp(json_object_get_string(type), "cheats") && strcmp(json_object_get_string(type), "patches")) ||
+            strlcpy(config.sources[i].url, json_object_get_string(url), sizeof(config.sources[i].url)) >= sizeof(config.sources[i].url)) { error = EINVAL; break; }
+        config.sources[i].cheats = !strcmp(json_object_get_string(type), "cheats");
+        if (!sm_patch_source_valid(&config.sources[i])) { error = EINVAL; break; }
+      }
+    }
+    if (!error && !sm_config_write_patch_sources(&config)) error = errno ? errno : EIO;
+  } else if (!strcmp(action, "update")) {
+    error = config.count ? sm_patch_updater_request() : EINVAL;
+  } else if (strcmp(action, "status")) error = EINVAL;
+  if (error) { send_error_response(connection, operation_http_status(error), error, strerror(error)); return; }
+  sm_patch_update_status_t status;
+  sm_patch_updater_status(&status);
+  if (status.sources_hash != sm_patch_source_hash(&config)) {
+    status.error = 0; status.last_check = 0;
+  }
+  if (!status.last_check) sm_patch_sources_last_status(&config, &status);
+  struct json_object *response = new_status_response(0);
+  bool ok = response && add_json_int(response, "interval_hours", config.interval_hours) &&
+    add_json_value(response, "sources", patch_sources_json(config.sources, config.count)) &&
+    add_json_value(response, "presets", patch_sources_json(sm_patch_source_presets, SM_PATCH_SOURCE_PRESETS)) &&
+    add_json_bool(response, "saved", saved) && add_json_bool(response, "queued", status.queued) &&
+    add_json_bool(response, "running", status.running) && add_json_int(response, "last_error", status.error) &&
+    add_json_int(response, "last_check", status.last_check);
+  if (ok) send_json_object(connection, 200, response);
+  else send_out_of_memory_response(connection);
+  if (response) json_object_put(response);
+}
+
+static void handle_game_control(struct MHD_Connection *connection,
+                                struct json_object *request, bool launch) {
+  const char *title_id = get_title_id(request);
+  if (!title_id) {
+    send_error_response(connection, 400, EINVAL, "title_id must be a valid PS4 or PS5 title ID");
+    return;
+  }
+  if (pthread_mutex_trylock(&g_game_control_mutex)) {
+    send_error_response(connection, 409, EBUSY, "another game control request is running");
+    return;
+  }
+  int status = 0, native_status = 0;
+  if (should_stop_requested() || runtime_sleep_mode_active()) status = EBUSY;
+  if (!status && launch) {
+    pthread_mutex_lock(&g_storage_job.mutex);
+    bool busy = !g_storage_job.accepting || storage_job_is_active(g_storage_job.state) ||
+                g_storage_job.pkg_queue_running || g_storage_job.pkg_queue_count;
+    pthread_mutex_unlock(&g_storage_job.mutex);
+    if (busy) status = EBUSY;
+  }
+  int app_id = 0;
+  if (!status) app_id = sceLncUtilGetAppIdOfRunningBigApp();
+  char current[16] = {0};
+  if (!status && !launch && app_id > 0) {
+    native_status = sceLncUtilGetAppTitleId((uint32_t)app_id, current);
+    current[sizeof(current) - 1] = '\0';
+    if (native_status < 0) status = EIO;
+  }
+  if (!status && launch) {
+    if (app_id > 0 || sm_game_lifecycle_has_active_game() || sm_install_has_pending_work()) {
+      status = EBUSY;
+    } else {
+      sm_game_cache_snapshot_entry_t game;
+      if (!find_game_snapshot_by_title(title_id, &game) &&
+          (errno != ENOENT || !find_installed_pkg_game(title_id, &game))) {
+        status = errno ? errno : ENOENT;
+      } else {
+        struct {
+          uint32_t size, user_id, options;
+          uint64_t crash_report;
+          uint32_t flags;
+        } params = {.size = sizeof(params)};
+        int32_t user_id = -1;
+        native_status = sceUserServiceGetForegroundUser(&user_id);
+        if (native_status < 0 || user_id < 0) status = EACCES;
+        else {
+          params.user_id = (uint32_t)user_id;
+          const char *argv[] = {NULL};
+          // Never take the scanner mutation gate here: ShellCore's launch
+          // callbacks must be able to prepare the title while this call waits.
+          native_status = sceSystemServiceLaunchApp(title_id, argv, &params);
+          if (native_status < 0) status = EIO;
+        }
+      }
+    }
+  } else if (!status) {
+    if (app_id <= 0 || strcmp(title_id, current)) status = ESRCH;
+    else {
+      native_status = sceLncUtilKillApp((uint32_t)app_id);
+      if (native_status < 0) status = EIO;
+    }
+  }
+  pthread_mutex_unlock(&g_game_control_mutex);
+  log_debug("  [API] %s: title=%s status=%d native=0x%08x",
+            launch ? "launch" : "close", title_id, status, (unsigned)native_status);
+  if (status) {
+    char message[128];
+    snprintf(message, sizeof(message), "%s request rejected: %s (native=0x%08x)",
+             launch ? "launch" : "close", strerror(status), (unsigned)native_status);
+    send_error_response(connection, operation_http_status(status), status, message);
+    return;
+  }
+  struct json_object *response = new_status_response(0);
+  if (!response || !add_json_string(response, "title_id", title_id) ||
+      !add_json_bool(response, "accepted", true)) {
+    if (response) json_object_put(response);
+    send_out_of_memory_response(connection);
+    return;
+  }
+  (void)send_json_object(connection, 200, response);
+  json_object_put(response);
 }
 
 static void dispatch_request(struct MHD_Connection *connection,
@@ -3365,10 +3662,16 @@ static void dispatch_request(struct MHD_Connection *connection,
     handle_games(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_GAME_INFO) == 0) {
     handle_game_info(connection, json);
+  } else if (strcmp(route, SM_API_ROUTE_GAME_LAUNCH) == 0) {
+    handle_game_control(connection, json, true);
+  } else if (strcmp(route, SM_API_ROUTE_GAME_CLOSE) == 0) {
+    handle_game_control(connection, json, false);
   } else if (strcmp(route, SM_API_ROUTE_GAME_PS4_PROFILE) == 0) {
     handle_game_ps4_profile(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_GAME_PATCHES) == 0) {
     handle_game_patches(connection, json);
+  } else if (strcmp(route, SM_API_ROUTE_PATCH_DELETE) == 0) {
+    handle_patch_delete(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_GAME_FAKELIB) == 0) {
     handle_game_fakelib(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_MOUNT) == 0) {
@@ -3401,6 +3704,8 @@ static void dispatch_request(struct MHD_Connection *connection,
     handle_settings(connection);
   } else if (strcmp(route, SM_API_ROUTE_SETTINGS_UPDATE) == 0) {
     handle_settings_update(connection, json);
+  } else if (strcmp(route, SM_API_ROUTE_PATCH_SOURCES) == 0) {
+    handle_patch_sources(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_SMB) == 0) {
     handle_smb(connection, json);
   } else if (strcmp(route, SM_API_ROUTE_DEBUG_LOG) == 0) {
@@ -6297,6 +6602,8 @@ static enum MHD_Result handle_http_request(
   }
 
   bool package_chunk = strcmp(url, SM_API_ROUTE_PACKAGE_CHUNK) == 0;
+  bool patch_upload = strcmp(url, SM_API_ROUTE_PATCH_UPLOAD) == 0;
+  bool binary_body = package_chunk || patch_upload;
   if (!request->headers_validated) {
     const char *transfer_encoding = MHD_lookup_connection_value(
         connection, MHD_HEADER_KIND, MHD_HTTP_HEADER_TRANSFER_ENCODING);
@@ -6316,20 +6623,20 @@ static enum MHD_Result handle_http_request(
       return finish_request_error(request, connection, 400, EPROTO,
                                   "invalid Content-Length header");
     }
-    size_t limit = package_chunk ? SM_PKG_STREAM_CHUNK : SM_API_MAX_JSON_BODY_SIZE;
+    size_t limit = patch_upload ? SM_PATCH_MAX_FILE_SIZE : package_chunk ? SM_PKG_STREAM_CHUNK : SM_API_MAX_JSON_BODY_SIZE;
     if (request->expected_body_size > limit) {
       return finish_request_error(request, connection, 413, EPROTO,
-                                  "JSON request body is too large");
+                                  "request body is too large");
     }
 
     const char *content_type = MHD_lookup_connection_value(
         connection, MHD_HEADER_KIND, MHD_HTTP_HEADER_CONTENT_TYPE);
-    if (!content_type || (package_chunk ? strcmp(content_type, "application/octet-stream") != 0 : !is_json_content_type(content_type))) {
+    if (!content_type || (binary_body ? strcmp(content_type, "application/octet-stream") != 0 : !is_json_content_type(content_type))) {
       return finish_request_error(
           request, connection, 415, EPROTO,
-          "Content-Type must be application/json");
+          binary_body ? "Content-Type must be application/octet-stream" : "Content-Type must be application/json");
     }
-    if (package_chunk) {
+    if (binary_body) {
       request->binary_body = malloc(request->expected_body_size ? request->expected_body_size : 1);
       if (!request->binary_body) return MHD_NO;
     }
@@ -6342,7 +6649,7 @@ static enum MHD_Result handle_http_request(
       return finish_request_error(request, connection, 400, EPROTO,
                                   "request body exceeds Content-Length");
     }
-    memcpy((package_chunk ? request->binary_body : (unsigned char *)request->body) + request->body_size, upload_data,
+    memcpy((binary_body ? request->binary_body : (unsigned char *)request->body) + request->body_size, upload_data,
            *upload_data_size);
     request->body_size += *upload_data_size;
     *upload_data_size = 0;
@@ -6351,10 +6658,15 @@ static enum MHD_Result handle_http_request(
 
   if (request->body_size != request->expected_body_size) {
     return finish_request_error(request, connection, 400, EPROTO,
-                                "incomplete JSON request body");
+                                "incomplete request body");
   }
   if (package_chunk) {
     handle_package_chunk(connection, request->binary_body, request->body_size);
+    request->response_queued = true;
+    return MHD_YES;
+  }
+  if (patch_upload) {
+    handle_patch_upload(connection, request->binary_body, request->body_size);
     request->response_queued = true;
     return MHD_YES;
   }

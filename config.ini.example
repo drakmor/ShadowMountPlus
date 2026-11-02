@@ -14,6 +14,8 @@ version = 2
 # debug = on
 # Suppress ordinary informational notifications; errors still appear.
 # quiet_mode = off
+# Hide game file/installation operations in the web interface.
+# child_mode = off
 # auto uses the console language; locale examples: en-US, ru-RU.
 # language = auto
 

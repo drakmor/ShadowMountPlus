@@ -5,7 +5,7 @@
 #define SM_API_DEFAULT_PORT 10101u
 #define SM_API_VERSION 1u
 #define SM_API_MAX_HTTP_HEADER_SIZE 8192u
-#define SM_API_MAX_JSON_BODY_SIZE 4096u
+#define SM_API_MAX_JSON_BODY_SIZE 16384u
 
 #define SM_API_ROUTE_INDEX "/"
 #define SM_API_ROUTE_FAVICON "/favicon.png"
@@ -15,8 +15,12 @@
 #define SM_API_ROUTE_IMAGES "/api/v1/images"
 #define SM_API_ROUTE_GAMES "/api/v1/games"
 #define SM_API_ROUTE_GAME_INFO "/api/v1/games/info"
+#define SM_API_ROUTE_GAME_LAUNCH "/api/v1/games/launch"
+#define SM_API_ROUTE_GAME_CLOSE "/api/v1/games/close"
 #define SM_API_ROUTE_GAME_PS4_PROFILE "/api/v1/games/ps4-profile"
 #define SM_API_ROUTE_GAME_PATCHES "/api/v1/games/patches"
+#define SM_API_ROUTE_PATCH_UPLOAD "/api/v1/games/patches/upload"
+#define SM_API_ROUTE_PATCH_DELETE "/api/v1/games/patches/delete"
 #define SM_API_ROUTE_GAME_FAKELIB "/api/v1/games/fakelib"
 #define SM_API_ROUTE_GAME_ICON "/api/v1/games/icon"
 #define SM_API_ROUTE_MOUNT "/api/v1/games/mount"
@@ -34,6 +38,7 @@
 #define SM_API_ROUTE_MANUAL_REMOVE "/api/v1/manual/remove"
 #define SM_API_ROUTE_SETTINGS "/api/v1/settings"
 #define SM_API_ROUTE_SETTINGS_UPDATE "/api/v1/settings/update"
+#define SM_API_ROUTE_PATCH_SOURCES "/api/v1/settings/patches"
 #define SM_API_ROUTE_SMB "/api/v1/smb"
 #define SM_API_ROUTE_DEBUG_LOG "/api/v1/debug-log"
 #define SM_API_ROUTE_KERNEL_LOG "/api/v1/kernel-log"

@@ -19,7 +19,7 @@ and contains one JSON object. `GET /` returns the web interface; icon endpoints
 return PNG or JPEG bytes. Ordinary API connections close after one response;
 the streaming endpoints described below support persistent connections and
 binary uploads. Chunked request bodies are not supported. The maximum JSON
-request body is 4096 bytes; the request-header limit is 8192 bytes.
+request body is 16384 bytes; the request-header limit is 8192 bytes.
 
 All responses include `Access-Control-Allow-Origin: *`. Browser preflight
 requests using `OPTIONS` are supported and allow `GET`, `POST`, the `Content-Type`
@@ -44,19 +44,26 @@ local network access must still be enabled for connections from another device.
 | `/api/v1/sources/delete` | `{"path":"smb://NAS/Game.pkg","confirm":true}` | Start asynchronous deletion of a permitted folder, image or PKG |
 | `/api/v1/files/mkdir` | `{"path":"smb://NAS","name":"New folder"}` | Create one directory beneath an existing local or SMB parent; return its full path |
 | `/api/v1/settings/update` | `{"debug":true,"quiet_mode":false,"update_emulators":true,"fakelib_default_mode":"full","auto_update_ampr":false,"auto_remove_missing_games":false,"auto_remove_missing_delay_seconds":300,"allow_lan_access":true,"fan_target_temperature":0,"scan_paths":["/mnt/usb0/games"]}` | Persist API-managed runtime settings |
+| `/api/v1/settings/patches` | `{}` / `{"action":"save","interval_hours":24,"sources":[{"type":"cheats","url":"https://example.com/cheats.zip"}]}` / `{"action":"update"}` | Read source settings and update status, save up to 12 ZIP sources, or queue an update; interval 0 disables automatic updates, otherwise 1..8760 hours |
 | `/api/v1/debug-log` | `{"max_bytes":131072}` | Read a bounded tail of `debug.log` |
 | `/api/v1/kernel-log` | `{"max_bytes":131072}` | Read a bounded tail of the kernel log |
-| `/api/v1/games` | `{"include_size":false}` | Detailed game snapshot; optional physical source-size calculation |
+| `/api/v1/games` | `{"include_size":false}` | Detailed game snapshot; optional physical source-size calculation. `has_patches`/`has_cheats` report compatible supported entries; `patches_enabled`/`cheats_enabled` report valid startup selections; `patches_applied`/`cheats_applied` report actual current-session application |
 | `/api/v1/games/info` | `{"title_id":"PPSA12345"}` | Detailed installed-game and source information for one game; size is always calculated |
 | `/api/v1/games/ps4-profile` | `{"title_id":"CUSA12345","pro":"default","cpu":"default","gpu":"default"}` | Save per-game PS4 profile overrides for the next launch |
-| `/api/v1/games/patches` | `{"title_id":"CUSA12345"}` | List XML patch IDs, names, versions, modules, requirements, compatibility and selection state |
-| `/api/v1/games/patches` | `{"title_id":"CUSA12345","id":"0123456789abcdef","enabled":true}` | Persist one XML patch selection for the next launch; incompatible/unsupported entries cannot be enabled |
+| `/api/v1/games/patches` | `{"title_id":"CUSA12345"}` | List XML/JSON/SHN/MC4 entries, source filename (`file`), format, version, compatibility, saved enabled state and live applied state |
+| `/api/v1/games/patches/upload?title_id=CUSA12345&filename=custom.xml` | POST binary file, `Content-Type: application/octet-stream` | Validate and add XML to `patches`, JSON/SHN/MC4 to `cheats`; maximum 4 MiB, no overwriting. Prefixes the title ID when absent from the filename. Disabled in child mode |
+| `/api/v1/games/patches/delete` | `{"title_id":"CUSA12345","id":"0123456789abcdef"}` | Delete the local source file containing this entry and refresh its index. Removes all entries in the file; only entries with `file_deletable:true` can be deleted. Internet catalogs are protected. Refused while a game is running or child mode is enabled |
+| `/api/v1/games/patches` | `{"title_id":"CUSA12345","id":"0123456789abcdef","enabled":true}` | Persist a startup selection and its required cheats atomically. Required entries cannot be disabled while their dependents are enabled; incompatible/unsupported entries cannot be enabled. Cross-version entries are compatible only when every write uses signature scanning |
+| `/api/v1/games/patches` | `{"title_id":"CUSA12345","id":"0123456789abcdef","enabled":true,"apply":true}` | Toggle a cheat in the running game without changing its saved startup selection; master dependencies are applied automatically, conflicting changes are rejected |
 | `/api/v1/games/fakelib` | `{"title_id":"PPSA12345","mode":"emulators"}` | Persist the PS5 game's fakelib policy for its next launch |
 | `/api/v1/games/fakelib` | `{"title_id":"PPSA12345","ignore_global_fakelib":true}` | Ignore the global fakelib overlay for this PS5 game on its next launch |
 | `/api/v1/games/icon?title_id=PPSA12345[&size=thumb\|card\|cover]` | GET | Stream the original PNG or a cached icon variant |
+| `/api/v1/games/info` | `{"title_id":"CUSA12345","runtime_only":true}` | Return `status`, `title_id`, observed `active`, `patches_applied` and `cheats_applied`, without scanning game sizes, saves, DLC or catalogs. Does not check whether an inactive title is installed |
+| `/api/v1/games/launch` | `{"title_id":"CUSA12345"}` | Request a known game's launch for the foreground user; refuses while another game is open or an install is pending. Returns `accepted:true`; use game information to observe lifecycle state |
+| `/api/v1/games/close` | `{"title_id":"CUSA12345"}` | Request closing the running game only if its title matches. Returns `accepted:true`; a different running title is never closed |
 | `/api/v1/games/mount` | `{"title_id":"PPSA12345","mode":"ro"}` | Mount a managed game, optionally overriding its image mode with `ro`/`rw` |
 | `/api/v1/games/unmount` | `{"title_id":"PPSA12345"}` | Unmount a managed game |
-| `/api/v1/games/uninstall` | `{"title_id":"PPSA12345"}` | Request game uninstallation |
+| `/api/v1/games/uninstall` | `{"title_id":"PPSA12345","reinstall":false}` | Request game uninstallation; `reinstall:true` requires an available non-PKG source, preserves manual sources and queues reinstallation through the scanner |
 | `/api/v1/games/content/uninstall` | `{"title_id":"PPSA12345","kind":"patch"}` or `{"title_id":"PPSA12345","kind":"dlc","content_id":"…"}` | Remove only the patch or the specified installed DLC |
 | `/api/v1/games/move` | `{"title_id":"PPSA12345","destination_dir":"/mnt/usb1/games"}` | Start an asynchronous move job |
 | `/api/v1/games/copy` | `{"title_id":"PPSA12345","destination_dir":"/mnt/usb1/games"}` | Start an asynchronous copy job |
@@ -426,7 +433,7 @@ The list route returns `{status, count, paths}`. Paths use the same trimming and
 trailing-slash normalization as the scanner; comments and empty lines are not
 included. An unconfigured manual source list is returned as an empty list.
 
-The settings update owns only `debug`, `quiet_mode`, `update_emulators`,
+The settings update owns only `debug`, `quiet_mode`, `child_mode`, `update_emulators`,
 `fakelib_default_mode`, `ps4_force_pro`, `ps4_cpu_boost`, `ps4_gpu_boost`,
 `auto_update_ampr`, `auto_remove_missing_games`,
 `auto_remove_missing_delay_seconds`, `allow_lan_access`,

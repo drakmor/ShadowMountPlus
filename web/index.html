@@ -55,7 +55,7 @@
       margin-bottom: 18px;
     }
 
-    .brand { display: flex; align-items: center; }
+    .brand { display: flex; align-items: center; -webkit-padding-start: 12px; padding-inline-start: 12px; }
     .brand-home { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: inherit; }
 
     .brand-mark {
@@ -396,10 +396,88 @@
     .content-delete { min-height: 36px; padding: 6px 10px; }
     .content-dlc-row .content-delete { min-width: 0; min-height: 38px; padding: 6px 10px; font-size: 14px; }
     .content-dlc-row + .content-dlc-row { border-top: 1px solid var(--line); }
-    .xml-patch-list { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+    .xml-patch-list { display: grid; gap: 14px; }
     .xml-patch-description { min-width: 0; overflow-wrap: anywhere; }
-    .xml-patch-description p { margin: 4px 0; font-size: 12px; }
-    .xml-patch-toggle { min-width: 90px; }
+    .xml-patch-description strong { display: block; font-size: 16px; line-height: 1.45; }
+    .xml-patch-description p { margin: 7px 0 0; font-size: 13px; line-height: 1.5; }
+    .patch-overview { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
+    .patch-overview h3 { margin: 0; color: var(--text); font-size: 19px; }
+    .patch-help { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .patch-section-title { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 14px; color: var(--muted); }
+    .patch-pack { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #0d1a2c; }
+    .patch-pack-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: #132238; }
+    .patch-pack-head .patch-pack-author { font-size: 13px; font-weight: 600; }
+    .patch-pack-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-left: auto; color: var(--muted); font-size: 12px; }
+    .patch-pack-meta .patch-version { color: #b5cdeb; }
+    .patch-other-versions .patch-version { color: #edc58a; }
+    .xml-patch-row { align-items: center; gap: 10px 16px; padding: 10px 14px; }
+    .xml-patch-row.is-selected { background: #14283a; }
+    .xml-patch-row.is-version-blocked { grid-template-columns: minmax(0, 1fr); }
+    .patch-version-note { margin: 6px 0 0; color: #edc58b; font-size: 13px; line-height: 1.4; }
+    .xml-patch-row:focus-within { background: #1b3048; }
+    .patch-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .patch-filters .btn { min-height: 40px; padding: 7px 12px; font-size: 13px; }
+    .patch-filters .btn[aria-pressed="true"] { border-color: #78b9e8; background: #203d5e; color: white; }
+    .patch-pack-info { margin-inline-start: auto; min-width: 0; color: var(--muted); font-size: 12px; }
+    .patch-pack-info[open] { flex-basis: 100%; margin-inline-start: 0; }
+    .patch-pack-info > summary { cursor: pointer; padding: 4px 0; color: #9fcaef; }
+    .patch-file-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
+    .patch-file-tools .subtle { flex: 1 1 240px; }
+    .patch-pack-file { display: flex; align-items: center; gap: 12px; flex-basis: 100%; min-width: 0; }
+    .patch-file-name { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+    .patch-file-delete { flex-shrink: 0; }
+    .patch-pack-info .patch-pack-meta { margin: 8px 0 0; }
+    .patch-note { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .patch-request-error { grid-column: 1 / -1; margin: 0; color: #ffb8b8; font-size: 13px; overflow-wrap: anywhere; }
+    .xml-patch-description .patch-requirement { display: inline-flex; padding: 3px 9px; border: 1px solid #3c526c; border-radius: 7px; background: #182a40; color: #c1d6ed; font-size: 12px; }
+    .xml-patch-description .patch-error { color: #ffb8b8; }
+    .patch-warning { margin-top: 8px; color: #ffb8b8; }
+    .patch-other-versions { border: 1px solid var(--line); border-radius: 12px; background: #0c192a; }
+    .patch-other-versions > summary { display: list-item; padding: 14px 16px; cursor: pointer; color: #c5d5e8; font-size: 14px; font-weight: 600; }
+    .patch-other-versions > summary .badge { margin-left: 8px; }
+    .patch-other-content { display: grid; gap: 14px; padding: 0 12px 12px; }
+    .patch-other-versions:not([open]) > .patch-other-content { display: none; }
+    .patch-other-content > p { margin: 0; color: var(--muted); font-size: 13px; }
+    .patch-control, .patch-toggle.console-setting { display: flex; align-items: center; justify-content: space-between; min-height: 64px; min-width: 0; padding: 6px 9px; margin: 0; border: 1px solid #5288b3; border-radius: 10px; gap: 8px; background: #142d45; color: #e0efff; font-size: 13px; text-align: left; cursor: pointer; }
+    .patch-control-copy { display: block; flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; }
+    .patch-control-name { display: block; font-size: 12px; font-weight: 600; line-height: 1.3; }
+    .patch-control-status { display: block; height: 2.6em; overflow: hidden; margin-top: 4px; color: #a7d3f7; font-size: 11px; font-weight: 400; line-height: 1.3; }
+    .patch-control-status::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-inline-end: 5px; border: 1px solid transparent; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+    .patch-control.is-available:hover { border-color: #9ed7ff; background: #1b3b58; }
+    .patch-control.is-available.is-on { border-color: #49b89b; background: #123a34; }
+    .patch-control.is-available.is-on .patch-control-status { color: #94e6cc; }
+    .patch-control.is-available input[type="checkbox"] { border-color: #86b8dc; box-shadow: 0 0 0 1px #233f5a; }
+    .patch-control.is-on input[type="checkbox"]:checked { border-color: #65dec0; background: radial-gradient(circle at calc(100% - 13px) center, white 0 8px, transparent 9px), #1a9273; }
+    .patch-control.is-locked { border-color: #9c8051; background: #30291e; color: #f0d7a9; cursor: not-allowed; }
+    .patch-control.is-locked .patch-control-status { color: #e0b974; }
+    .patch-control.is-locked input { cursor: not-allowed; }
+    .patch-control.is-locked input[type="checkbox"]:checked { border-color: #cda360; background: radial-gradient(circle at calc(100% - 13px) center, #fff3d8 0 8px, transparent 9px), #8a682f; cursor: not-allowed; }
+    .patch-control.is-unavailable { border-color: #445268; border-style: dashed; background: #101c2b; color: #98a6ba; cursor: not-allowed; }
+    .patch-control.is-unavailable .patch-control-status { color: #8492a6; }
+    .patch-control.is-unavailable input { opacity: .4; cursor: not-allowed; }
+    .patch-control.is-busy { border-color: #78b9e8; cursor: wait; }
+    .patch-control.is-busy input { cursor: wait; }
+    .patch-control.is-busy .patch-control-status::before { border-color: currentColor; border-right-color: transparent; background: none; animation: patch-working .8s linear infinite; }
+    .xml-patches[aria-busy="true"] .patch-control.is-available, .xml-patches[aria-busy="true"] .patch-control.is-available input { cursor: wait; }
+    .patch-control:focus-within { border-color: #e3f3ff; }
+    .patch-controls .patch-control.console-setting { border-bottom-width: 1px; border-bottom-style: solid; }
+    @keyframes patch-working { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .patch-control.is-busy .patch-control-status::before { animation: none; } }
+    .no-flex-gap .patch-control.console-setting > :not(:last-child) { -webkit-margin-end: 10px; margin-inline-end: 10px; }
+    /* Status text must not change the width of a row while saving. */
+    .patch-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 300px; column-gap: 10px; min-width: 0; }
+    .patch-controls.startup-only { grid-template-columns: minmax(0, 1fr); width: 145px; }
+    .patch-controls .btn.xml-patch-toggle { min-width: 0; min-height: 64px; padding: 6px 9px; font-size: 13px; }
+    .patch-controls .btn.patch-control:disabled { opacity: 1; }
+    @media (min-width: 1000px) {
+      .patch-controls { width: 300px; }
+    }
+    @media (max-width: 600px) {
+      .xml-patch-row { grid-template-columns: minmax(0, 1fr); }
+      .patch-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; width: 100%; column-gap: 16px; }
+      .patch-controls.startup-only { grid-template-columns: minmax(0, 1fr); }
+      .patch-pack-meta { margin-left: 0; flex-basis: 100%; }
+    }
     .content-dlc-title { min-width: 0; overflow-wrap: anywhere; }
     .content-dlc-title strong { display: block; font-weight: 500; }
     .content-dlc-title small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
@@ -463,7 +541,7 @@
     .brand-meta a { color: var(--blue); text-decoration: none; white-space: nowrap; }
     .brand-meta a:hover, .brand-meta a:focus { text-decoration: underline; }
     .view-nav { display: flex; gap: 6px; padding: 4px; border: 1px solid var(--line); border-radius: 30px; background: #0b1628; }
-    .view-nav::before, .view-nav::after { align-self: center; margin: 0 6px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 12px; }
+    .view-nav::before, .view-nav::after, .detail-tab-hint { align-self: center; margin: 0 6px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 12px; }
     .view-nav::before { content: "L1"; }
     .view-nav::after { content: "R1"; }
     .view-nav .view-tab { border: 0; border-radius: 24px; background: transparent; padding: 0 22px; min-height: 44px; color: var(--muted); }
@@ -553,6 +631,10 @@
     .game-card.is-active { border-color: #42d6ad; background: #12392f; }
     .game-card.is-active .game-title { color: #a2ffe1; }
     .badge.active-game { border-color: #42d6ad; background: #154437; color: #a2ffe1; }
+    .badge.patch-badge { border-color: #7eb8ff; color: #b4d8ff; background: transparent; }
+    .badge.cheat-badge { border-color: #b5a0fa; color: #d4c5ff; background: transparent; }
+    .badge.patch-badge.is-applied { border-color: #8bc8ff; background: #8bc8ff; color: #0a2441; }
+    .badge.cheat-badge.is-applied { border-color: #c8b5ff; background: #c8b5ff; color: #241347; }
     .game-card.is-focused { border-color: #e3f3ff; background: #1c3554; box-shadow: 0 0 0 4px rgba(104, 181, 255, .25), 0 12px 36px #0005; }
     .game-card .cover { width: 100%; height: 0; padding-bottom: 100%; border: 0; border-radius: 10px; background: linear-gradient(135deg, #2c5381, #12233e); }
     .game-card .cover-fallback { position: absolute; inset: 0; font-size: 30px; letter-spacing: .08em; }
@@ -654,7 +736,8 @@
     .confirm-message { white-space: pre-wrap; overflow-wrap: anywhere; padding: 24px; }
     .unpack-option { margin: 0 18px 18px; }
     .modal-card { display: flex; flex-direction: column; width: 1000px; min-width: 0; max-width: 100%; max-height: 90vh; overflow: hidden; border-color: #536e90; background: #111f34; }
-    .modal-card.details-card { display: grid; grid-template-columns: 280px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; width: 1440px; height: calc(100vh - 32px); max-height: 960px; }
+    .modal-card.details-card { display: grid; grid-template-columns: 240px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; width: 1280px; height: auto; max-height: calc(100vh - 48px); max-height: min(900px, calc(100vh - 48px)); }
+    .detail-scroll { display: contents; }
     .modal-head { flex-shrink: 0; padding: 24px; }
     .modal-head h2 { font-size: 26px; }
     .details-card .modal-head { grid-column: 2; grid-row: 1; min-width: 0; padding: 12px 20px 12px 0; }
@@ -672,7 +755,27 @@
     .game-activity-item time { display: block; margin-top: 5px; font-size: 14px; overflow-wrap: anywhere; }
     .details { display: block; grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 8px 20px 8px 0; }
     .details:focus, .log-view:focus { outline-offset: -4px; }
-    .detail-sidebar { grid-column: 1; grid-row: 1 / 3; min-width: 0; min-height: 0; padding: 16px 20px 12px; }
+    .detail-tabs { display: flex; gap: 8px; margin: 0 0 16px; padding: 0 0 12px; border-bottom: 1px solid var(--line); }
+    .detail-tabs .btn { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 8px 10px; white-space: normal; font-size: 14px; }
+    .detail-tabs .btn[aria-selected="true"] { border-color: #8dc8f5; background: #203d5e; color: white; }
+    .detail-tab-hint { flex-shrink: 0; }
+    .overview-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 12px 0; }
+    .overview-card { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #0c192b; }
+    .overview-card .detail-grid { margin: 0; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; font-size: 13px; line-height: 1.45; user-select: text; }
+    .overview-card .detail-key { margin: 0; font-size: 12px; }
+    .detail-source { display: flex; align-items: flex-start; gap: 10px; }
+    .source-path { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .source-status { flex-shrink: 0; margin-inline-start: auto; white-space: nowrap; font-size: 11px; }
+    .source-status.is-missing { border-color: #b15c6a; color: #ffb2bd; }
+    .overview-grid > .content-summary { margin: 0; }
+    .overview-grid .content-dlc-toggle { width: 100%; }
+    @media (max-width: 600px) {
+      .overview-card .detail-grid { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+      .overview-card .detail-key:not(:first-child) { margin-top: 6px; }
+    }
+    .detail-profile-help { grid-column: 1 / -1; margin: 4px 0 0; }
+    .detail-profile-help > summary { cursor: pointer; color: #b6ceea; font-size: 13px; }
+    .detail-sidebar { grid-column: 1; grid-row: 1 / 3; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px 12px; }
     .detail-sidebar .cover { width: 100%; height: auto; margin: 0 auto; align-self: start; }
     .detail-sidebar .cover::before { content: ""; display: block; padding-top: 100%; }
     .detail-sidebar .cover-fallback { position: absolute; top: 0; left: 0; }
@@ -693,9 +796,19 @@
     .details .ps4-profile-controls .btn { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; }
     .policy-label { color: var(--muted); font-size: 12px; }
     .policy-value { font-weight: 650; }
-    .details .ps4-profile-controls .btn:not([value="default"]), .details .fakelib-mode:not([value="default"]), .details .btn[aria-pressed="true"]:not([value="default"]), .details .btn[aria-checked="true"] { border-color: #42d6ad; background: #154437; color: #c6ffeb; box-shadow: inset 3px 0 0 #42d6ad; }
-    .details .ps4-profile-controls .btn[value="off"], .details .fakelib-mode[value="disabled"] { border-color: #6999d6; background: #1a304c; color: #d5e7ff; box-shadow: inset 3px 0 0 #6999d6; }
+    .details .ps4-profile-controls .btn:not([value="default"]), .details .fakelib-mode:not([value="default"]), .details .btn[aria-pressed="true"]:not([value="default"]), .details .btn[aria-checked="true"] { border-color: #42d6ad; background: #154437; color: #c6ffeb; }
+    .details .ps4-profile-controls .btn[value="off"], .details .fakelib-mode[value="disabled"] { border-color: #6999d6; background: #1a304c; color: #d5e7ff; }
     .details .btn[aria-pressed="true"]:not([value="default"]) .policy-label { color: #a4dccc; }
+    .patch-source-list { display: grid; gap: 10px; margin: 18px 0; }
+    .patch-source-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 8px; }
+    .patch-source-row input { min-width: 0; width: 100%; }
+    .patch-source-add { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+    .patch-source-add select { min-width: 0; max-width: 100%; flex: 1 1 220px; }
+    @media (max-width: 600px) {
+      .patch-source-row { grid-template-columns: minmax(0, 1fr) auto; }
+      .patch-source-row input { grid-column: 1 / -1; grid-row: 2; }
+    }
+    .patch-controls { display: grid; row-gap: 2px; }
     .xml-patches { margin-top: 18px; }
     @media (min-width: 1100px) {
       .details .ps4-profile-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -704,6 +817,10 @@
     .modal-actions { flex-shrink: 0; gap: 12px; padding: 18px 24px 24px; border-top: 1px solid var(--line); }
     .details-card .modal-actions { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 8px; padding: 12px 18px; }
     .details-card .modal-actions .btn { min-width: 0; min-height: 46px; padding: 8px; font-size: 14px; line-height: 1.3; white-space: normal; }
+    .game-operation-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 12px; overflow-y: auto; min-height: 0; max-height: 60vh; padding: 18px 24px 24px; }
+    .game-operation-list .btn { min-width: 0; min-height: 48px; white-space: normal; overflow-wrap: anywhere; }
+    .game-operation-list h3 { grid-column: 1 / -1; margin: 8px 0 0; }
+    @media (max-width: 600px) { .game-operation-list { grid-template-columns: minmax(0, 1fr); padding: 16px 18px; } }
     .destination-list { min-height: 0; overflow-y: auto; }
     .destination-custom { flex-shrink: 0; }
     .modal-card.language-card { display: grid; grid-template-rows: auto minmax(0, 1fr); width: 840px; height: calc(100vh - 80px); max-height: 600px; }
@@ -719,6 +836,18 @@
     .is-focused .game-title { color: white; }
     :focus { scroll-margin: 30px 0 100px; }
     .log-view { min-height: 0; font-size: 16px; }
+    @media (min-width: 1920px) {
+      html.playstation-browser { scroll-padding-top: 140px; }
+      .shell { width: 1920px; }
+      .playstation-browser .topbar { position: sticky; top: 24px; z-index: 4; padding: 16px 0; background: var(--bg); box-shadow: 0 -24px 0 var(--bg), 0 1px 0 var(--line); }
+      .topbar .brand, .topbar .brand > div { min-width: 0; }
+      .topbar .brand-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .topbar .brand-home { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+      .topbar .view-nav { flex-shrink: 0; }
+      .topbar-actions { padding-right: 12px; }
+      .games { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+      .playstation-browser .package-queue, .playstation-browser .console-nav { top: 140px; }
+    }
     @media (max-width: 1400px) { .games { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
     @media (max-width: 1250px) {
       .shell { padding: 24px 30px 100px; }
@@ -728,13 +857,14 @@
       .view-tab { padding: 0 16px; }
     }
     @media (max-width: 850px) {
-      .modal-card.details-card { grid-template-columns: 120px minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+      .modal-card.details-card { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+      .detail-scroll { display: grid; grid-template-columns: 120px minmax(0, 1fr); grid-template-rows: auto auto auto; align-content: start; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
       .detail-sidebar { display: contents; }
       .detail-sidebar .cover { grid-column: 1; grid-row: 1; width: calc(100% - 16px); margin: 16px 0 12px 16px; }
       .detail-activity { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; padding: 0 20px 12px; }
       .details-card .modal-head { padding: 16px 18px 12px 16px; }
-      .details { grid-column: 1 / -1; grid-row: 3; padding: 12px 20px; }
-      .details-card .modal-actions { grid-row: 4; }
+      .details { grid-column: 1 / -1; grid-row: 3; overflow: visible; padding: 12px 20px; }
+      .details-card .modal-actions { grid-row: 2; }
       .console-workbench { grid-template-columns: minmax(0, 1fr); gap: 20px; }
       .console-nav { position: static; grid-template-columns: repeat(5, minmax(0, 1fr)); }
       .console-section { padding: 8px; text-align: center; white-space: normal; font-size: 14px; }
@@ -786,7 +916,8 @@
       .transfer-stats { font-size: 12px; gap: 4px 10px; }
       .operation-popup .btn.small { min-height: 44px; padding: 0 10px; font-size: 14px; }
       #modal { padding: 8px; }
-      .modal-card.details-card { grid-template-columns: 100px minmax(0, 1fr); height: calc(100vh - 16px); }
+      .modal-card.details-card { max-height: calc(100vh - 24px); }
+      .detail-scroll { grid-template-columns: 100px minmax(0, 1fr); }
       .details-card .modal-head { padding: 12px; gap: 10px; }
       .detail-sidebar .cover { width: calc(100% - 12px); margin: 12px 0 12px 12px; }
       .detail-activity { padding: 0 12px 10px; gap: 6px; }
@@ -916,7 +1047,7 @@
       </div>
       <nav class="view-nav" aria-label="Navigation" data-i18n-aria-label="navigate">
         <button class="btn view-tab active" id="libraryTab" type="button" aria-pressed="true" data-i18n="library">Library</button>
-        <button class="btn view-tab" id="packagesTab" type="button" aria-pressed="false" data-i18n="packagesTab">Installation</button>
+        <button class="btn view-tab" id="packagesTab" type="button" aria-pressed="false" data-i18n="packagesTab" hidden>Installation</button>
         <button class="btn view-tab" id="consoleTab" type="button" aria-pressed="false" data-i18n="settings">Settings</button>
       </nav>
       <div class="topbar-actions">
@@ -999,6 +1130,7 @@
           <button class="btn console-section" type="button" data-console-section="library" aria-controls="consoleLibrary" aria-pressed="false" data-i18n="library">Library</button>
           <button class="btn console-section" type="button" data-console-section="sources" aria-controls="consoleSources" aria-pressed="false" data-i18n="consoleSources">Sources</button>
           <button class="btn console-section" type="button" data-console-section="smb" aria-controls="consoleSmb" aria-pressed="false">SMB</button>
+          <button class="btn console-section" type="button" data-console-section="patches" aria-controls="consolePatches" aria-pressed="false" data-i18n="xmlPatches">Patches and cheats</button>
           <button class="btn console-section" type="button" data-console-section="logs" aria-controls="consoleLogs" aria-pressed="false" data-i18n="consoleLogs">Logs</button>
         </nav>
         <div class="console-content">
@@ -1016,6 +1148,10 @@
               </div>
               <div class="panel"><h3 data-i18n="consoleNetwork">Network</h3>
                 <label class="check console-setting"><span data-i18n="allowLanAccess">Allow local network access</span><input id="allowLanAccess" form="settingsForm" type="checkbox" role="switch"></label>
+              </div>
+              <div class="panel console-wide"><h3 data-i18n="childMode">Child mode</h3>
+                <label class="check console-setting"><span data-i18n="hideGameOperations">Hide game operations</span><input id="childMode" form="settingsForm" type="checkbox" role="switch"></label>
+                <p class="subtle console-hint" data-i18n="childModeHint">Hide the Installation tab and game file operations. Launching games, patches and cheats remain available.</p>
               </div>
               <div class="panel console-wide"><h3 data-i18n="ps4Profiles">PS4 game profiles</h3>
                 <label class="check console-setting"><span data-i18n="ps4ForcePro">Force PS4 Pro mode</span><input id="ps4ForcePro" form="settingsForm" type="checkbox" role="switch"></label>
@@ -1083,6 +1219,16 @@
               </div>
             </div>
           </section>
+          <section class="console-pane" id="consolePatches" data-console-pane="patches" hidden aria-labelledby="patchSourcesHeading">
+            <div class="console-heading"><h2 id="patchSourcesHeading" data-i18n="xmlPatches">Patches and cheats</h2><p class="subtle" data-i18n="patchSourceHint">ZIP sources are updated independently. Local files take priority. Updates wait while a game is running.</p></div>
+            <form id="patchSourcesForm" class="panel" novalidate>
+              <label class="setting-row console-setting"><span data-i18n="patchUpdatePeriod">Update interval (hours; 0 = manual)</span><input id="patchUpdateHours" type="number" min="0" max="8760" step="1" required value="0"></label>
+              <div id="patchSourceList" class="patch-source-list"></div>
+              <div class="patch-source-add"><select id="patchSourcePreset" aria-label="Source" data-i18n-aria-label="source"></select><button class="btn" id="patchSourceAdd" type="button" data-i18n="add">Add</button><button class="btn" id="patchSourceCustom" type="button" data-i18n="patchCustomSource">Custom ZIP URL</button></div>
+              <div class="settings-actions"><button class="btn primary" id="patchSourcesSave" type="submit" disabled data-i18n="saveSettings">Save settings</button><button class="btn" id="patchSourcesUpdate" type="button" disabled data-i18n="patchUpdateNow">Update now</button></div>
+              <p class="subtle console-hint" id="patchUpdateStatus" role="status" aria-live="polite"></p>
+            </form>
+          </section>
           <section class="console-pane" id="consoleLogs" data-console-pane="logs" hidden aria-labelledby="logsHeading">
             <div class="console-heading"><h2 id="logsHeading" data-i18n="consoleLogs">Logs</h2><p class="subtle" data-i18n="consoleLogsHint">View and copy logs, or check recent actions</p></div>
             <div class="console-grid">
@@ -1128,6 +1274,7 @@
 
   <div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-card details-card">
+      <div class="detail-scroll" id="detailScroll">
       <div class="modal-head">
         <div>
           <h2 id="modalTitle" data-i18n="gameInformation">Game information</h2>
@@ -1141,7 +1288,18 @@
       </div>
       <div class="detail-sidebar" id="detailSidebar"></div>
       <div class="details" id="details" tabindex="-1" aria-label="Game information" data-i18n-aria-label="gameInformation"></div>
+      </div>
       <div class="modal-actions" id="modalActions"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="gameOperationsModal" hidden role="dialog" aria-modal="true" aria-labelledby="gameOperationsTitle">
+    <div class="modal-card destination-card">
+      <div class="modal-head">
+        <div><h2 id="gameOperationsTitle" data-i18n="gameOperations">Game operations</h2><p class="subtle" id="gameOperationsSubtitle"></p></div>
+        <button class="btn close" id="closeGameOperations" type="button" aria-label="Close" data-i18n-aria-label="close">&times;</button>
+      </div>
+      <div class="game-operation-list" id="gameOperationsActions"></div>
     </div>
   </div>
 
@@ -1276,18 +1434,21 @@
 
       const API = "/api/v1";
       const playStationBrowser = /PlayStation (?:4|5)\b/i.test(navigator.userAgent);
+      document.documentElement.classList.toggle("playstation-browser", playStationBrowser);
       document.getElementById("controlBar").hidden = !/PlayStation 5\b/i.test(navigator.userAgent);
       const state = {
         games: [],
         selected: null,
         detailRequest: null,
+        detailView: null,
         gamePolicySaving: false,
+        childMode: true,
         activity: [],
         consoleClock: null,
         busy: false,
         storageJob: null,
         storageDestinations: [],
-        storageRequest: 0,
+        storageRequest: null,
         destinationRequest: null,
         storagePollTimer: 0,
         reportedStorageJob: "",
@@ -1299,16 +1460,16 @@
         logTitleKey: "debugLogTitle",
         logTriggerId: "viewLog",
         logText: null,
-        logRequest: 0,
+        logRequest: null,
         packages: null,
         packageQueue: null,
         packageQueueLoading: false,
-        packageRequest: 0,
+        packageRequest: null,
         browserStream: null,
         browserFiles: [],
         browserBatchRunning: false,
         pathPicker: null,
-        smbConnections: [], smbBusy: false, smbRequest: 0
+        smbConnections: [], smbBusy: false, smbRequest: null
       };
       const $ = (id) => document.getElementById(id);
       const navigation = {
@@ -3115,20 +3276,90 @@
         Object.assign(translations[locale], Object.fromEntries(extendedTranslationKeys.map((key, index) => [key, values[index]])));
       }
       Object.assign(translations["en-US"], {
+        badgePatches: "Patches", badgeCheats: "Cheats", patchBadgeAvailable: "Compatible entries available", patchBadgeApplied: "Applied in the current game session", patchBadgeEnabled: "Enabled at game launch",
+        patchUpload: "Upload files", patchUploadHint: "XML → patches; JSON, SHN, MC4 → cheats. Up to 64 files per batch, 4 MiB each. Existing files are kept.",
+        patchDeleteFile: "Delete file", patchDeleteConfirm: "Delete {file} and all patches/cheats in this file?",
+        patchFilesUploaded: "Uploaded: {count}", patchFileDeleted: "File deleted", patchFileInvalid: "Select up to 64 XML, JSON, SHN or MC4 files, up to 4 MiB each.",
+        patchFileBusy: "Close the running game before deleting patch/cheat files.",
+        patchSignature: "Signature scan", patchFixedVersion: "Fixed offsets: unavailable for this game version",
+        overviewFiles: "Game files",
+        sourceReady: "Available", sourceNotReady: "Unavailable",
+        detailOverview: "Overview", detailPatches: "Patches and cheats",
+        detailProfileHelp: "About these settings",
+        patchDetails: "Details", patchFilterAll: "All", patchFilterEnabled: "Enabled", patchFilterAvailable: "Available",
+        patchFilterEmpty: "No entries match this filter.", patchAppliedNow: "Applied now", patchAtLaunch: "Enabled at launch", patchNotApplied: "Not applied", patchNotSelected: "Not selected",
+        gameOperations: "Game operations", childMode: "Child mode", hideGameOperations: "Hide game operations",
+        childModeHint: "Hide the Installation tab and game file operations. Launching games, patches and cheats remain available.",
+        reinstall: "Reinstall", reinstallConfirm: "Reinstall {game} from its source?\n\nThe current installation will be removed and registered again by the scanner. The source image or folder will not be deleted.",
+        reinstallAccepted: "Reinstall request for {title} accepted",
+        launchGame: "Launch", closeGame: "Close game", launchingGame: "Launching…", closingGame: "Closing…",
+        gameLaunchAccepted: "Launch requested", gameCloseAccepted: "Close requested",
+        cheatDependencyLocked: "Required by enabled cheats. Turn those cheats off first.",
+        cheatDependencyUnavailable: "A required cheat is missing, incompatible or unsupported.",
+        patchControlEditable: "Available", patchControlRequired: "Required", patchControlLaunch: "Start game",
+        patchControlVersion: "Other version", patchControlUnsupported: "Unsupported", patchControlDependency: "Dependency",
+        patchControlApplying: "Applying…", patchControlSaving: "Saving…",
+        patchInstalledVersion: "Installed: {version}", patchCurrentVersion: "For the installed version", patchOtherVersions: "For other versions",
+        patchNoCurrentVersion: "No entries match the installed game version.", patchVersions: "Version: {version}", patchAnyVersion: "Any version", patchModule: "Module: {module}",
+        patchControlsHint: "In game applies cheats now. Apply at launch enables them automatically on the next launch.",
+        patchLaunchForLive: "Start the game to use the live switches.", patchLive: "In game", patchModeMemory: "8 GB", patchMode120: "120 Hz",
+        patchOtherHint: "Entries for other versions can be enabled only when all writes use signature scans. Fixed offsets remain version-bound.",
+        patchSourceHint: "Choose ZIP sources. Local files take priority. Updates wait while a game is running.",
+        patchUpdatePeriod: "Update interval (hours; 0 = manual)", patchCustomSource: "Custom ZIP URL", patchUpdateNow: "Update now",
+        patchCheats: "Cheats", patchXml: "XML patches", patchSourceType: "Source type", patchSourceUrl: "ZIP archive URL",
+        patchSourceLimit: "Up to 12 sources", patchReloadPending: "Settings saved; waiting for reload…",
+        patchUpdating: "Updating databases…", patchUpdateQueued: "Queued; waiting for the console to be idle",
+        patchUpdateFailed: "Update failed (code {code}); see the debug log", patchUpdated: "Databases updated", patchNotChecked: "Not checked yet",
         activeGame: "Running", playedTime: "Time played", installedAt: "Installed",
         relativeAgo: "{time} ago", timeDay: "d", timeHour: "h", timeMinute: "min", timeJustNow: "Less than a minute ago",
         beforePatchVersion: "before update {version}",
-        xmlPatches: "XML patches", xmlPatchEmpty: "No XML patches found. Add {title}.xml to {directory}.",
-        xmlPatchHint: "Changes apply on the next game launch. Patches must match the installed game version.",
+        xmlPatches: "Patches and cheats", cheatAutoload: "Apply at launch", cheatApply: "Apply", cheatApplied: "Cheat state updated", cheatLiveHint: "Cheats can be toggled while the game is running. Apply at launch is saved separately.", xmlPatchEmpty: "No patches or cheats found. Add {title}.xml to {directory}; JSON, SHN and MC4 files go in /data/shadowmount/cheats.",
+        xmlPatchHint: "Changes apply on the next game launch. Fixed offsets require a matching game version; signature scans resolve addresses in the game process.",
         xmlPatchVersion: "Game versions: {version} · Module: {module}", xmlPatchRequires: "Requires: {modes}",
         xmlPatchMismatch: "Different game version", xmlPatchUnsupported: "Unsupported patch", xmlPatchSaved: "Patch selection saved"
       });
       Object.assign(translations["ru-RU"], {
+        badgePatches: "Патчи", badgeCheats: "Читы", patchBadgeAvailable: "Есть подходящие записи", patchBadgeApplied: "Применены в текущем запуске игры", patchBadgeEnabled: "Включены при запуске игры",
+        patchUpload: "Загрузить файлы", patchUploadHint: "XML → patches; JSON, SHN, MC4 → cheats. До 64 файлов за раз, до 4 МиБ каждый. Существующие файлы сохраняются.",
+        patchDeleteFile: "Удалить файл", patchDeleteConfirm: "Удалить {file} и все патчи/читы из этого файла?",
+        patchFilesUploaded: "Загружено: {count}", patchFileDeleted: "Файл удалён", patchFileInvalid: "Выберите до 64 файлов XML, JSON, SHN или MC4 размером до 4 МиБ каждый.",
+        patchFileBusy: "Для удаления файлов патчей и читов закройте запущенную игру.",
+        patchSignature: "Поиск по сигнатуре", patchFixedVersion: "Фиксированные смещения: недоступно для этой версии игры",
+        overviewFiles: "Файлы игры",
+        sourceReady: "Доступен", sourceNotReady: "Недоступен",
+        detailOverview: "Обзор", detailPatches: "Патчи и читы",
+        detailProfileHelp: "О параметрах",
+        patchDetails: "Подробнее", patchFilterAll: "Все", patchFilterEnabled: "Включённые", patchFilterAvailable: "Доступные",
+        patchFilterEmpty: "Нет записей для выбранного фильтра.", patchAppliedNow: "Применён сейчас", patchAtLaunch: "Включён при запуске", patchNotApplied: "Не применён", patchNotSelected: "Не выбран",
+        gameOperations: "Операции с игрой", childMode: "Детский режим", hideGameOperations: "Скрывать операции с играми",
+        childModeHint: "Скрывает вкладку установки и операции с файлами игр. Запуск игр, патчи и читы остаются доступны.",
+        reinstall: "Переустановить", reinstallConfirm: "Переустановить {game} из источника?\n\nТекущая установка будет удалена и повторно зарегистрирована сканером. Исходный образ или папка не удаляются.",
+        reinstallAccepted: "Запрос на переустановку {title} принят",
+        launchGame: "Запустить", closeGame: "Закрыть игру", launchingGame: "Запуск…", closingGame: "Закрытие…",
+        gameLaunchAccepted: "Запуск запрошен", gameCloseAccepted: "Закрытие запрошено",
+        cheatDependencyLocked: "Нужен включённым читам. Сначала выключите зависимые читы.",
+        cheatDependencyUnavailable: "Нужный чит отсутствует, несовместим или не поддерживается.",
+        patchControlEditable: "Доступно", patchControlRequired: "Нужен читам", patchControlLaunch: "Нужен запуск",
+        patchControlVersion: "Другая версия", patchControlUnsupported: "Нет поддержки", patchControlDependency: "Нет зависимости",
+        patchControlApplying: "Применение…", patchControlSaving: "Сохранение…",
+        patchInstalledVersion: "Установлена: {version}", patchCurrentVersion: "Для установленной версии", patchOtherVersions: "Для других версий",
+        patchNoCurrentVersion: "Для установленной версии подходящих записей нет.", patchVersions: "Версия: {version}", patchAnyVersion: "Любая версия", patchModule: "Модуль: {module}",
+        patchControlsHint: "«В игре» — применить сейчас; «При запуске» — автоматически при следующем запуске.",
+        patchLaunchForLive: "Чтобы применить чит сейчас, запустите игру.", patchLive: "В игре", patchModeMemory: "8 ГБ", patchMode120: "120 Гц",
+        patchOtherHint: "Записи для других версий можно включать, только если все адреса находятся по сигнатурам. Фиксированные смещения остаются привязаны к версии.",
+        patchSourceHint: "Выберите ZIP-источники. Локальные файлы имеют приоритет. Обновление ожидает закрытия запущенной игры.",
+        patchUpdatePeriod: "Период обновления (часы; 0 — вручную)", patchCustomSource: "Путь к zip-архиву", patchUpdateNow: "Обновить сейчас",
+        patchCheats: "Читы", patchXml: "XML-патчи", patchSourceType: "Тип источника", patchSourceUrl: "Адрес ZIP-архива",
+        patchSourceLimit: "Не более 12 источников", patchReloadPending: "Настройки сохранены; ожидается перезагрузка конфигурации…",
+        patchUpdating: "Обновление баз…", patchUpdateQueued: "В очереди; ожидается освобождение приставки",
+        patchUpdateFailed: "Ошибка обновления (код {code}); подробности в журнале", patchUpdated: "Базы обновлены", patchNotChecked: "Проверка ещё не выполнялась",
         activeGame: "Игра запущена", playedTime: "Время в игре", installedAt: "Установлена",
         relativeAgo: "{time} назад", timeDay: "дн.", timeHour: "ч", timeMinute: "мин.", timeJustNow: "Менее минуты назад",
         beforePatchVersion: "до патча {version}",
-        xmlPatches: "XML-патчи", xmlPatchEmpty: "XML-патчи не найдены. Добавьте {title}.xml в {directory}.",
-        xmlPatchHint: "Изменения применяются при следующем запуске игры. Патчи должны соответствовать установленной версии игры.",
+        xmlPatches: "Патчи и читы", xmlPatchEmpty: "Патчи и читы не найдены. Добавьте {title}.xml в {directory}; JSON, SHN и MC4 — в /data/shadowmount/cheats.",
+        cheatAutoload: "При запуске", cheatApply: "Применить", cheatApplied: "Состояние чита обновлено",
+        cheatLiveHint: "Читы можно переключать во время игры. Автоприменение при запуске сохраняется отдельно.",
+        xmlPatchHint: "Изменения применяются при следующем запуске игры. Фиксированные смещения требуют совпадения версии; поиск по сигнатурам находит адреса в процессе игры.",
         xmlPatchVersion: "Версии игры: {version} · Модуль: {module}", xmlPatchRequires: "Требуется: {modes}",
         xmlPatchMismatch: "Другая версия игры", xmlPatchUnsupported: "Патч не поддерживается", xmlPatchSaved: "Выбор патчей сохранён"
       });
@@ -3297,12 +3528,18 @@
           ? t(operationErrorKeys[reason], { path }) : fallback;
       }
 
-      async function api(path, payload = {}) {
+      function beginReadRequest(previous) {
+        previous?.abort?.();
+        return typeof AbortController === "function" ? new AbortController() : {};
+      }
+
+      async function api(path, payload = {}, signal) {
+        const binary = typeof Blob !== "undefined" && payload instanceof Blob;
         const response = await fetch(`${API}${path}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          cache: "no-store"
+          headers: { "Content-Type": binary ? "application/octet-stream" : "application/json" },
+          body: binary ? payload : JSON.stringify(payload),
+          cache: "no-store", signal
         });
         const type = response.headers.get("content-type") || "";
         const localTime = response.headers.get("X-ShadowMount-Local-Time");
@@ -3405,6 +3642,31 @@
         return node("span", `badge ${extra}`.trim(), text);
       }
 
+      function appendPatchBadges(container, game) {
+        for (const [kind, label, style] of [["patches", "badgePatches", "patch-badge"], ["cheats", "badgeCheats", "cheat-badge"]]) {
+          let item = container.querySelector(`[data-patch-badge="${kind}"]`);
+          const applied = Boolean(game[`${kind}_applied`]);
+          const enabled = Boolean(game[`${kind}_enabled`]);
+          if (!game[`has_${kind}`] && !applied && !enabled) { item?.remove(); continue; }
+          if (!item) { item = badge(t(label), style); item.dataset.patchBadge = kind; container.append(item); }
+          item.classList.toggle("is-applied", applied || enabled);
+          item.title = t(applied ? "patchBadgeApplied" : enabled ? "patchBadgeEnabled" : "patchBadgeAvailable");
+          item.setAttribute("aria-label", `${t(label)}: ${item.title}`);
+        }
+      }
+
+      function syncGamePatchBadges(game, result) {
+        let changed = false;
+        const targets = [game, ...state.games.filter(item => item.title_id === game.title_id)];
+        for (const key of ["has_patches", "has_cheats", "patches_applied", "cheats_applied", "patches_enabled", "cheats_enabled"])
+          if (typeof result[key] === "boolean")
+            for (const target of targets) if (target[key] !== result[key]) { target[key] = result[key]; changed = true; }
+        if (!changed) return;
+        const card = $("games").querySelector(`[data-title-id="${game.title_id}"]`)?.closest(".game-card");
+        if (card) appendPatchBadges(card.querySelector(".badges"), game);
+        if (state.selected?.title_id === game.title_id && !$("modal").hidden) appendPatchBadges($("modalBadges"), game);
+      }
+
       function gameLabel(game) {
         const name = game.title_name || game.title_id;
         return name === game.title_id ? game.title_id : `${name} (${game.title_id})`;
@@ -3448,6 +3710,7 @@
         if (game.mounted) badges.append(badge(t("mounted"), "live"));
         if (game.backport_path) badges.append(badge(t("backport")));
         if (game.dlc_count > 0) badges.append(badge(`${t("dlcSize")} · ${game.dlc_count}`, "dlc"));
+        appendPatchBadges(badges, game);
         body.append(badges);
         const path = node("div", "game-path", game.path || t("sourceUnavailable"));
         path.title = game.path || "";
@@ -3718,9 +3981,9 @@
       async function refreshStorage() {
         const list = $("storageList");
         const summary = $("storageSummary");
-        const request = ++state.storageRequest;
+        const request = beginReadRequest(state.storageRequest); state.storageRequest = request;
         try {
-          const data = await api("/storage");
+          const data = await api("/storage", {}, request.signal);
           if (request !== state.storageRequest) return;
           state.storageDestinations = (data.destinations || []).slice().sort((left, right) =>
             String(left.path).localeCompare(String(right.path))
@@ -3794,7 +4057,7 @@
             for (const { mount, row, summaryItem, space, meter, readOnly } of remoteRows) {
               if (request !== state.storageRequest || !list.contains(row)) break;
               try {
-                const capacity = await api("/storage", { path: mount.path });
+                const capacity = await api("/storage", { path: mount.path }, request.signal);
                 if (request !== state.storageRequest || !list.contains(row)) break;
                 const wasReadOnly = Boolean(mount.read_only);
                 Object.assign(mount, capacity);
@@ -3822,7 +4085,7 @@
         }
       }
 
-      async function refreshLibrary() {
+      async function refreshLibrary(openActive = false) {
         if (state.busy) return;
         state.busy = true;
         $("refreshBtn").disabled = true;
@@ -3837,6 +4100,13 @@
           setConnection("online", "connected");
           renderStats();
           renderGames();
+          const selected = state.selected;
+          const listed = selected && state.games.find(game => game.title_id === selected.title_id);
+          if (listed) { syncGamePatchBadges(selected, listed); syncDetailRuntime(selected, Boolean(listed.active)); }
+          if (openActive === true && !state.detailRequest && !activeDialog() && navigation.view === "library") {
+            const active = state.games.find(game => game.active);
+            if (active) await showDetails(active.title_id);
+          }
         } catch (error) {
           setConnection("offline", "disconnected");
           replaceContent($("games"), node("div", "empty", t("apiError", { error: errorMessage(error) })));
@@ -3847,8 +4117,8 @@
         }
       }
 
-      function refreshAll() {
-        return Promise.all([refreshLibrary(), refreshStorage()]);
+      function refreshAll(openActive = false) {
+        return Promise.all([refreshLibrary(openActive === true), refreshStorage()]);
       }
 
       async function refreshManual() {
@@ -4002,9 +4272,9 @@
 
       async function refreshSmbConnections() {
         if (state.smbBusy) return;
-        const request = ++state.smbRequest;
+        const request = beginReadRequest(state.smbRequest); state.smbRequest = request;
         try {
-          const result = await api("/smb");
+          const result = await api("/smb", {}, request.signal);
           if (request !== state.smbRequest) return;
           state.smbConnections = result.connections || []; renderSmbConnections();
         } catch (_) {
@@ -4017,7 +4287,7 @@
         try { values = values || smbFormValues(); }
         catch (error) { toast(error.message, true); return false; }
         state.smbBusy = true;
-        ++state.smbRequest;
+        state.smbRequest?.abort?.(); state.smbRequest = null;
         $("consoleSmb").querySelectorAll("input, button").forEach(input => { input.disabled = true; });
         try {
           const result = await api("/smb", { ...values, action });
@@ -4049,6 +4319,8 @@
           const settings = await api("/settings");
           $("debugEnabled").checked = Boolean(settings.debug);
           $("quietMode").checked = Boolean(settings.quiet_mode);
+          $("childMode").checked = Boolean(settings.child_mode);
+          setChildMode(Boolean(settings.child_mode));
           $("ps4ForcePro").checked = Boolean(settings.ps4_force_pro);
           $("ps4CpuBoost").checked = Boolean(settings.ps4_cpu_boost);
           $("ps4GpuBoost").checked = Boolean(settings.ps4_gpu_boost);
@@ -4069,6 +4341,17 @@
 
       function syncAutoRemoveControls() {
         $("autoRemoveMissingDelay").disabled = !$("autoRemoveMissingGames").checked;
+      }
+
+      function setChildMode(enabled) {
+        const changed = state.childMode !== enabled;
+        state.childMode = enabled;
+        $("packagesTab").hidden = enabled;
+        if (enabled && navigation.view === "packages") switchView("library");
+        if (!changed) return;
+        closeGameOperations(false);
+        if (state.selected && !$("modal").hidden) renderGameActions(state.selected);
+        $("detail-patches")?.querySelector(".xml-patches")?.dispatchEvent(new Event("runtimechange"));
       }
 
       function addScanPath(event) {
@@ -4099,11 +4382,13 @@
           return;
         }
         const submit = $("saveSettings");
+        const childMode = $("childMode").checked;
         submit.disabled = true;
         try {
           await api("/settings/update", {
             debug: $("debugEnabled").checked,
             quiet_mode: $("quietMode").checked,
+            child_mode: childMode,
             ps4_force_pro: $("ps4ForcePro").checked,
             ps4_cpu_boost: $("ps4CpuBoost").checked,
             ps4_gpu_boost: $("ps4GpuBoost").checked,
@@ -4116,6 +4401,7 @@
             fan_target_temperature: Number($("fanTemperature").value),
             scan_paths: state.scanPaths
           });
+          setChildMode(childMode);
           logActivity(t("settingsSaved"));
           toast(t("settingsSaved"));
           setTimeout(refreshLibrary, 1200);
@@ -4128,12 +4414,12 @@
       }
 
       async function refreshLog() {
-        const request = ++state.logRequest;
+        const request = beginReadRequest(state.logRequest); state.logRequest = request;
         $("refreshLog").disabled = true;
         $("copyLog").disabled = true;
         state.logText = null;
         try {
-          const result = await api(state.logRoute, { max_bytes: 262144 });
+          const result = await api(state.logRoute, { max_bytes: 262144 }, request.signal);
           if (request !== state.logRequest) return;
           state.logText = result.content || "";
           $("logContent").textContent = state.logText;
@@ -4209,8 +4495,10 @@
       function showKernelLog() { showLog("/kernel-log", "kernelLogTitle", "viewKernelLog"); }
 
       function closeDebugLog() {
-        ++state.logRequest;
+        state.logRequest?.abort?.(); state.logRequest = null;
         state.logText = null;
+        $("logContent").textContent = "";
+        $("logSubtitle").textContent = "";
         $("logModal").hidden = true;
         $(state.logTriggerId).focus();
       }
@@ -4303,6 +4591,7 @@
           const current = mountedGames.map((item) => gameLabel(item)).join(", ");
           if (!await confirmAction(t("remountConfirm", { current, target: gameLabel(game) }))) return;
         }
+        if (!canOperateOnGame(game)) return;
         const label = operation === "mount"
           ? t("mountedTitle", { title: game.title_id, mode: mode ? ` (${mode})` : "" })
           : t("unmountedTitle", { title: game.title_id });
@@ -4324,6 +4613,49 @@
             renderDetails(state.selected, true);
           }
         });
+      }
+
+      async function controlGame(game, button) {
+        if (state.gameControlBusy || state.gamePolicySaving || $("details").querySelector(".xml-patches")?.dataset.saving) return;
+        const request = state.detailRequest;
+        const launch = !game.active;
+        state.gameControlBusy = true;
+        $("modal").querySelectorAll("#details button, #details input, #modalActions button").forEach(control => { control.disabled = true; });
+        button.textContent = t(launch ? "launchingGame" : "closingGame");
+        let updated = null;
+        try {
+          await api(launch ? "/games/launch" : "/games/close", {title_id: game.title_id});
+          toast(t(launch ? "gameLaunchAccepted" : "gameCloseAccepted"));
+          // Observe lifecycle state; accepting the request is not proof that
+          // the application has finished starting or closing.
+          for (let attempt = 0; attempt < 15; ++attempt) {
+            if (state.detailRequest !== request || $("modal").hidden) break;
+            const runtime = await api("/games/info", {title_id: game.title_id, runtime_only: true});
+            updated = {...game, active: Boolean(runtime.active)};
+            if (updated.active === launch) {
+              updated = await api("/games/info", {title_id: game.title_id});
+              break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        } catch (error) {
+          toast(errorMessage(error), true);
+          if (state.detailRequest === request && !$("modal").hidden) {
+            try { updated = await api("/games/info", {title_id: game.title_id}); }
+            catch (_) { /* Keep the last confirmed state when disconnected. */ }
+          }
+        } finally {
+          state.gameControlBusy = false;
+          if (state.detailRequest === request && !$("modal").hidden && state.selected?.title_id === game.title_id) {
+            const focused = document.activeElement;
+            const pane = detailScrollPane(), scrollTop = pane.scrollTop;
+            renderDetails(updated || state.selected);
+            pane.scrollTop = scrollTop;
+            if (!focused.isConnected || focused === document.body) focusControl($("modalActions").querySelector(".game-control"));
+          }
+          if (state.selected) syncGameActionButtons(state.selected);
+          refreshLibrary();
+        }
       }
 
       function actionButton(text, action, extra = "") {
@@ -4386,9 +4718,7 @@
             meta.append(node("span", "", entry.size_status === 0 && Number.isFinite(entry.size_bytes)
               ? formatBytes(entry.size_bytes) : t("unavailable")));
             const actions = node("div", "content-dlc-actions");
-            const remove = actionButton(t("remove"), () => uninstallContent(game, entry), "danger content-delete");
-            remove.setAttribute("aria-label", `${t("deleteDlc")}: ${entry.title_name || entry.content_id}`);
-            actions.append(meta, remove);
+            actions.append(meta);
             row.append(title, actions);
             list.append(row);
           }
@@ -4399,55 +4729,352 @@
       }
 
       function gameXmlPatches(game) {
+        const detailView = state.detailView;
         const section = node("section", "installed-content xml-patches");
-        section.append(node("h3", "subtle", t("xmlPatches")));
+        const heading = node("div", "patch-overview");
+        const installed = badge(t("patchInstalledVersion", {version: game.version || t("unknown")}));
+        heading.append(node("h3", "", t("xmlPatches")), installed);
         const list = node("div", "xml-patch-list", t("loading"));
-        section.append(list, node("p", "subtle fakelib-hint", t("xmlPatchHint")));
-        const draw = (result) => {
-          replaceContent(list);
-          if (!result.patches?.length) {
-            list.append(node("p", "subtle", t("xmlPatchEmpty", { title: game.title_id, directory: result.directory })));
-            return;
-          }
-          for (const patch of result.patches) {
-            const row = node("div", "content-dlc-row xml-patch-row");
-            const label = node("div", "xml-patch-description");
-            label.append(node("strong", "", patch.name), node("p", "subtle", t("xmlPatchVersion", { version: patch.app_version, module: patch.module })));
-            if (patch.author) label.append(node("p", "subtle", patch.author));
-            if (patch.note) label.append(node("p", "subtle", patch.note));
-            if (patch.requires) label.append(node("p", "subtle", t("xmlPatchRequires", { modes: patch.requires })));
-            if (!patch.compatible) label.append(badge(t("xmlPatchMismatch")));
-            if (!patch.supported) label.append(node("p", "subtle", patch.error || t("xmlPatchUnsupported")));
-            const button = actionButton(t(patch.enabled ? "ps4ProfileOn" : "ps4ProfileOff"), async () => {
-              if (section.dataset.saving) return;
-              section.dataset.saving = "1";
-              const focused = patch.id;
-              for (const control of section.querySelectorAll("button")) control.disabled = true;
-              try {
-                const updated = await api("/games/patches", { title_id: game.title_id, id: patch.id, enabled: !patch.enabled });
-                if (state.selected !== game || !section.isConnected) return;
-                draw(updated);
-                toast(t("xmlPatchSaved"));
-                focusControl(section.querySelector(`[data-patch-id="${focused}"]`));
-              } catch (error) {
-                if (state.selected === game && section.isConnected) {
-                  draw(result);
-                  toast(errorMessage(error), true);
-                  focusControl(section.querySelector(`[data-patch-id="${focused}"]`));
-                }
-              } finally { delete section.dataset.saving; }
-            }, "xml-patch-toggle");
-            button.setAttribute("aria-label", `${patch.name}: ${t(patch.enabled ? "ps4ProfileOn" : "ps4ProfileOff")}`);
-            button.setAttribute("aria-pressed", String(Boolean(patch.enabled)));
-            button.dataset.patchId = patch.id;
-            button.disabled = !patch.enabled && (!patch.compatible || !patch.supported);
-            row.append(label, button);
-            list.append(row);
+        const hint = node("p", "patch-help", t("patchControlsHint"));
+        const filters = node("div", "patch-filters"); filters.setAttribute("role", "group");
+        filters.setAttribute("aria-label", t("detailPatches"));
+        for (const [key, text] of [["all", "patchFilterAll"], ["enabled", "patchFilterEnabled"], ["available", "patchFilterAvailable"]]) {
+          const button = actionButton(t(text), () => { detailView.patchFilter = key; syncControls(); }, "small");
+          button.dataset.patchFilter = key;
+          button.setAttribute("aria-pressed", String(detailView.patchFilter === key)); filters.append(button);
+        }
+        const empty = node("p", "subtle patch-filter-empty", t("patchFilterEmpty")); empty.hidden = true;
+        section.append(heading, hint, filters, list, empty);
+        const fileControls = [];
+        let fileTools = null, uploadButton = null;
+        if (!playStationBrowser) {
+          fileTools = node("div", "patch-file-tools");
+          const picker = node("input"); picker.type = "file"; picker.accept = ".xml,.json,.shn,.mc4"; picker.multiple = true; picker.hidden = true;
+          uploadButton = actionButton(t("patchUpload"), () => {
+            if (!pending && !state.childMode) { picker.value = ""; picker.click(); }
+          });
+          uploadButton.classList.add("patch-upload");
+          picker.addEventListener("change", () => {
+            const files = Array.from(picker.files || []);
+            picker.value = "";
+            if (!files.length) return;
+            if (files.length > 64 || files.some(file => !/\.(xml|json|shn|mc4)$/i.test(file.name) || !file.size || file.size > 4 * 1024 * 1024)) {
+              toast(t("patchFileInvalid"), true); return;
+            }
+            mutateFiles(async () => {
+              let count = 0;
+              const errors = [];
+              for (const file of files) {
+                try {
+                  await api(`/games/patches/upload?title_id=${encodeURIComponent(game.title_id)}&filename=${encodeURIComponent(file.name)}`, file);
+                  ++count;
+                } catch (error) { errors.push(`${file.name}: ${errorMessage(error)}`); }
+              }
+              if (errors.length) throw new Error(`${t("patchFilesUploaded", {count})}. ${errors.join("; ")}`);
+              toast(t("patchFilesUploaded", {count}));
+            });
+          });
+          fileTools.append(uploadButton, node("span", "subtle", t("patchUploadHint")), picker);
+          section.insertBefore(fileTools, filters);
+          fileTools.hidden = state.childMode;
+        }
+        let otherVersionsOpen = detailView.expanded.has("other-versions");
+        let confirmed = null, pending = null;
+        const views = new Map(), byId = new Map();
+        const liveRequired = new Set(), savedRequired = new Set(), dependenciesValid = new Map();
+        const catalogFields = ["id", "name", "format", "button", "app_version", "module", "author", "note", "master_id", "requires", "compatible", "version_matched", "signature_based", "supported", "error", "file", "file_deletable"];
+        const readCatalog = async () => {
+          const result = await api("/games/patches", {title_id: game.title_id}, state.detailRequest?.signal);
+          if (state.selected === game && section.isConnected) update(result);
+        };
+        const mutateFiles = async operation => {
+          if (pending || state.childMode || playStationBrowser || state.selected !== game || !section.isConnected) return;
+          pending = {files: true}; syncControls();
+          try { await operation(); }
+          catch (error) { toast(errorMessage(error), true); }
+          finally {
+            if (state.selected === game && section.isConnected) {
+              try { await readCatalog(); }
+              catch (error) { if (state.selected === game && section.isConnected) toast(errorMessage(error), true); }
+            }
+            pending = null;
+            if (state.selected === game && section.isConnected) syncControls();
           }
         };
-        api("/games/patches", { title_id: game.title_id }).then((result) => {
-          if (state.selected === game && section.isConnected) draw(result);
-        }).catch((error) => {
+        const versionMatches = patch => patch.version_matched ?? patch.compatible;
+        const resolveDependencies = (entries) => {
+          byId.clear(); liveRequired.clear(); savedRequired.clear(); dependenciesValid.clear();
+          for (const entry of entries) byId.set(entry.id, entry);
+          for (const patch of entries) {
+            const chain = new Set([patch.id]);
+            let parent = patch, valid = true;
+            while (parent.master_id) {
+              parent = byId.get(parent.master_id);
+              if (!parent || !parent.compatible || !parent.supported || chain.has(parent.id)) { valid = false; break; }
+              chain.add(parent.id);
+            }
+            dependenciesValid.set(patch.id, valid);
+            if (!valid || !patch.compatible || !patch.supported) continue;
+            for (const id of chain) {
+              if (id === patch.id) continue;
+              if (patch.applied) liveRequired.add(id);
+              if (patch.enabled) savedRequired.add(id);
+            }
+          }
+        };
+        const syncControls = () => {
+          section.setAttribute("aria-busy", String(Boolean(pending)));
+          if (fileTools) { fileTools.hidden = state.childMode; uploadButton.disabled = Boolean(pending); }
+          const active = game.active || state.games.some(item => item.active);
+          for (const button of fileControls) {
+            button.hidden = state.childMode;
+            button.disabled = Boolean(pending || active);
+            button.title = active ? t("patchFileBusy") : button.dataset.file;
+          }
+          for (const view of views.values()) {
+            const patch = view.patch;
+            let editable = false;
+            view.row.classList.toggle("is-selected", Boolean(patch.compatible && (patch.enabled || patch.applied)));
+            for (const item of view.controls) {
+              const {control, wrapper, status, live} = item;
+              const checked = Boolean(live ? patch.applied : patch.enabled);
+              const locked = (live ? liveRequired : savedRequired).has(patch.id);
+              let reason = locked ? "cheatDependencyLocked" : live && !game.active ? "patchLaunchForLive" : "";
+              if (!reason && (live || !checked)) {
+                if (!patch.compatible) reason = "xmlPatchMismatch";
+                else if (!patch.supported) reason = "xmlPatchUnsupported";
+                else if (!dependenciesValid.get(patch.id)) reason = "cheatDependencyUnavailable";
+              }
+              const working = pending?.id === patch.id && pending.live === live;
+              if (!reason) editable = true;
+              const on = working ? pending.enabled : checked;
+              if (control.tagName === "INPUT") control.checked = on;
+              control.disabled = Boolean(reason || pending);
+              wrapper.classList.toggle("is-available", !reason && !working);
+              wrapper.classList.toggle("is-locked", locked);
+              wrapper.classList.toggle("is-unavailable", Boolean(reason && !locked));
+              wrapper.classList.toggle("is-on", on);
+              wrapper.classList.toggle("is-busy", working);
+              const state = working ? live ? "patchControlApplying" : "patchControlSaving" : reason ? {
+                cheatDependencyLocked: "patchControlRequired", patchLaunchForLive: "patchControlLaunch",
+                xmlPatchMismatch: "patchControlVersion", xmlPatchUnsupported: "patchControlUnsupported",
+                cheatDependencyUnavailable: "patchControlDependency"
+              }[reason] : checked ? live ? "patchAppliedNow" : "patchAtLaunch" : live ? "patchNotApplied" : "patchNotSelected";
+              const caption = t(state), description = t(reason || state);
+              if (status.textContent !== caption) status.textContent = caption;
+              if (wrapper.title !== description) wrapper.title = description;
+            }
+            const message = detailView.errors.get(patch.id) || "";
+            if (view.error.textContent !== message) view.error.textContent = message;
+            view.error.hidden = !message;
+            view.row.hidden = detailView.patchFilter === "enabled" ? !(patch.compatible && (patch.enabled || patch.applied))
+              : detailView.patchFilter === "available" ? !editable : false;
+          }
+          for (const button of filters.querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.patchFilter === detailView.patchFilter));
+          for (const pack of list.querySelectorAll(".patch-pack")) pack.hidden = !Array.from(pack.querySelectorAll("[data-patch-row]")).some(row => !row.hidden);
+          const other = list.querySelector(".patch-other-versions");
+          if (other) other.hidden = !Array.from(other.querySelectorAll("[data-patch-row]")).some(row => !row.hidden);
+          empty.hidden = !views.size || Array.from(views.values()).some(view => !view.row.hidden);
+        };
+        section.addEventListener("runtimechange", () => {
+          const hasCheats = confirmed?.patches?.some(entry => entry.format && entry.format !== "XML");
+          hint.textContent = t(hasCheats ? "patchControlsHint" : "xmlPatchHint") + (hasCheats && !game.active ? " " + t("patchLaunchForLive") : "");
+          syncControls();
+        });
+        const update = (result) => {
+          syncGamePatchBadges(game, result);
+          const entries = result.patches || [], previous = confirmed?.patches || [];
+          const sameCatalog = confirmed && entries.length === previous.length && entries.every((patch, i) => catalogFields.every(field => patch[field] === previous[i][field]));
+          if (!sameCatalog) { draw(result); return; }
+          confirmed = result;
+          resolveDependencies(entries);
+          for (const patch of entries) Object.assign(views.get(patch.id).patch, patch);
+          installed.textContent = t("patchInstalledVersion", {version: result.version || game.version || t("unknown")});
+          syncControls();
+        };
+        const draw = (result) => {
+          const restoreScroll = detailView.restorePatchScroll;
+          delete detailView.restorePatchScroll;
+          const disclosure = list.querySelector(".patch-other-versions");
+          if (disclosure) otherVersionsOpen = disclosure.open;
+          replaceContent(list); views.clear(); fileControls.length = 0; confirmed = result;
+          const entries = result.patches || [];
+          installed.textContent = t("patchInstalledVersion", {version: result.version || game.version || t("unknown")});
+          resolveDependencies(entries);
+          for (const id of detailView.errors.keys()) if (!byId.has(id)) detailView.errors.delete(id);
+          if (!entries.length) {
+            list.append(node("p", "subtle", t("xmlPatchEmpty", { title: game.title_id, directory: result.directory })));
+            syncControls();
+            return;
+          }
+          const current = entries.filter(versionMatches);
+          const other = entries.filter(entry => !versionMatches(entry));
+          const hasCheats = entries.some(entry => entry.format && entry.format !== "XML");
+          hint.textContent = t(hasCheats ? "patchControlsHint" : "xmlPatchHint") + (hasCheats && !game.active ? " " + t("patchLaunchForLive") : "");
+          const renderRow = (patch) => {
+            const cheat = patch.format && patch.format !== "XML";
+            const row = node("div", "content-dlc-row xml-patch-row");
+            row.dataset.patchRow = patch.id;
+            const error = node("p", "patch-request-error"); error.hidden = true; error.setAttribute("role", "status");
+            const view = {patch, row, controls: [], error}; views.set(patch.id, view);
+            const label = node("div", "xml-patch-description");
+            label.append(node("strong", "", patch.name));
+            if (patch.note) label.append(node("p", "patch-note", patch.note));
+            if (patch.signature_based) label.append(node("p", "patch-requirement", t("patchSignature")));
+            if (!patch.compatible) label.append(node("p", "patch-version-note", t("patchFixedVersion")));
+            const master = byId.get(patch.master_id);
+            if (master) label.append(node("p", "patch-requirement", t("xmlPatchRequires", {modes: master.name})));
+            if (!dependenciesValid.get(patch.id)) label.append(node("p", "patch-error", t("cheatDependencyUnavailable")));
+            if (patch.requires) {
+              const modes = patch.requires.split(",").map(mode => ({pro: "PS4 Pro", "8gib": t("patchModeMemory"), "120hz": t("patchMode120")}[mode.trim()] || mode.trim())).join(", ");
+              label.append(node("p", "patch-requirement", t("xmlPatchRequires", {modes})));
+            }
+            if (!patch.supported) {
+              label.append(node("div", "patch-warning", t("xmlPatchUnsupported")));
+              if (patch.error) label.append(node("p", "patch-error", patch.error));
+            }
+            const controls = node("div", "patch-controls" + (cheat ? "" : " startup-only"));
+            const select = async (live) => {
+              if (pending) return;
+              const trigger = view.controls.find(item => item.live === live).control;
+              const hadFocus = document.activeElement === trigger;
+              pending = {id: patch.id, live, enabled: live ? (patch.button || !patch.applied) : !patch.enabled};
+              section.dataset.saving = "1";
+              syncControls();
+              const action = live ? "live" : "save";
+              const restoreFocus = () => {
+                const control = section.querySelector(`[data-patch-id="${patch.id}"][data-patch-action="${action}"]`);
+                if (control && !control.disabled && control.getClientRects().length && !control.closest("[hidden]")) {
+                  const pane = detailScrollPane(control), top = pane?.scrollTop;
+                  focusControl(control);
+                  if (pane) pane.scrollTop = top;
+                }
+                else focusControl(!versionMatches(patch) ? section.querySelector(".patch-other-versions > summary") :
+                  focusableControls(section).find(item => item.tabIndex >= 0) || $("modal").querySelector(".close"));
+              };
+              let response = confirmed;
+              try {
+                const body = {title_id: game.title_id, id: patch.id, enabled: pending.enabled};
+                if (live) body.apply = true;
+                response = await api("/games/patches", body);
+                if (state.selected !== game || !section.isConnected) return;
+                detailView.errors.delete(patch.id);
+                toast(t(live ? "cheatApplied" : "xmlPatchSaved"));
+              } catch (error) {
+                if (state.selected === game && section.isConnected) {
+                  detailView.errors.set(patch.id, `${t(live ? "patchLive" : "cheatAutoload")}: ${errorMessage(error)}`);
+                  toast(errorMessage(error), true);
+                }
+              } finally {
+                pending = null; delete section.dataset.saving;
+                section.setAttribute("aria-busy", "false");
+                if (state.selected === game && section.isConnected) {
+                  const focused = document.activeElement;
+                  update(response);
+                  if (hadFocus && activeDialog() === $("modal") && (focused === trigger || focused === document.body || !focused.isConnected)) restoreFocus();
+                }
+              }
+            };
+            const controlText = (text, live) => {
+              const copy = node("span", "patch-control-copy"), status = node("small", "patch-control-status");
+              status.id = `patch-status-${patch.id}-${live ? "live" : "save"}`;
+              copy.append(node("span", "patch-control-name", text), status);
+              return {copy, status};
+            };
+            const addSwitch = (text, live) => {
+              const toggle = node("label", "check console-setting patch-toggle patch-control");
+              const input = node("input"); input.type = "checkbox"; input.setAttribute("role", "switch");
+              input.dataset.patchId = patch.id; input.dataset.patchAction = live ? "live" : "save";
+              input.className = live ? "xml-patch-toggle" : "patch-autoload";
+              input.setAttribute("aria-label", `${patch.name}: ${text}`);
+              const {copy, status} = controlText(text, live);
+              input.setAttribute("aria-describedby", status.id);
+              input.addEventListener("change", () => select(live));
+              toggle.append(copy, input); controls.append(toggle);
+              view.controls.push({control: input, wrapper: toggle, status, live});
+            };
+            if (cheat && patch.compatible) {
+              if (patch.button) {
+                const button = actionButton("", () => select(true), "xml-patch-toggle patch-control");
+                button.dataset.patchId = patch.id; button.dataset.patchAction = "live";
+                const {copy, status} = controlText(t("cheatApply"), true);
+                button.setAttribute("aria-label", `${patch.name}: ${t("cheatApply")}`);
+                button.setAttribute("aria-describedby", status.id);
+                button.append(copy); controls.append(button);
+                view.controls.push({control: button, wrapper: button, status, live: true});
+              } else addSwitch(t("patchLive"), true);
+            }
+            if (patch.compatible) {
+              addSwitch(t("cheatAutoload"), false);
+              row.append(label, controls, error);
+            } else {
+              row.classList.add("is-version-blocked");
+              row.append(label, error);
+            }
+            return row;
+          };
+          const renderPacks = (patches, parent) => {
+            const packs = new Map();
+            for (const patch of patches) {
+              const key = JSON.stringify([patch.file || "", patch.format || "XML", patch.author || "", patch.module || "eboot.bin", patch.app_version || ""]);
+              if (!packs.has(key)) packs.set(key, []);
+              packs.get(key).push(patch);
+            }
+            for (const patches of packs.values()) {
+              const first = patches[0], pack = node("div", "patch-pack"), head = node("div", "patch-pack-head");
+              head.append(badge(first.format || "XML"));
+              const more = node("details", "patch-pack-info");
+              rememberDetailDisclosure(more, `pack:${JSON.stringify([first.format || "XML", first.author || "", first.module || "eboot.bin", first.app_version || ""])}`);
+              more.append(node("summary", "", t("patchDetails")));
+              const meta = node("div", "patch-pack-meta");
+              const version = first.app_version === "mask" && first.signature_based ? t("patchAnyVersion") : first.app_version || t("unknown");
+              meta.append(node("span", "patch-version", t("patchVersions", {version})), node("span", "", t("patchModule", {module: first.module || "eboot.bin"})));
+              if (first.author) meta.append(node("span", "patch-pack-author", first.author));
+              head.append(node("span", "patch-pack-author", t("patchVersions", {version})));
+              more.append(meta); head.append(more); pack.append(head);
+              if (first.file) {
+                const file = node("div", "patch-pack-file");
+                file.append(node("span", "patch-file-name", first.file));
+                head.append(file);
+                if (!playStationBrowser && first.file_deletable === true) {
+                  const remove = actionButton(t("patchDeleteFile"), async () => {
+                    if (pending || state.childMode || game.active || state.games.some(item => item.active)) return;
+                    if (!await confirmAction(t("patchDeleteConfirm", {file: first.file}))) return;
+                    if (game.active || state.games.some(item => item.active)) { toast(t("patchFileBusy"), true); return; }
+                    await mutateFiles(async () => {
+                      await api("/games/patches/delete", {title_id: game.title_id, id: first.id});
+                      toast(t("patchFileDeleted"));
+                    });
+                  }, "danger patch-file-delete");
+                  remove.dataset.file = first.file;
+                  remove.setAttribute("aria-label", `${t("patchDeleteFile")}: ${first.file}`);
+                  fileControls.push(remove); file.append(remove);
+                }
+              }
+              for (const patch of patches) pack.append(renderRow(patch));
+              parent.append(pack);
+            }
+          };
+          const currentTitle = node("h4", "patch-section-title", t("patchCurrentVersion"));
+          currentTitle.append(badge(String(current.length))); list.append(currentTitle);
+          if (current.length) renderPacks(current, list);
+          else list.append(node("p", "subtle", t("patchNoCurrentVersion")));
+          if (other.length) {
+            const details = node("details", "patch-other-versions"), summary = node("summary", "", t("patchOtherVersions"));
+            summary.tabIndex = 0;
+            summary.append(badge(String(other.length))); details.open = otherVersionsOpen;
+            rememberDetailDisclosure(details, "other-versions");
+            details.addEventListener("toggle", () => { if (details.isConnected) otherVersionsOpen = details.open; });
+            const content = node("div", "patch-other-content");
+            content.append(node("p", "", t("patchOtherHint"))); renderPacks(other, content);
+            details.append(summary, content); list.append(details);
+          }
+          syncControls();
+          if (state.detailView === detailView && detailView.tab === "patches" && restoreScroll !== undefined) {
+            detailScrollPane().scrollTop = restoreScroll;
+          }
+        };
+        readCatalog().catch(error => {
           if (state.selected === game && section.isConnected) replaceContent(list, node("p", "subtle", errorMessage(error)));
         });
         return section;
@@ -4491,10 +5118,24 @@
         if ($("modal").hidden || state.selected !== game) return;
         const last = $("detailSidebar").querySelector("[data-last-launch]");
         if (last) last.textContent = game.active ? t("activeGame") : formatLastLaunch(game.last_access_time);
-        state.detailClockTimer = setTimeout(() => refreshDetailClock(game), 60000);
+        state.detailClockTimer = setTimeout(async () => {
+          if (state.selected !== game || $("modal").hidden) return;
+          try {
+            if (!document.hidden && !state.gameControlBusy) {
+              const runtime = await api("/games/info", {title_id: game.title_id, runtime_only: true}, state.detailRequest?.signal);
+              syncGamePatchBadges(game, runtime);
+              if (typeof runtime.active === "boolean") syncDetailRuntime(game, runtime.active);
+            }
+          } catch (_) { /* Keep the last confirmed state until the next check. */ }
+          finally {
+            if (state.selected === game && !$("modal").hidden) refreshDetailClock(game);
+          }
+        }, 5000);
       }
 
       function renderDetails(game, focusRuntimeAction = false) {
+        if (state.selected?.title_id === game.title_id && state.detailView)
+          state.detailView.scroll[state.detailView.tab] = detailScrollPane().scrollTop;
         state.selected = game;
         $("modalTitle").textContent = game.title_name || game.title_id;
         $("modalSubtitle").textContent = `${game.title_id} · ${(game.platform || t("unknown")).toUpperCase()}`;
@@ -4510,17 +5151,35 @@
         installed.append(node("span", "", t("installedAt")), node("time", "", formatGameDate(game.install_time)));
         activity.append(installed);
         sidebar.append(activity);
-        const content = node("div");
+        const tabs = node("div", "detail-tabs"); tabs.id = "detailTabs"; tabs.setAttribute("role", "tablist");
+        tabs.setAttribute("aria-label", t("gameInformation"));
+        const content = node("section", "detail-panel"); content.id = "detail-overview";
+        const patchPanel = node("section", "detail-panel"); patchPanel.id = "detail-patches";
+        const profilePanel = node("div"); profilePanel.id = "detail-profile";
+        const panels = [["overview", "detailOverview", content], ["patches", "detailPatches", patchPanel]];
+        const previousHint = node("span", "detail-tab-hint", "L1"); previousHint.setAttribute("aria-hidden", "true"); tabs.append(previousHint);
+        for (const [key, label, panel] of panels) {
+          const button = actionButton(t(label), () => selectDetailTab(key, true));
+          button.id = `detail-tab-${key}`; button.dataset.detailTab = key;
+          button.setAttribute("role", "tab"); button.setAttribute("aria-controls", panel.id);
+          panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", button.id);
+          panel.hidden = true; tabs.append(button);
+        }
+        const nextHint = node("span", "detail-tab-hint", "R1"); nextHint.setAttribute("aria-hidden", "true"); tabs.append(nextHint);
+        details.append(tabs, ...panels.map(([, , panel]) => panel));
         const badges = $("modalBadges");
         replaceContent(badges);
         badges.append(badge(game.source_type === "folder" ? t("folder") : game.source_type === "image" ? t("image") : game.source_type));
         if (game.image_type) badges.append(badge(game.image_type, "image"));
         if (game.mounted) badges.append(badge(t("mounted"), "live"));
-        if (game.active) badges.append(badge(t("activeGame"), "active-game"));
+        const activeBadge = badge(t("activeGame"), "active-game");
+        activeBadge.dataset.activeGame = ""; activeBadge.hidden = !game.active; badges.append(activeBadge);
         let versionText = `${t("gameVersion")}: ${game.version || t("unavailable")}`;
         if (game.patch_info_status === 0 && game.patch?.installed)
           versionText += ` (${t("beforePatchVersion", { version: game.base_version || t("unavailable") })})`;
         badges.append(badge(versionText, "game-version"));
+        appendPatchBadges(badges, game);
+        syncGamePatchBadges(game, game);
         for (const [label, value, lastLaunch] of [
           ["lastLaunch", game.active ? t("activeGame") : formatLastLaunch(game.last_access_time), true],
           ["playedTime", formatPlayTime(game.play_time_seconds), false]
@@ -4566,26 +5225,99 @@
           }
         });
         sizes.append(total, bar, legend);
-        detailRow(grid, t("source"), game.path);
-        detailRow(grid, t("runtimePath"), game.runtime_path);
+        const source = detailRow(grid, t("source"), "");
+        source.classList.add("detail-source");
+        const sourceKnown = typeof game.source_available === "boolean";
+        replaceContent(source);
+        source.append(node("span", "source-path", game.path || "—"),
+          badge(t(sourceKnown ? game.source_available ? "sourceReady" : "sourceNotReady" : "unavailable"),
+            `source-status${sourceKnown ? game.source_available ? " live" : " is-missing" : ""}`));
+        if (game.runtime_path) detailRow(grid, t("runtimePath"), game.runtime_path);
         if (game.backport_path) detailRow(grid, t("backport"), game.backport_path);
-        content.append(sizes, installedContentFor(game), grid);
+        const overview = node("div", "overview-grid");
+        const files = node("section", "overview-card");
+        files.setAttribute("aria-label", t("overviewFiles"));
+        files.append(grid); overview.append(files);
+        const contents = installedContentFor(game);
+        if (!contents.hidden) overview.append(contents);
+        content.append(sizes, overview);
+        if (game.can_configure_ps4_profile || game.can_toggle_fakelib) {
+          profilePanel.append(gameProfileFor(game)); content.append(profilePanel);
+        }
+        selectDetailTab(state.detailView.tab, false, true);
+        refreshDetailClock(game);
+
+        renderGameActions(game, focusRuntimeAction);
+      }
+
+      function rememberDetailDisclosure(disclosure, key) {
+        const view = state.detailView;
+        disclosure.open = view.expanded.has(key);
+        disclosure.addEventListener("toggle", () => {
+          if (!disclosure.isConnected) return;
+          if (disclosure.open) view.expanded.add(key);
+          else view.expanded.delete(key);
+        });
+      }
+
+      function selectDetailTab(name, focus = false, initial = false) {
+        const view = state.detailView;
+        if (!view || !state.selected) return;
+        if (!$("details").querySelector(`#detail-tab-${name}`)) name = "overview";
+        const pane = detailScrollPane(), tabs = $("detailTabs"), panel = $(`detail-${name}`);
+        if (!initial) view.scroll[view.tab] = pane.scrollTop;
+        const tabTop = Math.max(0, tabs.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop - 8);
+        const top = view.scroll[name] ?? (initial && name === "overview" ? 0 : tabTop);
+        view.tab = name;
+        for (const button of tabs.querySelectorAll("button")) {
+          const selected = button.dataset.detailTab === name;
+          button.setAttribute("aria-selected", String(selected)); button.tabIndex = selected ? 0 : -1;
+          $(button.getAttribute("aria-controls")).hidden = !selected;
+        }
+        if (name === "patches" && !panel.children.length) {
+          view.restorePatchScroll = top;
+          panel.append(gameXmlPatches(state.selected));
+        }
+        if (focus) focusControl($(`detail-tab-${name}`));
+        pane.scrollTop = top;
+        if (!initial) {
+          try { localStorage.setItem("shadowmount.detailTab", name); } catch (_) {}
+        }
+      }
+
+      const ps4ProfileFields = [["pro", "ps4ForcePro"], ["cpu", "ps4CpuBoost"], ["gpu", "ps4GpuClock"], ["memory", "ps4Memory"], ["video_120hz", "ps4Video120"]];
+
+      function ps4ProfileDisplay(game, field) {
+        const modes = field === "gpu" ? ["default", "2200", "2350", "off"] : field === "memory" && game.ps4_memory_supported === false ? ["default", "off"] : ["default", "on", "off"];
+        let mode = game.ps4_profile?.[field] || "default";
+        if (field === "gpu") {
+          if (game.ps4_profile?.gpu_clock === "2350") mode = "2350";
+          else if (mode === "on") mode = "2200";
+        }
+        const enabled = game.ps4_profile_default?.[field]
+          ? field === "gpu" ? "2200 MHz" : t("ps4ProfileOn") : t("ps4ProfileOff");
+        const value = mode === "default" ? t("fakelibDefault", {mode: enabled})
+          : field === "gpu" && mode !== "off" ? `${mode} MHz` : t(mode === "on" ? "ps4ProfileOn" : "ps4ProfileOff");
+        const effective = game.ps4_profile_effective?.[field] ??
+          (mode === "default" ? Boolean(game.ps4_profile_default?.[field]) : mode !== "off");
+        return {modes, mode, value, effective};
+      }
+
+      function fakelibProfileDisplay(game) {
+        const mode = game.fakelib_mode_override || game.fakelib_mode || (game.fakelib_enabled ? "full" : "disabled");
+        const modes = ["default", "full", "emulators", "disabled"];
+        const keys = {default: "fakelibDefault", full: "fakelibFull", emulators: "fakelibEmulators", disabled: "fakelibDisabled"};
+        const value = t(keys[mode], {mode: t(keys[game.fakelib_default_mode || "full"])});
+        return {mode, modes, value};
+      }
+
+      function gameProfileFor(game) {
+        const profile = node("div", "profile-sections");
         if (game.can_configure_ps4_profile) {
           const policy = node("section", "fakelib-controls ps4-profile-controls");
           policy.append(node("h3", "subtle", t("ps4Profiles")));
-          for (const [field, label] of [["pro", "ps4ForcePro"], ["cpu", "ps4CpuBoost"], ["gpu", "ps4GpuClock"], ["memory", "ps4Memory"], ["video_120hz", "ps4Video120"]]) {
-            const modes = field === "gpu" ? ["default", "2200", "2350", "off"] : field === "memory" && game.ps4_memory_supported === false ? ["default", "off"] : ["default", "on", "off"];
-            let mode = game.ps4_profile?.[field] || "default";
-            if (field === "gpu") {
-              if (game.ps4_profile?.gpu_clock === "2350") mode = "2350";
-              else if (mode === "on") mode = "2200";
-            }
-            const enabled = game.ps4_profile_default?.[field]
-              ? field === "gpu" ? "2200 MHz" : t("ps4ProfileOn")
-              : t("ps4ProfileOff");
-            const value = mode === "default" ? t("fakelibDefault", { mode: enabled })
-              : field === "gpu" && mode !== "off" ? `${mode} MHz`
-              : t(mode === "on" ? "ps4ProfileOn" : "ps4ProfileOff");
+          for (const [field, label] of ps4ProfileFields) {
+            const {modes, mode, value, effective} = ps4ProfileDisplay(game, field);
             const button = actionButton(`${t(label)}: ${value}`, () => {
               const settings = { pro: "default", cpu: "default", gpu: "default", memory: "default", video_120hz: "default", gpu_clock: "default", ...game.ps4_profile };
               const next = modes[(modes.indexOf(mode) + 1) % modes.length];
@@ -4600,8 +5332,6 @@
               setGamePolicy(game, button, settings, "ps4-profile");
             }, `ps4-profile-${field}`);
             button.value = mode;
-            const effective = game.ps4_profile_effective?.[field] ??
-              (mode === "default" ? Boolean(game.ps4_profile_default?.[field]) : mode !== "off");
             button.setAttribute("aria-pressed", String(Boolean(effective)));
             button.setAttribute("aria-label", `${t(label)}: ${value}`);
             replaceContent(button);
@@ -4610,18 +5340,19 @@
             policy.append(button);
           }
           policy.append(node("p", "subtle fakelib-hint", t("fakelibNextLaunch")));
-          policy.append(node("p", "subtle fakelib-hint", t("ps4VideoHint")));
-          policy.append(node("p", "subtle fakelib-hint", t(game.ps4_memory_supported === false ? "ps4MemoryUnavailable" : "ps4MemoryHint")));
-          content.append(policy);
+          const help = node("details", "detail-profile-help");
+          rememberDetailDisclosure(help, "profile-help");
+          help.append(node("summary", "", t("detailProfileHelp")),
+            node("p", "subtle fakelib-hint", t("ps4VideoHint")),
+            node("p", "subtle fakelib-hint", t(game.ps4_memory_supported === false ? "ps4MemoryUnavailable" : "ps4MemoryHint")));
+          policy.append(help);
+          profile.append(policy);
         }
         if (game.can_toggle_fakelib) {
           const policy = node("section", "fakelib-controls");
           policy.append(node("h3", "subtle", t("fakelibMode")));
-          const mode = game.fakelib_mode_override || game.fakelib_mode || (game.fakelib_enabled ? "full" : "disabled");
-          const modes = ["default", "full", "emulators", "disabled"];
-          const modeKeys = { default: "fakelibDefault", full: "fakelibFull", emulators: "fakelibEmulators", disabled: "fakelibDisabled" };
-          const defaultModeKey = modeKeys[game.fakelib_default_mode || "full"];
-          const modeButton = actionButton(t(modeKeys[mode], { mode: t(defaultModeKey) }), () =>
+          const {mode, modes, value} = fakelibProfileDisplay(game);
+          const modeButton = actionButton(value, () =>
             setGamePolicy(game, modeButton, { mode: modes[(modes.indexOf(mode) + 1) % modes.length] }), "fakelib-mode");
           modeButton.value = mode;
           modeButton.setAttribute("aria-pressed", String(Boolean(game.fakelib_effective_enabled)));
@@ -4636,25 +5367,100 @@
           if (game.fakelib_enabled && !game.fakelib_effective_enabled) {
             policy.append(node("p", "subtle fakelib-hint", t("fakelibGloballyDisabled")));
           }
-          content.append(policy);
+          profile.append(policy);
         }
-        content.append(gameXmlPatches(game));
-        details.append(content);
-        refreshDetailClock(game);
+        return profile;
+      }
 
+      function renderGameActions(game, focusOperations = false) {
+        closeGameOperations(false);
         const actions = $("modalActions");
         replaceContent(actions);
-        const runtimeAction = appendRuntimeActions(actions, game);
-        if (runtimeAction) runtimeAction.className += " primary";
+        const gameControl = actionButton(t(game.active ? "closeGame" : "launchGame"), () => controlGame(game, gameControl), "primary game-control");
+        actions.append(gameControl);
+        syncGameActionButtons(game);
+        if (state.childMode) return;
+        if ((game.installed_pkg || game.can_manage_source === false) && game.can_uninstall === false && !game.patch?.installed && !(game.dlc || []).length) return;
+        const operations = actionButton(t("gameOperations"), () => openGameOperations(game), "game-operations");
+        operations.setAttribute("aria-haspopup", "dialog");
+        operations.setAttribute("aria-controls", "gameOperationsModal");
+        actions.append(operations);
+        syncGameActionButtons(game);
+        if (focusOperations) focusControl(operations.disabled ? gameControl : operations);
+      }
+
+      function syncGameActionButtons(game) {
+        const control = $("modalActions").querySelector(".game-control");
+        if (control) {
+          if (!state.gameControlBusy) control.textContent = t(game.active ? "closeGame" : "launchGame");
+          control.disabled = Boolean(state.gameControlBusy || state.gamePolicySaving || (state.storageJob?.active && !game.active));
+        }
+        const operations = $("modalActions").querySelector(".game-operations");
+        if (operations) {
+          operations.disabled = Boolean(game.active || state.gameControlBusy || state.gamePolicySaving);
+          operations.title = game.active ? t("busyGameActive") : "";
+        }
+      }
+
+      function syncDetailRuntime(game, active) {
+        if (!active) syncGamePatchBadges(game, {patches_applied: false, cheats_applied: false});
+        if (state.selected !== game || $("modal").hidden || state.gameControlBusy || Boolean(game.active) === active) return;
+        game.active = active;
+        for (const listed of state.games) if (listed.title_id === game.title_id) listed.active = active;
+        const activeBadge = $("modalBadges").querySelector("[data-active-game]");
+        if (activeBadge) activeBadge.hidden = !active;
+        const last = $("detailSidebar").querySelector("[data-last-launch]");
+        if (last) last.textContent = active ? t("activeGame") : formatLastLaunch(game.last_access_time);
+        syncGameActionButtons(game);
+        $("details").querySelector(".xml-patches")?.dispatchEvent(new Event("runtimechange"));
+        if (active) {
+          const operationsOpen = !$("gameOperationsModal").hidden;
+          closeGameOperations(false);
+          if (state.destinationRequest?.game.title_id === game.title_id) {
+            if (state.pathPicker?.target === "customDestination") closePathPicker();
+            closeDestinationPicker();
+          }
+          if (operationsOpen || document.activeElement === $("modalActions").querySelector(".game-operations"))
+            focusControl($("modalActions").querySelector(".game-control"));
+        }
+        renderGames();
+      }
+
+      function canOperateOnGame(game) {
+        const current = state.selected && state.selected.title_id === game.title_id ? state.selected : game;
+        if (!current?.active) return true;
+        toast(t("busyGameActive"), true);
+        return false;
+      }
+
+      function openGameOperations(game) {
+        if (state.childMode || game.active || state.gameControlBusy || state.gamePolicySaving || state.selected !== game || $("modal").hidden) return;
+        const actions = $("gameOperationsActions");
+        replaceContent(actions);
+        $("gameOperationsSubtitle").textContent = gameLabel(game);
+        $("gameOperationsModal").hidden = false;
+        focusControl($("closeGameOperations"));
+        appendRuntimeActions(actions, game);
         const destructive = [];
         if (game.patch_info_status === 0 && game.patch?.installed) {
           destructive.push(actionButton(t("deletePatch"), () => uninstallContent(game), "danger content-delete"));
         }
         if (game.can_uninstall !== false) {
-          destructive.push(actionButton(t("uninstall"), () => uninstallGame(game), "danger"));
+          const reinstall = game.source_available === true && Boolean(game.path) &&
+            !game.installed_pkg && game.source_type !== "pkg" && game.can_manage_source !== false;
+          destructive.push(actionButton(t(reinstall ? "reinstall" : "uninstall"),
+            () => uninstallGame(game, reinstall), reinstall ? "" : "danger"));
+        }
+        const dlcActions = [];
+        if (Array.isArray(game.dlc) && game.dlc.length) {
+          dlcActions.push(node("h3", "", t("dlcSize")));
+          for (const entry of game.dlc) {
+            dlcActions.push(actionButton(`${t("deleteDlc")}: ${entry.title_name || entry.content_id}`,
+              () => uninstallContent(game, entry), "danger content-delete"));
+          }
         }
         if (game.installed_pkg || game.can_manage_source === false) {
-          actions.append(...destructive);
+          actions.append(...destructive, ...dlcActions);
           return;
         }
         const storageBusy = Boolean(state.storageJob && state.storageJob.active);
@@ -4676,17 +5482,29 @@
         }
         actions.append(copy, move);
         if (unpack) actions.append(unpack);
-        actions.append(...destructive, remove);
-        if (focusRuntimeAction && runtimeAction) runtimeAction.focus();
+        actions.append(...destructive, remove, ...dlcActions);
+      }
+
+      function closeGameOperations(restoreFocus = true) {
+        const opened = !$("gameOperationsModal").hidden;
+        $("gameOperationsModal").hidden = true;
+        if (opened && restoreFocus && !$("modal").hidden) focusControl($("modalActions").querySelector(".game-operations"));
       }
 
       async function showDetails(titleId) {
         clearTimeout(state.detailClockTimer);
-        const request = {};
+        let tab = state.detailView?.tab || "overview";
+        if (!state.detailView) {
+          try { tab = localStorage.getItem("shadowmount.detailTab") || tab; } catch (_) {}
+        }
+        if (!["overview", "patches"].includes(tab)) tab = "overview";
+        state.detailView = {tab, scroll: {}, expanded: new Set(), patchFilter: "all", errors: new Map()};
+        const request = beginReadRequest(state.detailRequest);
         state.detailRequest = request;
         state.selected = null;
         replaceContent($("detailSidebar"));
         $("modal").hidden = false;
+        detailScrollPane().scrollTop = 0;
         $("modalTitle").textContent = t("loading");
         $("modalSubtitle").textContent = titleId;
         $("modalContentId").hidden = true;
@@ -4695,7 +5513,7 @@
         replaceContent($("details"), node("div", "empty", t("loadingSource")));
         replaceContent($("modalActions"));
         try {
-          const game = await api("/games/info", { title_id: titleId });
+          const game = await api("/games/info", { title_id: titleId }, request.signal);
           if (state.detailRequest === request) renderDetails(game);
         } catch (error) {
           if (state.detailRequest === request) {
@@ -4706,16 +5524,25 @@
 
       function closeModal() {
         clearTimeout(state.detailClockTimer);
+        state.detailRequest?.abort?.();
+        closeGameOperations(false);
         state.detailRequest = null;
         $("modal").hidden = true;
         state.selected = null;
+        for (const id of ["details", "detailSidebar", "modalActions", "gameOperationsActions"]) replaceContent($(id));
+        if (state.detailView) {
+          state.detailView.expanded.clear(); state.detailView.errors.clear(); state.detailView.scroll = {};
+        }
+        if (navigation.focusTarget && !navigation.focusTarget.isConnected) navigation.focusTarget = null;
       }
 
       function closePathPicker() {
+        state.pathPicker?.request?.abort?.();
         $("pathModal").hidden = true;
         $("pathCreateForm").hidden = true;
         $("pathNewFolder").setAttribute("aria-expanded", "false");
         state.pathPicker = null;
+        replaceContent($("pathEntries")); replaceContent($("pathRoots"));
       }
 
       function showCreateDirectory() {
@@ -4828,7 +5655,7 @@
         if (picker.target === "customDestination" && storagePathReadOnly(path, picker.data?.root_storage)) {
           path = ""; offset = 0; fallback = null;
         }
-        const request = ++picker.request;
+        const request = beginReadRequest(picker.request); picker.request = request;
         picker.data = null;
         $("pathDrives").disabled = false;
         $("pathCreateForm").hidden = true;
@@ -4838,7 +5665,7 @@
         $("pathCurrent").textContent = path || t("storage");
         replaceContent($("pathEntries"), node("span", "subtle", t("loading")));
         try {
-          const data = await api("/files", { path, offset, include_files: picker.target === "manualPath" });
+          const data = await api("/files", { path, offset, include_files: picker.target === "manualPath" }, request.signal);
           if (state.pathPicker !== picker || request !== picker.request) return;
           picker.data = data;
           renderPathPicker();
@@ -4855,7 +5682,8 @@
       }
 
       function openPathPicker(target) {
-        state.pathPicker = { target, data: null, request: 0 };
+        state.pathPicker?.request?.abort?.();
+        state.pathPicker = { target, data: null, request: null };
         replaceContent($("pathRoots"));
         $("pathModal").hidden = false;
         const path = $(target).value.trim().replace(/\/+$/, "");
@@ -4918,6 +5746,7 @@
       }
 
       function storageOperation(game, operation) {
+        if (!canOperateOnGame(game)) return;
         if (state.storageJob && state.storageJob.active) {
           toast(t("storageBusy"), true);
           return;
@@ -4957,6 +5786,7 @@
       }
 
       async function startStorageJob(game, operation, payload) {
+        if (!canOperateOnGame(game)) return;
         try {
           const job = await api(operation === "install" ? "/sources/install" : `/games/${operation}`, payload);
           if (job.source_missing) {
@@ -5019,8 +5849,11 @@
           const restoreFocus = focusedIndex >= 0 && (document.activeElement === document.body || Array.from(controls).includes(document.activeElement));
           state.gamePolicySaving = false;
           controls.forEach(control => { control.disabled = false; });
-          if (state.selected && !$("modal").hidden) {
-            renderDetails(state.selected);
+          if (state.selected?.title_id === game.title_id && !$("modal").hidden) {
+            syncGameActionButtons(state.selected);
+            const pane = detailScrollPane(), top = pane.scrollTop;
+            replaceContent($("detail-profile"), gameProfileFor(state.selected));
+            pane.scrollTop = top;
             if (restoreFocus && state.selected.title_id === game.title_id) {
               const selector = kind === "ps4-profile" ? ".ps4-profile-controls button" : ".fakelib-controls:not(.ps4-profile-controls) button";
               focusControl($("details").querySelectorAll(selector)[focusedIndex]);
@@ -5030,12 +5863,15 @@
       }
 
       async function uninstallContent(game, entry = null) {
+        if (state.childMode || state.gamePolicySaving || state.gameControlBusy || !canOperateOnGame(game)) return;
         if (!await confirmAction(t(entry ? "deleteDlcConfirm" : "deletePatchConfirm", {
           game: gameLabel(game), content: entry?.title_name || entry?.content_id || ""
         }))) return;
+        if (!canOperateOnGame(game)) return;
         const request = state.detailRequest;
         const dlcExpanded = $("details").querySelector(".content-dlc-toggle")?.getAttribute("aria-expanded") === "true";
-        const buttons = [...$("modal").querySelectorAll(".content-delete")];
+        state.gamePolicySaving = true;
+        const buttons = [...document.querySelectorAll("#gameOperationsActions .content-delete, #modalActions .game-operations")];
         buttons.forEach(button => { button.disabled = true; });
         try {
           const removed = await runMutation(t("operationCompleted", {
@@ -5057,16 +5893,23 @@
           logActivity(`${t("refresh")}: ${errorMessage(error)}`, "error");
           toast(errorMessage(error), true);
         } finally {
+          state.gamePolicySaving = false;
           buttons.forEach(button => { button.disabled = false; });
+          if (state.selected) syncGameActionButtons(state.selected);
         }
       }
 
-      async function uninstallGame(game) {
-        if (!await confirmAction(t(game.installed_pkg ? "uninstallPkgConfirm" : "uninstallConfirm", { game: gameLabel(game) }))) return;
-        runMutation(t("uninstallAccepted", { title: game.title_id }), () => api("/games/uninstall", { title_id: game.title_id }), true);
+      async function uninstallGame(game, reinstall = false) {
+        if (!canOperateOnGame(game)) return;
+        const confirmation = reinstall ? "reinstallConfirm" : game.installed_pkg ? "uninstallPkgConfirm" : "uninstallConfirm";
+        if (!await confirmAction(t(confirmation, { game: gameLabel(game) }))) return;
+        if (!canOperateOnGame(game)) return;
+        runMutation(t(reinstall ? "reinstallAccepted" : "uninstallAccepted", { title: game.title_id }),
+          () => api("/games/uninstall", { title_id: game.title_id, ...(reinstall ? { reinstall: true } : {}) }), true);
       }
 
       async function deleteSource(game) {
+        if (!canOperateOnGame(game)) return;
         if (state.storageJob && state.storageJob.active) {
           toast(t("storageBusy"), true);
           return;
@@ -5090,13 +5933,23 @@
       }
 
       function activeDialog() {
-        return ["confirmModal", "pathModal", "languageModal", "destinationModal", "logModal", "modal"]
+        return ["confirmModal", "pathModal", "languageModal", "destinationModal", "logModal", "gameOperationsModal", "modal"]
           .map(id => $(id)).find(item => item && !item.hidden) || null;
       }
 
+      function gameDialogActive(dialog = activeDialog()) {
+        return dialog === $("modal") || dialog === $("gameOperationsModal");
+      }
+
       function focusableControls(root = activeDialog() || document) {
-        return Array.from(root.querySelectorAll("button, input, select, [tabindex]"))
+        return Array.from(root.querySelectorAll("button, input, select, summary, [tabindex]"))
           .filter(item => item.id !== "details" && !item.disabled && !item.closest("[hidden]") && item.getClientRects().length);
+      }
+
+      function detailScrollPane(item = $("details")) {
+        const scroll = $("detailScroll");
+        if (scroll.clientHeight && scroll.contains(item)) return scroll;
+        return item.closest("#detailSidebar, #details");
       }
 
       function focusControl(item) {
@@ -5104,7 +5957,7 @@
         const dialog = activeDialog();
         const pageX = window.scrollX, pageY = window.scrollY;
         try { item.focus({ preventScroll: true }); } catch (_) { item.focus(); }
-        const list = item.closest(".console-list");
+        const list = item.closest(".console-list, .game-operation-list");
         if (list) {
           const box = item.getBoundingClientRect(), bounds = list.getBoundingClientRect();
           if (box.bottom > bounds.bottom - 8) list.scrollTop += box.bottom - bounds.bottom + 8;
@@ -5117,7 +5970,7 @@
           if (card) { card.scrollTop = 0; card.scrollLeft = 0; }
           dialog.scrollTop = 0;
           if (window.scrollX !== pageX || window.scrollY !== pageY) window.scrollTo(pageX, pageY);
-          const pane = item.closest("#detailSidebar, #details, #logContent, #destinationChoices, #languageChoices");
+          const pane = detailScrollPane(item) || item.closest("#logContent, #destinationChoices, #languageChoices");
           if (pane && pane !== item) {
             const box = item.getBoundingClientRect(), bounds = pane.getBoundingClientRect();
             if (box.bottom > bounds.bottom - 12) pane.scrollTop += box.bottom - bounds.bottom + 12;
@@ -5135,6 +5988,96 @@
         else if (box.top < 22) window.scrollBy(0, box.top - 22);
       }
 
+      let patchSourceConfig = null, patchSourcePresets = [], patchSourceExpected = null;
+      let patchSourceDirty = false, patchSourceSaving = false, patchSourceTimer = null, patchSourceRequest = null, patchSourceRendered = "";
+      const patchSourceValue = () => ({ interval_hours: Number($("patchUpdateHours").value),
+        sources: [...$("patchSourceList").children].map(row => ({ type: row.querySelector("select").value, url: row.querySelector("input").value.trim() })) });
+      const patchSourceSignature = value => JSON.stringify({interval_hours: value.interval_hours,
+        sources: value.sources.map(source => ({type: source.type, url: source.url}))});
+      function patchSourceButtons() {
+        const busy = patchSourceConfig?.running || patchSourceConfig?.queued;
+        $("patchSourcesUpdate").disabled = !patchSourceConfig || busy || patchSourceDirty || patchSourceSaving || Boolean(patchSourceExpected) || !$("patchSourceList").children.length;
+        $("patchSourcesSave").disabled = !patchSourceConfig || patchSourceSaving;
+        for (const control of $("patchSourceList").querySelectorAll("input, select, button")) control.disabled = patchSourceSaving;
+        for (const id of ["patchSourceAdd", "patchSourceCustom", "patchSourcePreset", "patchUpdateHours"])
+          $(id).disabled = !patchSourceConfig || patchSourceSaving;
+      }
+      function addPatchSource(source, focus = false) {
+        if ($("patchSourceList").children.length >= 12) { toast(t("patchSourceLimit"), true); return; }
+        const row = node("div", "patch-source-row"), type = node("select"), url = node("input");
+        for (const kind of ["cheats", "patches"]) { const option = node("option", "", t(kind === "cheats" ? "patchCheats" : "patchXml")); option.value = kind; type.append(option); }
+        type.value = source.type; type.setAttribute("aria-label", t("patchSourceType"));
+        url.type = "url"; url.required = true; url.maxLength = 1023; url.placeholder = "https://.../database.zip";
+        url.value = source.url; url.setAttribute("aria-label", t("patchSourceUrl"));
+        const changed = () => { patchSourceDirty = true; patchSourceExpected = null; patchSourceButtons(); };
+        type.addEventListener("change", changed); url.addEventListener("input", changed);
+        const remove = actionButton(t("remove"), () => { row.remove(); changed(); }, "small");
+        row.append(type, url, remove); $("patchSourceList").append(row);
+        if (focus) { changed(); url.focus(); }
+      }
+      function drawPatchSources(result) {
+        patchSourceConfig = result;
+        if (patchSourceExpected && patchSourceSignature(result) === patchSourceSignature(patchSourceExpected)) patchSourceExpected = null;
+        if (!patchSourceDirty && !patchSourceExpected && !patchSourceSaving && patchSourceRendered !== patchSourceSignature(result)) {
+          patchSourceRendered = patchSourceSignature(result);
+          $("patchUpdateHours").value = String(result.interval_hours);
+          replaceContent($("patchSourceList"));
+          for (const source of result.sources || []) addPatchSource(source);
+          patchSourcePresets = result.presets || [];
+          replaceContent($("patchSourcePreset"));
+          patchSourcePresets.forEach((source, index) => {
+            let name = source.url;
+            try { const parts = new URL(source.url).pathname.split("/").filter(Boolean); name = parts.slice(0, 2).join("/"); } catch (_) {}
+            const option = node("option", "", `${t(source.type === "cheats" ? "patchCheats" : "patchXml")}: ${name}`);
+            option.value = String(index); $("patchSourcePreset").append(option);
+          });
+        }
+        const status = patchSourceExpected ? t("patchReloadPending") : result.running ? t("patchUpdating") : result.queued ? t("patchUpdateQueued") :
+          result.last_error ? t("patchUpdateFailed", {code: result.last_error}) : result.last_check ? t("patchUpdated") : t("patchNotChecked");
+        $("patchUpdateStatus").textContent = status + (result.last_check ? " · " + new Date(Number(result.last_check) * 1000).toLocaleString(currentLanguage, {year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"}) : "");
+        patchSourceButtons();
+      }
+      async function refreshPatchSources(remaining = 10) {
+        clearTimeout(patchSourceTimer);
+        const sequence = beginReadRequest(patchSourceRequest); patchSourceRequest = sequence;
+        patchSourceButtons();
+        try {
+          const result = await api("/settings/patches", {}, sequence.signal);
+          if (sequence !== patchSourceRequest || $("consolePatches").hidden || $("consoleView").hidden) return;
+          drawPatchSources(result);
+          if (result.running || result.queued || (patchSourceExpected && remaining > 0))
+            patchSourceTimer = setTimeout(() => refreshPatchSources(remaining - 1), 2000);
+        } catch (error) {
+          if (sequence === patchSourceRequest) $("patchUpdateStatus").textContent = errorMessage(error);
+        }
+      }
+      $("patchSourcesForm").addEventListener("submit", async event => {
+        event.preventDefault();
+        if (patchSourceSaving || !$("patchSourcesForm").reportValidity()) return;
+        const config = patchSourceValue();
+        patchSourceSaving = true; patchSourceButtons();
+        try {
+          await api("/settings/patches", {action: "save", ...config});
+          patchSourceDirty = false; patchSourceExpected = config; toast(t("settingsSaved"));
+        } catch (error) { toast(errorMessage(error), true); }
+        finally { patchSourceSaving = false; patchSourceButtons(); }
+        refreshPatchSources();
+      });
+      $("patchUpdateHours").addEventListener("input", () => { patchSourceDirty = true; patchSourceExpected = null; patchSourceButtons(); });
+      $("patchSourceAdd").addEventListener("click", () => {
+        const source = patchSourcePresets[Number($("patchSourcePreset").value)];
+        if (!source) return;
+        if (patchSourceValue().sources.some(value => value.type === source.type && value.url === source.url)) return;
+        addPatchSource(source, true);
+      });
+      $("patchSourceCustom").addEventListener("click", () => addPatchSource({type: "cheats", url: ""}, true));
+      $("patchSourcesUpdate").addEventListener("click", async () => {
+        $("patchSourcesUpdate").disabled = true;
+        try { drawPatchSources(await api("/settings/patches", {action: "update"})); }
+        catch (error) { toast(errorMessage(error), true); patchSourceButtons(); }
+        refreshPatchSources();
+      });
+
       function selectConsolePane(section) {
         const pane = document.querySelector(`[data-console-pane="${section}"]`);
         if (!pane) return;
@@ -5144,12 +6087,20 @@
           button.classList.toggle("active", selected);
           button.setAttribute("aria-pressed", String(selected));
         }
-        $("consoleSave").hidden = section === "overview" || section === "smb";
+        $("consoleSave").hidden = section === "overview" || section === "smb" || section === "patches";
+        clearTimeout(patchSourceTimer); patchSourceRequest?.abort?.(); patchSourceRequest = null;
+        if (section === "patches") refreshPatchSources();
         if (section === "smb") refreshSmbConnections();
         if (!$("consoleView").hidden) window.scrollTo(0, 0);
       }
 
       function switchView(view) {
+        if (view === "packages" && state.childMode) view = "library";
+        if (view !== "console") { clearTimeout(patchSourceTimer); patchSourceRequest?.abort?.(); patchSourceRequest = null; }
+        if (view !== "packages") {
+          state.packageRequest?.abort?.(); state.packageRequest = null;
+          $("packageRefresh").disabled = false;
+        }
         navigation.view = view;
         const library = view === "library";
         document.querySelector(".library-section").hidden = !library;
@@ -5167,9 +6118,18 @@
         if (view === "library") refreshLibrary();
       }
 
-      function switchMainTab(direction) {
-        if (activeDialog() || (!playStationBrowser && isNativeEditor(document.activeElement))) return;
-        const views = ["library", "packages", "console"];
+      function switchNavigationTab(direction) {
+        const dialog = activeDialog();
+        if (dialog === $("modal")) {
+          const tabs = Array.from($("detailTabs")?.querySelectorAll("button") || []);
+          if (!state.selected || !tabs.length) return;
+          const index = tabs.findIndex(button => button.dataset.detailTab === state.detailView.tab);
+          navigation.focusNavigation = true;
+          selectDetailTab(tabs[(index + direction + tabs.length) % tabs.length].dataset.detailTab, true);
+          return;
+        }
+        if (dialog || (!playStationBrowser && isNativeEditor(document.activeElement))) return;
+        const views = state.childMode ? ["library", "console"] : ["library", "packages", "console"];
         const index = views.indexOf(navigation.view);
         switchView(views[(index + direction + views.length) % views.length]);
       }
@@ -5184,7 +6144,7 @@
         window.addEventListener("popstate", event => {
           const direction = slot(event.state);
           if (direction === null || direction === 0) return;
-          switchMainTab(direction);
+          switchNavigationTab(direction);
           history.go(-direction);
         });
         try {
@@ -5208,6 +6168,13 @@
           focusControl(controls.find(item => item.classList.contains("game-open")) || controls[0]);
           return;
         }
+        if (current.dataset.detailTab && (direction === "left" || direction === "right")) {
+          const tabs = Array.from($("detailTabs").querySelectorAll("button"));
+          const step = (direction === "right" ? 1 : -1) * (getComputedStyle($("detailTabs")).direction === "rtl" ? -1 : 1);
+          const next = tabs[(tabs.indexOf(current) + step + tabs.length) % tabs.length];
+          selectDetailTab(next.dataset.detailTab, true);
+          return;
+        }
         if (current.id === "logContent" && (direction === "up" || direction === "down")) {
           const canScroll = direction === "down"
             ? current.scrollTop + current.clientHeight < current.scrollHeight - 2 : current.scrollTop > 0;
@@ -5228,8 +6195,23 @@
         const rect = current.getBoundingClientRect();
         const horizontal = direction === "left" || direction === "right";
         const sign = direction === "left" || direction === "up" ? -1 : 1;
+        // Traverse the scrollable body before leaving it for the fixed footer.
+        // Otherwise off-screen patch switches lose to the nearer footer buttons.
+        const pane = detailScrollPane(current);
+        let candidates = controls;
+        let preferRow = false;
+        if (activeDialog() === $("modal")) {
+          if (pane && !horizontal) {
+            const samePane = controls.filter(item => item !== current && pane.contains(item) &&
+              (item.getBoundingClientRect().top + item.getBoundingClientRect().bottom - rect.top - rect.bottom) * sign >= 8);
+            if (samePane.length) { candidates = samePane; preferRow = true; }
+          } else if (!horizontal && sign < 0 && current.closest("#modalActions")) {
+            const body = controls.filter(item => $("details").contains(item));
+            if (body.length) { focusControl(body[body.length - 1]); return; }
+          }
+        }
         let best = null, bestScore = Infinity;
-        for (const item of controls) {
+        for (const item of candidates) {
           if (item === current) continue;
           const box = item.getBoundingClientRect();
           const dx = (box.left + box.right - rect.left - rect.right) / 2;
@@ -5240,7 +6222,7 @@
             ? box.bottom > rect.top + 4 && box.top < rect.bottom - 4
             : box.right > rect.left + 4 && box.left < rect.right - 4;
           const sideways = Math.abs(horizontal ? dy : dx);
-          const score = forward + sideways * 3 + (overlap ? 0 : 10000);
+          const score = preferRow ? forward * 1000 + sideways : forward + sideways * 3 + (overlap ? 0 : 10000);
           if (score < bestScore) { best = item; bestScore = score; }
         }
         focusControl(best);
@@ -5595,10 +6577,10 @@
       }
 
       async function refreshPackages(path = state.packages?.path || "", moveFocus = false, offset = 0) {
-        const request = ++state.packageRequest;
+        const request = beginReadRequest(state.packageRequest); state.packageRequest = request;
         $("packageRefresh").disabled = true;
         try {
-          const data = await api("/packages", { path, offset });
+          const data = await api("/packages", { path, offset }, request.signal);
           if (request !== state.packageRequest) return;
           state.packages = data;
           renderPackages();
@@ -6033,6 +7015,7 @@
         else if (!$("languageModal").hidden) closeLanguagePicker();
         else if (!$("destinationModal").hidden) closeDestinationPicker();
         else if (!$("logModal").hidden) closeDebugLog();
+        else if (!$("gameOperationsModal").hidden) closeGameOperations();
         else if (!$("modal").hidden) closeModal();
         else if (navigation.view === "packages" && state.packages?.path) refreshPackages(state.packages.parent || "", true);
         else {
@@ -6085,13 +7068,13 @@
         const key = aliases[event.key] || (event.key && event.key !== "Unidentified" ? event.key : legacyKeys[event.keyCode]);
         if (playStationBrowser && (key === "BrowserBack" || key === "BrowserForward")) {
           event.preventDefault();
-          if (!event.repeat) switchMainTab(key === "BrowserBack" ? -1 : 1);
+          if (!event.repeat) switchNavigationTab(key === "BrowserBack" ? -1 : 1);
           return;
         }
-        if (!dialog && !isNativeEditor(document.activeElement) && !event.altKey && !event.ctrlKey && !event.metaKey &&
-            ["L1", "R1", "PageUp", "PageDown"].includes(key)) {
+        if ((!dialog || dialog === $("modal")) && !isNativeEditor(document.activeElement) && !event.altKey && !event.ctrlKey && !event.metaKey &&
+            (["L1", "R1"].includes(key) || (!dialog && ["PageUp", "PageDown"].includes(key)))) {
           event.preventDefault();
-          if (!event.repeat) switchMainTab(key === "L1" || key === "PageUp" ? -1 : 1);
+          if (!event.repeat) switchNavigationTab(key === "L1" || key === "PageUp" ? -1 : 1);
           return;
         }
         if (key === "Escape" || key === "BrowserBack") {
@@ -6102,7 +7085,8 @@
         // PlayStation moves its real browser cursor after an unconsumed arrow
         // event. Preventing it moves only DOM focus and leaves Cross aimed at
         // the old position, where a synthetic click cannot start native IME.
-        if (playStationBrowser && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter", " ", "Tab"].includes(key)) return;
+        if (playStationBrowser && (!gameDialogActive(dialog) || isNativeEditor(document.activeElement)) &&
+            ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter", " ", "Tab"].includes(key)) return;
         if (key === "Tab" && dialog) {
           navigation.focusNavigation = true;
           const controls = focusableControls(dialog).filter(item => item.tabIndex >= 0);
@@ -6112,7 +7096,7 @@
           return;
         }
         if (event.altKey || event.ctrlKey || event.metaKey) return;
-        if ((key === "Enter" || key === " ") && (document.activeElement.tagName === "BUTTON" || document.activeElement.matches('input[type="checkbox"]'))) {
+        if ((key === "Enter" || key === " ") && (document.activeElement.matches('button, summary, input[type="checkbox"]'))) {
           event.preventDefault();
           if (!event.repeat && !document.activeElement.disabled) {
             navigation.activatedAt = performance.now();
@@ -6122,7 +7106,7 @@
         }
         if (dialog === $("modal") && (key === "PageUp" || key === "PageDown")) {
           event.preventDefault();
-          const pane = document.activeElement.closest("#detailSidebar") || $("details");
+          const pane = detailScrollPane(document.activeElement) || detailScrollPane();
           pane.scrollTop += (key === "PageDown" ? 1 : -1) * pane.clientHeight * .65;
           return;
         }
@@ -6142,8 +7126,8 @@
         catch (_) { return; }
         if (!pads.length) { navigation.padCommand = ""; return; }
         const pad = pads[0];
-        if (!playStationBrowser && activeDialog() === $("modal") && Math.abs(pad.axes[3] || 0) > .55 && now >= navigation.padScrollAt) {
-          const pane = document.activeElement.closest("#detailSidebar") || $("details");
+        if (gameDialogActive() && Math.abs(pad.axes[3] || 0) > .55 && now >= navigation.padScrollAt) {
+          const pane = activeDialog() === $("gameOperationsModal") ? $("gameOperationsActions") : detailScrollPane(document.activeElement) || detailScrollPane();
           pane.scrollTop += pad.axes[3] * 80;
           navigation.padScrollAt = now + 80;
         }
@@ -6151,7 +7135,7 @@
         let command = "";
         if (pressed(4) && !pressed(5)) command = "previousTab";
         else if (pressed(5) && !pressed(4)) command = "nextTab";
-        else if (!playStationBrowser) {
+        else if (!playStationBrowser || gameDialogActive()) {
           if (pressed(1)) command = "back";
           else if (pressed(0)) command = "accept";
           else if (pressed(12) || pad.axes[1] < -.55) command = "up";
@@ -6163,7 +7147,7 @@
         const repeatable = ["up", "down", "left", "right"].includes(command);
         if (command && (changed || (repeatable && now >= navigation.padRepeatAt))) {
           if (now - navigation.keyboardAt > 100) {
-            if (command === "previousTab" || command === "nextTab") switchMainTab(command === "previousTab" ? -1 : 1);
+            if (command === "previousTab" || command === "nextTab") switchNavigationTab(command === "previousTab" ? -1 : 1);
             else if (command === "back") goBack();
             else if (command === "accept") {
               const target = document.activeElement;
@@ -6206,12 +7190,13 @@
       }
 
       function focusedControlForClick(event) {
-        if (playStationBrowser) return null;
+        if (playStationBrowser && !gameDialogActive()) return null;
         if (!event.isTrusted || event.button !== 0 || !navigation.focusNavigation) return null;
         // Keyboard form submission already targets its submit button.
-        if (event.type === "click" && event.detail === 0) return null;
+        if (event.type === "click" && event.detail === 0 && !playStationBrowser) return null;
         const target = navigation.focusTarget;
-        if (!target || (target.tagName !== "BUTTON" && !isNativeEditor(target) && !target.matches('input[type="checkbox"]'))) return null;
+        if (!target || (!target.matches('button, summary, input[type="checkbox"]') && !isNativeEditor(target))) return null;
+        if (target.disabled) return null;
         // A click already aimed at this editor must keep its trusted default action.
         if (isNativeEditor(target) && (target === event.target || target.contains(event.target))) return null;
         const root = activeDialog() || document;
@@ -6242,7 +7227,8 @@
       $("consoleScan").addEventListener("click", requestScan);
       if (playStationBrowser) {
         document.addEventListener("mouseover", event => {
-          const target = event.target.closest("button, input, select, textarea");
+          if (navigation.focusNavigation && gameDialogActive()) return;
+          const target = event.target.closest("button, input, select, textarea, summary");
           const root = activeDialog() || document;
           if (!target || target.disabled || target.closest("[hidden]") || !root.contains(target) || document.activeElement === target) return;
           // Follow the native cursor for highlighting without moving it or
@@ -6276,7 +7262,7 @@
           focusControl(focusableControls(dialog)[0]);
           return;
         }
-        if (["BUTTON", "INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) navigation.focusTarget = event.target;
+        if (["BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"].includes(event.target.tagName)) navigation.focusTarget = event.target;
         const card = event.target.closest(".game-card");
         document.querySelectorAll(".game-card.is-focused").forEach(item => item.classList.remove("is-focused"));
         if (card) {
@@ -6350,6 +7336,12 @@
       $("closeDestination").addEventListener("click", closeDestinationPicker);
       $("destinationModal").addEventListener("click", (event) => { if (event.target === $("destinationModal")) closeDestinationPicker(); });
       $("closeModal").addEventListener("click", closeModal);
+      $("closeGameOperations").addEventListener("click", () => closeGameOperations());
+      $("gameOperationsModal").addEventListener("click", event => { if (event.target === $("gameOperationsModal")) closeGameOperations(); });
+      $("gameOperationsActions").addEventListener("click", event => {
+        const button = event.target.closest("button");
+        if (button && !button.disabled) closeGameOperations();
+      }, true);
       $("modal").addEventListener("click", (event) => { if (event.target === $("modal")) closeModal(); });
 
       for (let temperature = 50; temperature <= 91; temperature += 1) {
@@ -6366,7 +7358,7 @@
       $("smbClearPassword").addEventListener("change", syncSmbAuthControls);
       applyLanguage(currentLanguage);
       initializeTabHistory();
-      Promise.all([refreshAll(), refreshManual(), refreshSettings(), refreshStorageJob(), refreshSmbConnections()]);
+      Promise.all([refreshAll(true), refreshManual(), refreshSettings(), refreshStorageJob(), refreshSmbConnections()]);
     })();
   </script>
 </body>

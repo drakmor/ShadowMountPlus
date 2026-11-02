@@ -385,12 +385,34 @@ paths:
     post:
       operationId: getGameInfo
       summary: Get detailed metadata and size for a folder, image or installed PKG
+      description: With runtime_only=true, return only status, title_id and observed active state without checking installation or scanning sizes and content.
       tags: [Games]
       requestBody:
-        $ref: "#/components/requestBodies/TitleRequest"
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/TitleRequest"
+                - type: object
+                  properties:
+                    runtime_only: {type: boolean, default: false}
       responses:
         "200":
-          $ref: "#/components/responses/GameInfoSuccess"
+          description: Detailed information, or a lightweight runtime state when requested
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/GameInfoResponse"
+                  - type: object
+                    required: [status, title_id, active]
+                    properties:
+                      status: {type: integer, const: 0}
+                      title_id: {$ref: "#/components/schemas/TitleId"}
+                      active: {type: boolean}
+                      patches_applied: {type: boolean}
+                      cheats_applied: {type: boolean}
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -463,7 +485,7 @@ paths:
           $ref: "#/components/responses/Preflight"
     post:
       operationId: gameXmlPatches
-      summary: List XML patches or save one selection for the next launch
+      summary: List patches and cheats, save startup selections, or toggle a live cheat
       tags: [Games]
       requestBody:
         required: true
@@ -481,9 +503,14 @@ paths:
                   description: Together with enabled, updates one catalog entry.
                 enabled:
                   type: boolean
+                  description: Enabling includes required cheats. A required entry cannot be disabled while its dependents are enabled in the selected live or startup mode.
+                apply:
+                  type: boolean
+                  default: false
+                  description: Apply a cheat and missing dependencies in one transaction through the lifecycle owner. Requires id and enabled; does not save startup selection. XML remains startup-only.
       responses:
         "200":
-          description: Catalog and saved selections; defaults are off. Unsupported or version-mismatched entries can only be disabled.
+          description: Catalog with effective startup dependencies and observed live state; defaults are off. Unsupported or incompatible entries can only be disabled.
           content:
             application/json:
               schema:
@@ -493,8 +520,15 @@ paths:
                   title_id: {type: string}
                   version: {type: string}
                   directory: {type: string}
+                  cheat_directory: {type: string}
+                  has_patches: {type: boolean}
+                  has_cheats: {type: boolean}
+                  patches_applied: {type: boolean}
+                  cheats_applied: {type: boolean}
+                  patches_enabled: {type: boolean}
+                  cheats_enabled: {type: boolean}
                   saved: {type: boolean}
-                  applies_on_next_launch: {type: boolean, const: true}
+                  applies_on_next_launch: {type: boolean}
                   patches:
                     type: array
                     maxItems: 256
@@ -507,10 +541,24 @@ paths:
                         note: {type: string}
                         app_version: {type: string}
                         module: {type: string}
+                        format: {type: string, enum: [XML, JSON, SHN, MC4]}
+                        file: {type: string, description: Source filename; deleting this file removes all its entries.}
+                        file_deletable: {type: boolean, description: Local file; internet-catalog files cannot be deleted.}
+                        master_id: {type: string}
+                        button: {type: boolean}
+                        applied: {type: boolean}
                         requires: {type: string}
                         error: {type: string}
                         enabled: {type: boolean}
-                        compatible: {type: boolean}
+                        compatible:
+                          type: boolean
+                          description: The declared version matches, or every compiled write resolves its address by signature scan.
+                        version_matched:
+                          type: boolean
+                          description: The declared version matches; mask is treated as universal only for signature-based entries.
+                        signature_based:
+                          type: boolean
+                          description: All compiled writes use runtime signature scans; fixed or mixed address records are false.
                         supported: {type: boolean}
                         line_count: {type: integer}
         "400":
@@ -519,6 +567,70 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /api/v1/games/patches/upload:
+    options:
+      operationId: preflightPatchUpload
+      summary: CORS preflight
+      tags: [Games]
+      responses:
+        "204": {$ref: "#/components/responses/Preflight"}
+    post:
+      operationId: uploadPatchFile
+      summary: Validate and add a local XML patch or JSON/SHN/MC4 cheat file
+      description: Writes to patches or cheats, prefixing title_id when absent from the filename. Existing files are never overwritten. Disabled in child mode.
+      tags: [Games]
+      parameters:
+        - in: query
+          name: title_id
+          required: true
+          schema: {$ref: "#/components/schemas/TitleId"}
+        - in: query
+          name: filename
+          required: true
+          schema: {type: string, maxLength: 200}
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary, maxLength: 4194304}
+      responses:
+        "200": {description: File validated and published; subsequent catalog reads include it.}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {description: Child mode is enabled or storage is not writable.}
+        "409": {description: A file with this name already exists.}
+        "413": {description: File exceeds 4 MiB.}
+        "500": {$ref: "#/components/responses/InternalError"}
+
+  /api/v1/games/patches/delete:
+    options:
+      operationId: preflightPatchDelete
+      summary: CORS preflight
+      tags: [Games]
+      responses:
+        "204": {$ref: "#/components/responses/Preflight"}
+    post:
+      operationId: deletePatchFile
+      summary: Delete the source file of a catalog entry
+      description: Removes all entries in a local file and invalidates its index. Internet-catalog files are protected. Refused while a game is running or child mode is enabled.
+      tags: [Games]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title_id, id]
+              properties:
+                title_id: {$ref: "#/components/schemas/TitleId"}
+                id: {type: string, pattern: "^[0-9a-f]{16}$"}
+      responses:
+        "200": {description: File deleted; subsequent catalog reads reflect the change.}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {description: Internet-catalog file is protected, child mode is enabled, or storage is not writable.}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: A game is running.}
+        "500": {$ref: "#/components/responses/InternalError"}
 
   /api/v1/games/fakelib:
     options:
@@ -671,6 +783,50 @@ paths:
                 $ref: "#/components/schemas/SettingsResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/settings/patches:
+    options:
+      operationId: preflightPatchSources
+      tags: [Settings]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: patchSources
+      summary: Configure patch and cheat ZIP sources, scheduling, and manual updates
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action: {type: string, enum: [status, save, update], default: status}
+                interval_hours:
+                  type: integer
+                  minimum: 0
+                  maximum: 8760
+                  description: Required for save. Zero selects manual updates only.
+                sources:
+                  type: array
+                  maxItems: 12
+                  description: Required for save. Empty disables all sources. ZIP archives only.
+                  items:
+                    type: object
+                    required: [type, url]
+                    properties:
+                      type: {type: string, enum: [cheats, patches]}
+                      url: {type: string, maxLength: 1023, format: uri}
+      responses:
+        "200":
+          description: Sources, built-in presets, interval_hours, saved, queued, running, last_error and last_check (Unix seconds). Configuration reload is asynchronous. Manual updates wait for idle; unchanged archives are not rewritten.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: An update is already queued or running.
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -959,6 +1115,78 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/games/launch:
+    options:
+      operationId: preflightLaunchGame
+      tags: [Games]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: launchGame
+      summary: Request a known game's launch for the foreground user
+      description: Refuses while a game is open or an installation is pending. Observe active state through game information after acceptance.
+      tags: [Games]
+      requestBody:
+        $ref: "#/components/requestBodies/TitleRequest"
+      responses:
+        "200":
+          description: Launch request accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, title_id, accepted]
+                properties:
+                  status: {type: integer, const: 0}
+                  title_id: {$ref: "#/components/schemas/TitleId"}
+                  accepted: {type: boolean, const: true}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: No foreground user is available
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/games/close:
+    options:
+      operationId: preflightCloseGame
+      tags: [Games]
+      responses:
+        "204":
+          $ref: "#/components/responses/Preflight"
+    post:
+      operationId: closeGame
+      summary: Request closing the running game by title ID
+      description: Refuses if the running application's title does not match. Acceptance does not mean shutdown has completed.
+      tags: [Games]
+      requestBody:
+        $ref: "#/components/requestBodies/TitleRequest"
+      responses:
+        "200":
+          description: Close request accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, title_id, accepted]
+                properties:
+                  status: {type: integer, const: 0}
+                  title_id: {$ref: "#/components/schemas/TitleId"}
+                  accepted: {type: boolean, const: true}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Busy"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/games/mount:
     options:
       operationId: preflightMountGame
@@ -1044,7 +1272,20 @@ paths:
       summary: Request game uninstallation
       tags: [Games]
       requestBody:
-        $ref: "#/components/requestBodies/TitleRequest"
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title_id]
+              properties:
+                title_id:
+                  $ref: "#/components/schemas/TitleId"
+                reinstall:
+                  type: boolean
+                  default: false
+                  description: Require an available non-PKG source, preserve manual sources and queue reinstallation through the scanner.
       responses:
         "200":
           $ref: "#/components/responses/UninstallSuccess"
@@ -1827,7 +2068,7 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     PayloadTooLarge:
-      description: JSON request body exceeds 4096 bytes
+      description: JSON request body exceeds 16384 bytes
       headers:
         Access-Control-Allow-Origin:
           $ref: "#/components/headers/AllowOrigin"
@@ -2036,6 +2277,9 @@ components:
           type: boolean
         quiet_mode:
           type: boolean
+        child_mode:
+          type: boolean
+          description: Hide game file and installation operations in the web interface. Omission preserves the current value; default is false.
         update_emulators:
           type: boolean
         fakelib_default_mode:
@@ -2411,6 +2655,24 @@ components:
         active:
           type: boolean
           description: The game's process is currently running, including in the background.
+        has_patches:
+          type: boolean
+          description: Compatible supported XML patches are available, or a patch is currently applied.
+        has_cheats:
+          type: boolean
+          description: Compatible supported cheats are available, or a cheat is currently applied.
+        patches_applied:
+          type: boolean
+          description: XML patches have actually been applied in the current game session; startup selections alone do not set this.
+        cheats_applied:
+          type: boolean
+          description: Cheats have actually been applied in the current game session; startup selections alone do not set this.
+        patches_enabled:
+          type: boolean
+          description: Compatible supported XML patches are selected for application at launch.
+        cheats_enabled:
+          type: boolean
+          description: Compatible supported cheats are selected for application at launch.
         play_time_seconds:
           type: integer
           format: int64
@@ -2825,7 +3087,7 @@ components:
           const: true
         scan_queued:
           type: boolean
-          description: Full synchronization was queued because the known source was absent before uninstall; retained sources are not immediately rediscovered.
+          description: Full synchronization was queued for explicit reinstallation or because the known source was absent before uninstall.
         scan_deferred:
           type: boolean
         scan_deferred_reason:

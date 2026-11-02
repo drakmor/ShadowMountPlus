@@ -173,6 +173,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.api_enabled = true;
   state->cfg.debug_enabled = true;
   state->cfg.quiet_mode = false;
+  state->cfg.child_mode = false;
   state->cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
   state->cfg.force_mount = false;
   state->cfg.persistent_image_mounts = false;
@@ -266,6 +267,14 @@ bool sm_config_debug_enabled(void) {
   ensure_runtime_config_ready();
   pthread_mutex_lock(&g_runtime_state_mutex);
   bool enabled = g_runtime_state.cfg.debug_enabled;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return enabled;
+}
+
+bool sm_config_child_mode(void) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  bool enabled = g_runtime_state.cfg.child_mode;
   pthread_mutex_unlock(&g_runtime_state_mutex);
   return enabled;
 }
@@ -1153,6 +1162,16 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
       continue;
     }
 
+    if (strcasecmp(key, "child_mode") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.child_mode = bval;
+      continue;
+    }
+
     if (strcasecmp(key, "language") == 0 || strcasecmp(key, "lang") == 0 ||
         strcasecmp(key, "locale") == 0) {
       int32_t language_id = SM_LANGUAGE_AUTO;
@@ -1597,7 +1616,7 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
       image_rule_count++;
   }
 
-  log_debug("  [CFG] loaded: api_enabled=%d debug=%d quiet=%d language=%s "
+  log_debug("  [CFG] loaded: api_enabled=%d debug=%d quiet=%d child_mode=%d language=%s "
             "ro=%d force=%d "
             "persistent_image_mounts=%d app_install_all=%d "
             "auto_remove_missing_games=%d "
@@ -1616,6 +1635,7 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
             "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d",
             state->cfg.api_enabled ? 1 : 0,
             state->cfg.debug_enabled ? 1 : 0, state->cfg.quiet_mode ? 1 : 0,
+            state->cfg.child_mode ? 1 : 0,
             sm_l10n_language_name(state->cfg.language_id),
             state->cfg.mount_read_only ? 1 : 0,
             state->cfg.force_mount ? 1 : 0,
@@ -1914,7 +1934,7 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   size_t scan_path_count,
                                   sm_fakelib_mode_t fakelib_default_mode,
                                   bool ps4_force_pro, bool ps4_cpu_boost,
-                                  bool ps4_gpu_boost) {
+                                  bool ps4_gpu_boost, bool child_mode) {
   if (auto_remove_missing_delay_seconds <
           MIN_AUTO_REMOVE_MISSING_DELAY_SECONDS ||
       auto_remove_missing_delay_seconds >
@@ -1972,6 +1992,7 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
       sm_ini_set(&main, "ps4", "gpu_boost", ps4_gpu_boost ? "on" : "off") &&
       sm_ini_set(&main, "general", "debug", debug_enabled ? "on" : "off") &&
       sm_ini_set(&main, "general", "quiet_mode", quiet_mode ? "on" : "off") &&
+      sm_ini_set(&main, "general", "child_mode", child_mode ? "on" : "off") &&
       sm_ini_set(&main, "emulators", "update_enabled", update_emulators_enabled ? "on" : "off") &&
       sm_ini_set(&main, "emulators", "auto_update_ampr", auto_update_ampr_enabled ? "on" : "off") &&
       sm_ini_set(&main, "fakelib", "default_mode", sm_config_fakelib_mode_name(fakelib_default_mode)) &&
