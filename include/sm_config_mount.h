@@ -34,6 +34,7 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   sm_fakelib_mode_t fakelib_default_mode,
                                   bool ps4_force_pro, bool ps4_cpu_boost,
                                   bool ps4_gpu_boost);
+bool sm_config_write_patch_sources(const sm_patch_source_config_t *config);
 bool sm_config_is_ps4_title(const char *title_id);
 const char *sm_config_ps4_setting_name(sm_ps4_setting_t setting);
 bool sm_config_parse_ps4_setting(const char *value, sm_ps4_setting_t *setting);
@@ -52,6 +53,7 @@ runtime_config_t runtime_config(void);
 // Hot-path flags: avoid copying the full configuration and rule tables.
 bool sm_config_debug_enabled(void);
 bool sm_config_quiet_mode(void);
+void sm_config_patch_sources_snapshot(sm_patch_source_config_t *sources);
 // Return the number of configured scan roots.
 int get_scan_path_count(void);
 // Copy a scan root; return false and an empty path if the index is invalid.

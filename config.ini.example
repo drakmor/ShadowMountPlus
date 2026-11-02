@@ -89,6 +89,15 @@ version = 2
 # system: keep the system target; 50..91: apply a temperature target at game launch.
 # target_temperature = system
 
+[patches]
+# 0 = manual only (default), 1..8760 = automatic update interval in hours.
+# update_interval_hours = 24
+# With no source lines, the six built-in repositories are selected.
+# Repeat source = cheats|ZIP_URL or patches|ZIP_URL to choose your own list.
+# An empty source = disables all sources. Local files take priority.
+# source = cheats|https://codeload.github.com/etaHEN/PS5_Cheats/zip/refs/heads/main
+# source = patches|https://github.com/illusionyy/PS-Game-Patch/releases/latest/download/patch1.zip
+
 [sectors]
 # Logical device sector sizes, not filesystem clusters: powers of two, 512..1048576.
 # BFS fast path uses lvd_exfat=512; the exFAT cluster size must be 65536.

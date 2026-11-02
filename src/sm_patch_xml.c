@@ -9,43 +9,34 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "sm_game_patches.h"
+#include "sm_patch_internal.h"
 
-#define PATCH_MAX_FILE (4u * 1024u * 1024u)
-#define PATCH_MAX_LINES 4096u
-#define PATCH_MAX_BYTES (1024u * 1024u)
-#define PATCH_MAX_VALUE 65536u
 #define PATCH_MAX_PATTERN 1024u
 #define PATCH_MAX_SCAN (512u * 1024u * 1024u)
 #define PATCH_SCAN_CHUNK 65536u
 
-struct sm_patch_line {
-  char module[128];
-  uint64_t address, image_base;
-  int64_t offset;
-  unsigned jump_size;
-  size_t size, pattern_size, target_size;
-  uint8_t *bytes, *pattern, *mask, *target;
-};
-
-static void free_line(sm_patch_line_t *line) {
+void sm_patch_free_line(sm_patch_line_t *line) {
   free(line->bytes);
   free(line->pattern);
   free(line->mask);
   free(line->target);
+  free(line->off);
+  free(line->expected);
+  line->bytes = line->pattern = line->mask = line->target = line->off = line->expected = NULL;
 }
 
-static void truncate_list(sm_game_patch_list_t *list, size_t count) {
-  while (list->count > count) {
-    sm_game_patch_t *patch = &list->entries[--list->count];
-    for (size_t i = 0; i < patch->line_count; ++i)
-      free_line(&patch->lines[i]);
-    free(patch->lines);
-  }
+void sm_patch_free_entry(sm_game_patch_t *patch) {
+  for (size_t i = 0; i < patch->line_count; ++i) sm_patch_free_line(&patch->lines[i]);
+  free(patch->lines);
+  free(patch->source_path);
+}
+
+void sm_patch_truncate(sm_game_patch_list_t *list, size_t count) {
+  while (list->count > count) sm_patch_free_entry(&list->entries[--list->count]);
 }
 
 void sm_game_patches_free(sm_game_patch_list_t *list) {
-  truncate_list(list, 0);
+  sm_patch_truncate(list, 0);
   free(list->entries);
   memset(list, 0, sizeof(*list));
 }
@@ -244,13 +235,13 @@ static bool compile_line(const XML_Char **a, sm_patch_line_t *line, uint64_t ima
   return true;
 }
 
-static bool version_matches(const char *versions, const char *version) {
+static bool version_matches(const char *versions, const char *version, bool allow_mask) {
   // Exact dotted components, allowing conventional zero padding; no prefixes.
   while (*versions) {
     while (isspace((unsigned char)*versions) || *versions == ',') ++versions;
     const char *end = versions;
     while (*end && !isspace((unsigned char)*end) && *end != ',') ++end;
-    if (end - versions == 4 && !memcmp(versions, "mask", 4)) return true;
+    if (allow_mask && end - versions == 4 && !memcmp(versions, "mask", 4)) return true;
     const char *a = versions, *b = version;
     bool same = *version != 0;
     while (same && a < end && *b) {
@@ -270,6 +261,15 @@ static bool version_matches(const char *versions, const char *version) {
     versions = end;
   }
   return false;
+}
+
+void sm_patch_set_compatibility(sm_game_patch_t *patch, const char *version) {
+  patch->signature_based = patch->supported && patch->line_count && patch->lines;
+  for (size_t i = 0; patch->signature_based && i < patch->line_count; ++i)
+    if (!patch->lines[i].pattern_size || patch->lines[i].absolute)
+      patch->signature_based = false;
+  patch->version_matched = version_matches(patch->app_ver, version, patch->signature_based);
+  patch->compatible = patch->version_matched || patch->signature_based;
 }
 
 typedef struct {
@@ -304,6 +304,7 @@ static void XMLCALL xml_start(void *user, const XML_Char *name, const XML_Char *
     sm_game_patch_t *p = &ctx->list->entries[ctx->list->count++];
     memset(p, 0, sizeof(*p));
     p->supported = true;
+    memcpy(p->format, "XML", 4);
     ctx->in_metadata = true;
     if (!copy_attribute(p->name, sizeof(p->name), a, "Name") || !*p->name ||
         !copy_attribute(p->author, sizeof(p->author), a, "Author") ||
@@ -320,7 +321,6 @@ static void XMLCALL xml_start(void *user, const XML_Char *name, const XML_Char *
     if (*attribute(a, "ImageBase") && !number(attribute(a, "ImageBase"), &p->image_base, false)) {
       xml_error(ctx, EINVAL); return;
     }
-    p->compatible = version_matches(p->app_ver, ctx->version);
     uint64_t hash = UINT64_C(14695981039346656037);
     const char *base = strrchr(ctx->path, '/');
     const char *fields[] = {base ? base + 1 : ctx->path, attribute(a, "Title"), p->name, p->app_ver, p->app_elf, attribute(a, "ImageBase")};
@@ -339,13 +339,13 @@ static void XMLCALL xml_start(void *user, const XML_Char *name, const XML_Char *
     if (!compile_line(a, &line, p->image_base)) {
       p->supported = false;
       snprintf(p->error, sizeof(p->error), "Invalid or unsupported Line type/value: %.48s", attribute(a, "Type"));
-      free_line(&line);
+      sm_patch_free_line(&line);
       return;
     }
     ctx->total_bytes += line.size + line.pattern_size * 2 + line.target_size;
-    if (ctx->total_bytes > PATCH_MAX_BYTES) { free_line(&line); xml_error(ctx, EFBIG); return; }
+    if (ctx->total_bytes > PATCH_MAX_BYTES) { sm_patch_free_line(&line); xml_error(ctx, EFBIG); return; }
     void *lines = realloc(p->lines, (p->line_count + 1) * sizeof(*p->lines));
-    if (!lines) { free_line(&line); xml_error(ctx, ENOMEM); return; }
+    if (!lines) { sm_patch_free_line(&line); xml_error(ctx, ENOMEM); return; }
     p->lines = lines;
     p->lines[p->line_count++] = line;
     return;
@@ -364,6 +364,7 @@ static void XMLCALL xml_end(void *user, const XML_Char *name) {
   if (ctx->depth == 2 && !strcmp(name, "Metadata")) {
     sm_game_patch_t *p = &ctx->list->entries[ctx->list->count-1];
     if (!p->line_count) { p->supported = false; snprintf(p->error, sizeof(p->error), "Empty PatchList"); }
+    sm_patch_set_compatibility(p, ctx->version);
     ctx->in_metadata = false;
   }
   --ctx->depth;
@@ -402,7 +403,7 @@ int sm_patch_xml_load(const char *path, const char *title_id, const char *versio
     ctx.total_lines += list->entries[i].line_count;
     for (size_t j = 0; j < list->entries[i].line_count; ++j) {
       const sm_patch_line_t *line = &list->entries[i].lines[j];
-      ctx.total_bytes += line->size + line->pattern_size * 2 + line->target_size;
+      ctx.total_bytes += line->size * (1 + !!line->off + !!line->expected) + line->pattern_size * 2 + line->target_size;
     }
   }
   ctx.parser = XML_ParserCreate(NULL);
@@ -426,12 +427,12 @@ int sm_patch_xml_load(const char *path, const char *title_id, const char *versio
   }
   XML_ParserFree(ctx.parser);
   fclose(file);
-  if (ctx.error || (ctx.ids && !ctx.matched)) truncate_list(list, ctx.first);
+  if (ctx.error || (ctx.ids && !ctx.matched)) sm_patch_truncate(list, ctx.first);
   if (!ctx.error) {
     for (size_t i = ctx.first; i < list->count; ++i)
       for (size_t j = 0; j < i; ++j)
         if (!strcmp(list->entries[i].id, list->entries[j].id)) {
-          truncate_list(list, ctx.first);
+          sm_patch_truncate(list, ctx.first);
           return EEXIST;
         }
   }
@@ -564,7 +565,10 @@ static int resolve_locations(const sm_game_patch_t *patch, const sm_patch_memory
     const sm_patch_line_t *line = &patch->lines[i];
     patch_location_t *location = &locations[i];
     const char *name = *line->module ? line->module : patch->app_elf;
-    if (!memory->module(memory->context, name, &location->base, &location->size)) return EAGAIN;
+    if (line->absolute) {
+      location->base = 0x10000;
+      location->size = UINT64_C(0x800000000000) - location->base;
+    } else if (!memory->module(memory->context, name, &location->base, &location->size)) return EAGAIN;
     if (!module_range(location->base, location->size, location->base, 1)) return EFAULT;
   }
   pattern_request_t *requests = calloc(patch->line_count * 2, sizeof(*requests));
@@ -623,8 +627,8 @@ int sm_patch_apply(const sm_game_patch_t *patch, const sm_patch_memory_t *memory
       address = (uintptr_t)((uint64_t)address + (uint64_t)line->offset);
     } else {
       uint64_t offset = line->address - line->image_base;
-      if (offset > size) { error = EFAULT; break; }
-      address = base + offset;
+      if (!line->absolute && offset > size) { error = EFAULT; break; }
+      address = line->absolute ? offset : base + offset;
     }
     if (!line->jump_size) {
       writes[count++] = (patch_write_t){.address = address, .size = line->size, .value = line->bytes};
@@ -645,6 +649,8 @@ int sm_patch_apply(const sm_game_patch_t *patch, const sm_patch_memory_t *memory
       w->original = malloc(w->size);
       if (!w->original) { error = ENOMEM; break; }
       if (!memory->read(memory->context, w->address, w->original, w->size)) { error = EFAULT; break; }
+      if (line->expected && memcmp(w->original, w->value, w->size) &&
+          memcmp(w->original, line->expected, w->size)) { error = ESTALE; break; }
       for (size_t j = 0; j < n; ++j) {
         patch_write_t *previous = &writes[j];
         if (previous->address < w->address + w->size && w->address < previous->address + previous->size) {
@@ -672,6 +678,7 @@ int sm_patch_apply(const sm_game_patch_t *patch, const sm_patch_memory_t *memory
         !memory->read(memory->context, w->address, verify, w->size) || memcmp(verify, w->value, w->size))
       error = EIO;
   }
+  if (!error && memory->cancelled && memory->cancelled(memory->context)) error = ETIMEDOUT;
   r->count = count;
   r->attempted = error ? attempted : 0;
   r->verify = verify;
@@ -688,7 +695,7 @@ bool sm_patch_selection_ready(const sm_game_patch_list_t *list,
       const char *name = *p->lines[j].module ? p->lines[j].module : p->app_elf;
       uintptr_t base;
       size_t size;
-      if (!memory->module(memory->context, name, &base, &size)) return false;
+      if (!p->lines[j].absolute && !memory->module(memory->context, name, &base, &size)) return false;
     }
   }
   return true;
@@ -721,6 +728,133 @@ int sm_patch_apply_selected(const sm_game_patch_list_t *list,
     }
   }
   int error = sm_patch_apply(&combined, memory, recovery);
+  free(combined.lines);
+  return error;
+}
+
+int sm_cheat_append_line(sm_game_patch_t *patch, sm_patch_line_t *line) {
+  for (size_t i = 0; i < patch->line_count;) {
+    sm_patch_line_t *old = &patch->lines[i];
+    if (old->absolute != line->absolute || strcmp(old->module, line->module) ||
+        old->address + old->size <= line->address || line->address + line->size <= old->address) { ++i; continue; }
+    uint64_t start = old->address < line->address ? old->address : line->address;
+    uint64_t end = old->address + old->size > line->address + line->size ? old->address + old->size : line->address + line->size;
+    if (end - start > PATCH_MAX_VALUE || (!!old->expected != !!line->expected)) return EINVAL;
+    size_t size = (size_t)(end - start);
+    uint8_t *on = malloc(size), *off = malloc(size), *expected = old->expected ? malloc(size) : NULL;
+    if (!on || !off || (old->expected && !expected)) { free(on); free(off); free(expected); return ENOMEM; }
+    memcpy(on + old->address - start, old->bytes, old->size);
+    memcpy(on + line->address - start, line->bytes, line->size);
+    memcpy(off + line->address - start, line->off, line->size);
+    memcpy(off + old->address - start, old->off, old->size);
+    if (expected) {
+      memcpy(expected + line->address - start, line->expected, line->size);
+      memcpy(expected + old->address - start, old->expected, old->size);
+    }
+    sm_patch_free_line(old);
+    memmove(old, old + 1, (patch->line_count - i - 1) * sizeof(*old));
+    --patch->line_count;
+    sm_patch_free_line(line);
+    line->bytes = on; line->off = off; line->expected = expected;
+    line->address = start; line->size = size;
+    i = 0;
+  }
+  if (patch->line_count >= PATCH_MAX_LINES) return EFBIG;
+  void *lines = realloc(patch->lines, (patch->line_count + 1) * sizeof(*patch->lines));
+  if (!lines) return ENOMEM;
+  patch->lines = lines;
+  patch->lines[patch->line_count++] = *line;
+  memset(line, 0, sizeof(*line));
+  return 0;
+}
+
+int sm_patch_dependency_chain(const sm_game_patch_list_t *list, size_t index,
+                               size_t chain[SM_PATCH_MAX_ENTRIES], size_t *count) {
+  *count = 0;
+  if (list->count > SM_PATCH_MAX_ENTRIES || index >= list->count) return EINVAL;
+  for (;;) {
+    for (size_t i = 0; i < *count; ++i)
+      if (chain[i] == index) return ELOOP;
+    const sm_game_patch_t *p = &list->entries[index];
+    if (!p->supported || !p->compatible) return EINVAL;
+    chain[(*count)++] = index;
+    if (!*p->master_id) return 0;
+    size_t next = 0;
+    while (next < list->count && strcmp(list->entries[next].id, p->master_id)) ++next;
+    if (next == list->count) return ENOENT;
+    index = next;
+  }
+}
+
+int sm_cheat_apply(sm_game_patch_list_t *list, size_t index, bool enabled,
+                    const sm_patch_memory_t *memory, sm_patch_recovery_t **recovery) {
+  *recovery = NULL;
+  size_t chain[SM_PATCH_MAX_ENTRIES], count = 0;
+  int error = sm_patch_dependency_chain(list, index, chain, &count);
+  if (error) return error;
+  const sm_game_patch_t *p = &list->entries[index];
+  bool dependency[SM_PATCH_MAX_ENTRIES] = {0};
+  for (size_t i = 0; i < count; ++i) {
+    if (!strcmp(list->entries[chain[i]].format, "XML")) return EINVAL;
+    dependency[chain[i]] = true;
+  }
+  for (size_t i = 0; i < list->count; ++i) {
+    const sm_game_patch_t *other = &list->entries[i];
+    if ((!enabled || p->button) && other->applied && !strcmp(other->master_id, p->id)) return EBUSY;
+  }
+  sm_game_patch_t combined = {.supported = true, .compatible = true};
+  for (size_t part = enabled ? count : 1; part > 0 && !error; --part) {
+    const sm_game_patch_t *source = &list->entries[chain[part - 1]];
+    if (part > 1 && source->applied) continue;
+    for (size_t j = 0; j < source->line_count && !error; ++j) {
+      const sm_patch_line_t *original = &source->lines[j];
+      if (!original->off || original->pattern || original->mask || original->target || original->pattern_size || original->target_size) {
+        error = EINVAL;
+        break;
+      }
+      sm_patch_line_t line = *original;
+      if (!*line.module) memcpy(line.module, source->app_elf, strlen(source->app_elf) + 1);
+      line.bytes = malloc(line.size); line.off = malloc(line.size); line.expected = NULL;
+      if (!line.bytes || !line.off) error = ENOMEM;
+      else {
+        memcpy(line.bytes, enabled ? original->bytes : original->off, line.size);
+        memcpy(line.off, original->off, line.size);
+        if (enabled && original->expected) {
+          line.expected = malloc(line.size);
+          if (!line.expected) error = ENOMEM;
+          else memcpy(line.expected, original->expected, line.size);
+        }
+      }
+      if (!error) error = sm_cheat_append_line(&combined, &line);
+      sm_patch_free_line(&line);
+    }
+  }
+  // Refuse overlap with another live selection rather than silently undoing it.
+  for (size_t i = 0; i < list->count && !error; ++i) {
+    const sm_game_patch_t *other = &list->entries[i];
+    if (!other->applied || dependency[i]) continue;
+    for (size_t a = 0; a < combined.line_count && !error; ++a) {
+      const sm_patch_line_t *x = &combined.lines[a];
+      uintptr_t xb = 0; size_t xs;
+      if (!x->absolute && !memory->module(memory->context, x->module, &xb, &xs)) { error = EAGAIN; break; }
+      uint64_t xa = xb + x->address;
+      for (size_t b = 0; b < other->line_count; ++b) {
+        const sm_patch_line_t *y = &other->lines[b];
+        uintptr_t yb = 0; size_t ys;
+        if (y->pattern_size) { error = EBUSY; break; }
+        if (!y->absolute && !memory->module(memory->context, *y->module ? y->module : other->app_elf, &yb, &ys)) { error = EAGAIN; break; }
+        uint64_t ya = yb + y->address - y->image_base;
+        if (xa < ya + y->size && ya < xa + x->size) { error = EEXIST; break; }
+      }
+    }
+  }
+  if (!error) error = sm_patch_apply(&combined, memory, recovery);
+  if (!error) {
+    if (enabled) {
+      for (size_t i = 0; i < count; ++i) list->entries[chain[i]].applied = true;
+    } else list->entries[index].applied = false;
+  }
+  for (size_t i = 0; i < combined.line_count; ++i) sm_patch_free_line(&combined.lines[i]);
   free(combined.lines);
   return error;
 }

@@ -8,8 +8,12 @@
 #include "sm_game_lifecycle.h"
 #include "sm_log.h"
 #include "sm_runtime.h"
+#include "sm_time.h"
+#include "sm_patch_sources.h"
+#include "sm_patch_index.h"
 #include "sm_shellcore_service.h"
 
+#define AMPR_THREAD_STACK_SIZE (1024u * 1024u)
 #define AMPR_FILE_NAME "libSceAmpr.sprx"
 #define AMPR_TEMP_FILE_NAME ".libSceAmpr.sprx.download"
 #define AMPR_INITIAL_CHECK_DELAY_SECONDS 30u
@@ -69,6 +73,7 @@ typedef struct {
   uint64_t generation;
   char url[MAX_PATH];
   char emulators_path[MAX_PATH];
+  sm_patch_source_config_t patches;
 } ampr_update_config_t;
 
 typedef enum {
@@ -88,6 +93,9 @@ typedef struct {
   bool net_initialized;
   uint64_t config_generation;
   int active_request_id;
+  bool patch_requested;
+  bool index_requested;
+  sm_patch_update_status_t patch_status;
 } ampr_updater_state_t;
 
 static ampr_updater_state_t g_ampr_updater = {
@@ -101,13 +109,16 @@ static void log_sce_failure(const char *operation, int error) {
 }
 
 static bool ampr_update_busy(void) {
+  char title_id[MAX_TITLE_ID];
   return runtime_sleep_mode_active() || sm_game_lifecycle_has_active_game() ||
-         sm_shellcore_service_has_prepared_mount();
+         sm_shellcore_service_has_prepared_mount() ||
+         sm_game_lifecycle_active_title(title_id);
 }
 
 static void snapshot_update_config(ampr_update_config_t *snapshot) {
   const runtime_config_t cfg = runtime_config();
   snapshot->enabled = cfg.auto_update_ampr_enabled;
+  snapshot->patches = cfg.patch_sources;
   snapshot->generation = g_ampr_updater.config_generation;
   (void)strlcpy(snapshot->url, cfg.ampr_update_url, sizeof(snapshot->url));
   (void)strlcpy(snapshot->emulators_path, cfg.emulators_path,
@@ -859,82 +870,215 @@ cleanup:
   return result;
 }
 
+static bool catalog_cancelled(void *context) {
+  const ampr_update_config_t *snapshot = context;
+  pthread_mutex_lock(&g_ampr_updater.mutex);
+  bool cancelled = g_ampr_updater.stop_requested || runtime_sleep_mode_active() ||
+                   snapshot->generation != g_ampr_updater.config_generation;
+  pthread_mutex_unlock(&g_ampr_updater.mutex);
+  return cancelled;
+}
+
+static int download_catalog(const char *url, const char *path, void *context) {
+  const ampr_update_config_t *snapshot = context;
+  int pool = -1, ssl = -1, http = -1, template = -1, connection = -1, request = -1, fd = -1;
+  int error = EIO, native_result = 0, status = 0;
+  const char *operation = "sceNetInit";
+  bool certificates = false;
+  uint8_t *buffer = NULL;
+  size_t total = 0;
+  if (catalog_cancelled(context)) return ECANCELED;
+  if (!ensure_net_initialized()) goto done;
+  operation = "sceNetPoolCreate";
+  pool = sceNetPoolCreate("sm_catalog", AMPR_NET_POOL_SIZE, 0);
+  if (pool < 0) { native_result = pool; goto done; }
+  operation = "sceSslInit";
+  ssl = sceSslInit(AMPR_SSL_POOL_SIZE);
+  if (ssl < 0) { native_result = ssl; goto done; }
+  if (!strncmp(url, "https://", 8)) {
+    operation = "sceSslLoadCert";
+    if (!load_ampr_ca_certificates(ssl)) goto done;
+    certificates = true;
+  }
+  operation = "sceHttpInit";
+  http = sceHttpInit(pool, ssl, AMPR_HTTP_POOL_SIZE);
+  if (http < 0) { native_result = http; goto done; }
+  operation = "sceHttpCreateTemplate";
+  template = sceHttpCreateTemplate(http, "ShadowMountPlus/1.0", AMPR_HTTP_VERSION_1_1, 1);
+  if (template < 0) { native_result = template; goto done; }
+  operation = "configure HTTP template";
+  if (!configure_http_template(template)) goto done;
+  operation = "sceHttpCreateConnectionWithURL";
+  connection = sceHttpCreateConnectionWithURL(template, url, 1);
+  if (connection < 0) { native_result = connection; goto done; }
+  operation = "sceHttpCreateRequestWithURL2";
+  request = sceHttpCreateRequestWithURL2(connection, "GET", url, 0);
+  if (request < 0) { native_result = request; goto done; }
+  pthread_mutex_lock(&g_ampr_updater.mutex);
+  bool current = !g_ampr_updater.stop_requested && !runtime_sleep_mode_active() &&
+                 snapshot->generation == g_ampr_updater.config_generation;
+  if (current) g_ampr_updater.active_request_id = request;
+  pthread_mutex_unlock(&g_ampr_updater.mutex);
+  if (!current) { error = ECANCELED; goto done; }
+  operation = "sceHttpSendRequest";
+  native_result = sceHttpSendRequest(request, NULL, 0);
+  if (native_result) goto done;
+  operation = "sceHttpGetStatusCode";
+  native_result = sceHttpGetStatusCode(request, &status);
+  if (native_result || status != 200) goto done;
+  operation = "open download";
+  unlink(path);
+  fd = open(path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0666);
+  if (fd < 0) { error = errno; goto done; }
+  operation = "allocate download buffer";
+  buffer = malloc(AMPR_IO_BUFFER_SIZE);
+  if (!buffer) { error = ENOMEM; goto done; }
+  uint64_t deadline = monotonic_time_us() + UINT64_C(300000000);
+  for (;;) {
+    operation = "sceHttpReadData";
+    if (monotonic_time_us() >= deadline) { error = ETIMEDOUT; goto done; }
+    if (catalog_cancelled(context)) { error = ECANCELED; goto done; }
+    int received = sceHttpReadData(request, buffer, AMPR_IO_BUFFER_SIZE);
+    if (received < 0 || received > (int)AMPR_IO_BUFFER_SIZE) { native_result = received; goto done; }
+    if (!received) break;
+    operation = "download size";
+    if ((size_t)received > SM_PATCH_ARCHIVE_MAX - total) { error = EFBIG; goto done; }
+    operation = "write download";
+    if (!write_all(fd, buffer, (size_t)received)) { error = errno ? errno : EIO; goto done; }
+    total += (size_t)received;
+  }
+  operation = total ? "fsync download" : "empty response";
+  error = !total ? EIO : fsync(fd) ? errno : 0;
+done:
+  if (catalog_cancelled(context)) error = ECANCELED;
+  free(buffer);
+  if (fd >= 0 && close(fd) && !error) { error = errno; operation = "close download"; }
+  if (request >= 0) { clear_active_request(request); sceHttpDeleteRequest(request); }
+  if (connection >= 0) sceHttpDeleteConnection(connection);
+  if (template >= 0) sceHttpDeleteTemplate(template);
+  if (http >= 0) sceHttpTerm(http);
+  if (certificates) sceSslUnloadCert(ssl);
+  if (ssl >= 0) sceSslTerm(ssl);
+  if (pool >= 0) sceNetPoolDestroy(pool);
+  if (error && error != ECANCELED)
+    log_debug("  [PATCH-UPDATE] download failed: stage=%s status=%d sce=0x%08x http=%d bytes=%zu url=%s",
+              operation, error, (unsigned)native_result, status, total, url);
+  if (error) unlink(path);
+  return error;
+}
+
+int sm_patch_updater_request(void) {
+  pthread_mutex_lock(&g_ampr_updater.mutex);
+  int error = !g_ampr_updater.started || g_ampr_updater.stop_requested ? ENXIO :
+              g_ampr_updater.patch_requested || g_ampr_updater.patch_status.running ? EBUSY : 0;
+  if (!error) {
+    g_ampr_updater.patch_requested = true;
+    g_ampr_updater.patch_status.queued = true;
+    g_ampr_updater.wake_requested = true;
+    pthread_cond_broadcast(&g_ampr_updater.cond);
+  }
+  pthread_mutex_unlock(&g_ampr_updater.mutex);
+  return error;
+}
+
+void sm_patch_updater_status(sm_patch_update_status_t *out) {
+  pthread_mutex_lock(&g_ampr_updater.mutex);
+  *out = g_ampr_updater.patch_status;
+  pthread_mutex_unlock(&g_ampr_updater.mutex);
+}
+
 static void *ampr_updater_thread_main(void *unused) {
   (void)unused;
-
+  time_t next_ampr = time(NULL) + AMPR_INITIAL_CHECK_DELAY_SECONDS;
+  time_t next_catalog = next_ampr;
+  time_t resume_ready = 0;
+  char previous_url[MAX_PATH] = {0}, previous_path[MAX_PATH] = {0};
+  uint64_t previous_sources = 0;
+  uint32_t previous_interval = UINT32_MAX;
+  bool previous_enabled = false;
   pthread_mutex_lock(&g_ampr_updater.mutex);
-  g_ampr_updater.wake_requested = false;
-  if (!wait_for_update_event_locked(AMPR_INITIAL_CHECK_DELAY_SECONDS, false)) {
-    pthread_mutex_unlock(&g_ampr_updater.mutex);
-    return NULL;
-  }
-
   while (!g_ampr_updater.stop_requested) {
     ampr_update_config_t snapshot;
     snapshot_update_config(&snapshot);
-    g_ampr_updater.wake_requested = false;
-
-    if (!snapshot.enabled) {
-      while (!g_ampr_updater.stop_requested &&
-             !g_ampr_updater.wake_requested) {
-        int rc =
-            pthread_cond_wait(&g_ampr_updater.cond, &g_ampr_updater.mutex);
-        if (rc != 0) {
-          log_debug("  [AMPR] disabled wait failed: %s", strerror(rc));
-          pthread_mutex_unlock(&g_ampr_updater.mutex);
-          return NULL;
-        }
-      }
-      continue;
+    time_t now = time(NULL);
+    uint64_t source_hash = sm_patch_source_hash(&snapshot.patches);
+    if (snapshot.enabled != previous_enabled || strcmp(previous_url, snapshot.url) || strcmp(previous_path, snapshot.emulators_path)) {
+      previous_enabled = snapshot.enabled;
+      strlcpy(previous_url, snapshot.url, sizeof(previous_url));
+      strlcpy(previous_path, snapshot.emulators_path, sizeof(previous_path));
+      next_ampr = now + AMPR_INITIAL_CHECK_DELAY_SECONDS;
     }
-
+    if (source_hash != previous_sources || previous_interval != snapshot.patches.interval_hours) {
+      if (source_hash != previous_sources) g_ampr_updater.index_requested = true;
+      previous_sources = source_hash; previous_interval = snapshot.patches.interval_hours;
+      uint32_t delay = sm_patch_sources_delay(&snapshot.patches);
+      next_catalog = now + (delay > AMPR_INITIAL_CHECK_DELAY_SECONDS ? delay : AMPR_INITIAL_CHECK_DELAY_SECONDS);
+    }
     if (runtime_sleep_mode_active()) {
-      while (!g_ampr_updater.stop_requested &&
-             runtime_sleep_mode_active()) {
+      while (!g_ampr_updater.stop_requested && runtime_sleep_mode_active())
+        if (pthread_cond_wait(&g_ampr_updater.cond, &g_ampr_updater.mutex)) goto stopped;
+      time_t resumed = time(NULL);
+      resume_ready = next_ampr = resumed + AMPR_INITIAL_CHECK_DELAY_SECONDS;
+      uint32_t delay = sm_patch_sources_delay(&snapshot.patches);
+      next_catalog = resumed + (delay > AMPR_INITIAL_CHECK_DELAY_SECONDS ? delay : AMPR_INITIAL_CHECK_DELAY_SECONDS);
+      continue;
+    }
+    bool manual = g_ampr_updater.patch_requested;
+    bool catalog_due = (manual && now >= resume_ready) || (snapshot.patches.count && snapshot.patches.interval_hours && now >= next_catalog);
+    bool ampr_due = snapshot.enabled && now >= next_ampr;
+    if (g_ampr_updater.index_requested || catalog_due || ampr_due) {
+      if (ampr_update_busy()) {
         g_ampr_updater.wake_requested = false;
-        int rc =
-            pthread_cond_wait(&g_ampr_updater.cond, &g_ampr_updater.mutex);
-        if (rc != 0) {
-          log_debug("  [AMPR] sleep wait failed: %s", strerror(rc));
-          pthread_mutex_unlock(&g_ampr_updater.mutex);
-          return NULL;
+        if (!wait_for_update_event_locked(manual ? 60u : AMPR_BUSY_RETRY_SECONDS, true)) break;
+        continue;
+      }
+      if (g_ampr_updater.index_requested) {
+        g_ampr_updater.index_requested = false;
+        pthread_mutex_unlock(&g_ampr_updater.mutex);
+        int error = sm_patch_index_warm_sources(&snapshot.patches, catalog_cancelled, &snapshot);
+        pthread_mutex_lock(&g_ampr_updater.mutex);
+        if (error == ECANCELED && !g_ampr_updater.stop_requested) g_ampr_updater.index_requested = true;
+        else if (error) log_debug("  [PATCH-INDEX] existing sources: status=%d", error);
+      } else if (catalog_due) {
+        g_ampr_updater.patch_requested = false;
+        g_ampr_updater.patch_status = (sm_patch_update_status_t){.running = true, .sources_hash = source_hash};
+        pthread_mutex_unlock(&g_ampr_updater.mutex);
+        int error = sm_patch_sources_update(&snapshot.patches, download_catalog, catalog_cancelled, &snapshot);
+        pthread_mutex_lock(&g_ampr_updater.mutex);
+        g_ampr_updater.patch_status.running = false;
+        g_ampr_updater.patch_status.error = error;
+        g_ampr_updater.patch_status.last_check = time(NULL);
+        if (error == ECANCELED && manual && !g_ampr_updater.stop_requested) {
+          g_ampr_updater.patch_requested = true;
+          g_ampr_updater.patch_status.queued = true;
         }
-      }
-      if (g_ampr_updater.stop_requested)
-        break;
-      g_ampr_updater.wake_requested = false;
-      if (!wait_for_update_event_locked(AMPR_INITIAL_CHECK_DELAY_SECONDS,
-                                        true)) {
-        break;
+        next_catalog = time(NULL) + (snapshot.patches.interval_hours ? snapshot.patches.interval_hours * 3600u : 3600u);
+        log_debug("  [PATCH-UPDATE] finished: sources=%zu status=%d", snapshot.patches.count, error);
+      } else {
+        pthread_mutex_unlock(&g_ampr_updater.mutex);
+        ampr_update_result_t result = check_and_update_ampr(&snapshot);
+        if (result == AMPR_UPDATE_REPLACED) {
+          log_debug("  [AMPR] emulator updated: %s/%s", snapshot.emulators_path, AMPR_FILE_NAME);
+          notify_system_l10n(SM_L10N_AMPR_EMULATOR_UPDATED);
+        } else if (result == AMPR_UPDATE_UNCHANGED) log_debug("  [AMPR] emulator is already current");
+        pthread_mutex_lock(&g_ampr_updater.mutex);
+        next_ampr = time(NULL) + AMPR_UPDATE_INTERVAL_SECONDS;
       }
       continue;
     }
-
-    if (ampr_update_busy()) {
-      if (!wait_for_update_event_locked(AMPR_BUSY_RETRY_SECONDS, true))
-        break;
-      continue;
-    }
-
-    pthread_mutex_unlock(&g_ampr_updater.mutex);
-    log_debug("  [AMPR] checking emulator modification time: %s",
-              snapshot.url);
-    ampr_update_result_t result = check_and_update_ampr(&snapshot);
-    if (result == AMPR_UPDATE_REPLACED) {
-      log_debug("  [AMPR] emulator updated: %s/%s", snapshot.emulators_path,
-                AMPR_FILE_NAME);
-      notify_system_l10n(SM_L10N_AMPR_EMULATOR_UPDATED);
-    } else if (result == AMPR_UPDATE_UNCHANGED) {
-      log_debug("  [AMPR] emulator is already current");
-    }
-    pthread_mutex_lock(&g_ampr_updater.mutex);
-
-    if (!g_ampr_updater.stop_requested &&
-        !g_ampr_updater.wake_requested &&
-        !wait_for_update_event_locked(AMPR_UPDATE_INTERVAL_SECONDS, true)) {
-      break;
-    }
+    time_t deadline = snapshot.enabled ? next_ampr : 0;
+    if (snapshot.patches.count && snapshot.patches.interval_hours && (!deadline || next_catalog < deadline)) deadline = next_catalog;
+    if (manual && now < resume_ready && (!deadline || resume_ready < deadline)) deadline = resume_ready;
+    g_ampr_updater.wake_requested = false;
+    if (deadline) {
+      uint32_t seconds = deadline > now ? (uint32_t)(deadline - now) : 1;
+      if (!wait_for_update_event_locked(seconds, true)) break;
+    } else if (pthread_cond_wait(&g_ampr_updater.cond, &g_ampr_updater.mutex)) break;
   }
+stopped:
+  g_ampr_updater.patch_status.running = g_ampr_updater.patch_status.queued = false;
+  g_ampr_updater.patch_requested = false;
+  g_ampr_updater.index_requested = false;
   pthread_mutex_unlock(&g_ampr_updater.mutex);
   return NULL;
 }
@@ -950,10 +1094,19 @@ bool sm_ampr_updater_start(void) {
   g_ampr_updater.wake_requested = true;
   g_ampr_updater.config_generation++;
   g_ampr_updater.active_request_id = -1;
-  int rc = pthread_create(&g_ampr_updater.thread, NULL,
-                          ampr_updater_thread_main, NULL);
+  g_ampr_updater.index_requested = true;
+  pthread_attr_t attr;
+  int rc = pthread_attr_init(&attr);
+  if (rc == 0) {
+    // libhttp checks caller stack headroom; the SDK default is too small for
+    // the shared worker's configuration snapshots and TLS/HTTP calls.
+    rc = pthread_attr_setstacksize(&attr, AMPR_THREAD_STACK_SIZE);
+    if (rc == 0) rc = pthread_create(&g_ampr_updater.thread, &attr, ampr_updater_thread_main, NULL);
+    pthread_attr_destroy(&attr);
+  }
   if (rc != 0) {
     g_ampr_updater.wake_requested = false;
+    log_debug("  [UPDATE] worker creation failed: %s", strerror(rc));
     pthread_mutex_unlock(&g_ampr_updater.mutex);
     errno = rc;
     return false;
@@ -993,17 +1146,23 @@ void sm_ampr_updater_on_sleep_change(bool active) {
     return;
   }
 
-  bool update_enabled = runtime_config().auto_update_ampr_enabled;
-  if (!update_enabled && g_ampr_updater.active_request_id < 0) {
-    pthread_mutex_unlock(&g_ampr_updater.mutex);
-    return;
-  }
-
   if (active) {
     g_ampr_updater.config_generation++;
     abort_active_request_locked();
   }
   pthread_cond_broadcast(&g_ampr_updater.cond);
+  pthread_mutex_unlock(&g_ampr_updater.mutex);
+}
+
+void sm_ampr_updater_on_game_change(void) {
+  pthread_mutex_lock(&g_ampr_updater.mutex);
+  if (g_ampr_updater.started && !g_ampr_updater.stop_requested) {
+    const runtime_config_t config = runtime_config();
+    if (g_ampr_updater.patch_requested || g_ampr_updater.index_requested || config.auto_update_ampr_enabled || config.patch_sources.interval_hours) {
+      g_ampr_updater.wake_requested = true;
+      pthread_cond_broadcast(&g_ampr_updater.cond);
+    }
+  }
   pthread_mutex_unlock(&g_ampr_updater.mutex);
 }
 
@@ -1013,7 +1172,9 @@ void sm_ampr_updater_on_config_reload(const runtime_config_t *old_cfg,
       (old_cfg->auto_update_ampr_enabled ==
            new_cfg->auto_update_ampr_enabled &&
        strcmp(old_cfg->ampr_update_url, new_cfg->ampr_update_url) == 0 &&
-       strcmp(old_cfg->emulators_path, new_cfg->emulators_path) == 0)) {
+       strcmp(old_cfg->emulators_path, new_cfg->emulators_path) == 0 &&
+       old_cfg->patch_sources.interval_hours == new_cfg->patch_sources.interval_hours &&
+       sm_patch_source_hash(&old_cfg->patch_sources) == sm_patch_source_hash(&new_cfg->patch_sources))) {
     return;
   }
 

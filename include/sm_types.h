@@ -1,6 +1,7 @@
 #ifndef SM_TYPES_H
 #define SM_TYPES_H
 
+#include "sm_patch_sources.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -170,6 +171,7 @@ typedef struct runtime_config {
   bool global_fakelib_game_priority;
   bool update_emulators_enabled;
   bool auto_update_ampr_enabled;
+  sm_patch_source_config_t patch_sources;
   bool ps4_force_pro;
   bool ps4_cpu_boost;
   bool ps4_gpu_boost;

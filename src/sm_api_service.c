@@ -3313,7 +3313,7 @@ static void handle_game_patches(struct MHD_Connection *connection,
     if (!selected) error = ENOENT;
     else if (json_object_get_boolean(enabled) && (!selected->compatible || !selected->supported)) error = EINVAL;
     else {
-      error = sm_game_patches_set_enabled(title_id, selected->id, json_object_get_boolean(enabled));
+      error = sm_game_patches_set_enabled(title_id, &list, selected->id, json_object_get_boolean(enabled));
       if (!error) selected->enabled = json_object_get_boolean(enabled);
     }
   }

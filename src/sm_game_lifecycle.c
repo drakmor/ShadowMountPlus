@@ -12,6 +12,7 @@
 #include "sm_fakelib.h"
 #include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
+#include "sm_ampr_updater.h"
 #include "sm_game_patches.h"
 #include "sm_gameinfo.h"
 #include "sm_limits.h"
@@ -110,6 +111,7 @@ static void publish_background_game_state(bool was_active) {
   pid_t pid = atomic_load(&g_active_game_pid);
   bool pending = atomic_load(&g_game_exit_handoff_pending);
   bool active = published_game_active(pid, pending);
+  if (was_active != active) sm_ampr_updater_on_game_change();
   uint64_t state = active ? GAME_BACKGROUND_BLOCKED : GAME_BACKGROUND_IDLE;
   const char *title = g_active_game_title_id;
   if (pid > 0 && is_supported_game_title_id(title)) {
@@ -1363,18 +1365,18 @@ bool sm_game_lifecycle_has_active_game(void) {
          atomic_load(&g_game_exit_handoff_pending);
 }
 
-bool sm_game_lifecycle_active_title(char title_id[MAX_TITLE_ID]) {
+pid_t sm_game_lifecycle_active_process(char title_id[MAX_TITLE_ID]) {
   title_id[0] = '\0';
   pid_t pid = atomic_load(&g_active_game_pid);
   if (pid > 0 && resolve_game_title_id(pid, title_id, NULL) &&
-      is_supported_game_title_id(title_id)) return true;
+      is_supported_game_title_id(title_id)) return pid;
   title_id[0] = '\0';
   int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PROC, 0};
   size_t size = 0;
-  if (sysctl(mib, 4, NULL, &size, NULL, 0) || !size || size > 4u * 1024u * 1024u) return false;
+  if (sysctl(mib, 4, NULL, &size, NULL, 0) || !size || size > 4u * 1024u * 1024u) return 0;
   uint8_t *data = malloc(size);
-  if (!data) return false;
-  bool found = false;
+  if (!data) return 0;
+  pid_t found = 0;
   if (!sysctl(mib, 4, data, &size, NULL, 0)) {
     for (size_t offset = 0; offset + sizeof(int) <= size;) {
       int record_size;
@@ -1384,7 +1386,7 @@ bool sm_game_lifecycle_active_title(char title_id[MAX_TITLE_ID]) {
       const struct kinfo_proc *process = (const struct kinfo_proc *)(data + offset);
       if (process->ki_pid > 0 && !strncmp(process->ki_tdname, "eboot", 5) &&
           resolve_game_title_id(process->ki_pid, title_id, NULL) && is_supported_game_title_id(title_id)) {
-        found = true;
+        found = process->ki_pid;
         break;
       }
       offset += (size_t)record_size;
@@ -1393,6 +1395,10 @@ bool sm_game_lifecycle_active_title(char title_id[MAX_TITLE_ID]) {
   free(data);
   if (!found) title_id[0] = '\0';
   return found;
+}
+
+bool sm_game_lifecycle_active_title(char title_id[MAX_TITLE_ID]) {
+  return sm_game_lifecycle_active_process(title_id) > 0;
 }
 
 bool sm_game_lifecycle_background_title(char title_id[MAX_TITLE_ID]) {

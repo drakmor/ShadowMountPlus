@@ -8,12 +8,13 @@ BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 HOMEBREW_ROOT := $(PS5_PAYLOAD_SDK)/target/user/homebrew
 JSON_C_PREFIX := $(CURDIR)/.deps/json-c
 JSON_C_LIB := $(JSON_C_PREFIX)/lib/libjson-c.a
-JSON_C_OBJS := src/sm_api_service.o src/sm_appdb.o src/sm_gameinfo.o src/sm_pkg.o src/sm_config_file.o
+JSON_C_OBJS := src/sm_api_service.o src/sm_appdb.o src/sm_gameinfo.o src/sm_pkg.o src/sm_config_file.o src/sm_cheat_formats.o
 HOMEBREW_CFLAGS := -I$(JSON_C_PREFIX)/include -I$(HOMEBREW_ROOT)/include
 MHD_LIB := $(HOMEBREW_ROOT)/lib/libmicrohttpd.a
 PNG_LIB := $(HOMEBREW_ROOT)/lib/libpng16.a
 JPEG_LIB := $(HOMEBREW_ROOT)/lib/libturbojpeg.a
 ZLIB_LIB := $(HOMEBREW_ROOT)/lib/libz.a
+CRYPTO_LIB := $(HOMEBREW_ROOT)/lib/libcrypto.a
 EXPAT_LIB := $(HOMEBREW_ROOT)/lib/libexpat.a
 SMB_LIB := $(HOMEBREW_ROOT)/lib/libsmb2.a
 CFLAGS := -O3 -flto=thin -DNDEBUG -ffunction-sections -fdata-sections -Wall -Wextra -Wstrict-prototypes -Wmissing-prototypes -Werror=strict-prototypes -Werror=missing-prototypes -D_BSD_SOURCE -std=gnu11 -Iinclude -Isrc
@@ -25,7 +26,7 @@ CFLAGS += -I$(JSON_C_PREFIX)/include
 LDFLAGS := -flto=thin -Wl,--gc-sections
 
 # Libraries
-LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lSceNet -lSceSsl -lSceHttp -lSceIpmi -lsqlite3 $(JSON_C_LIB) $(MHD_LIB) $(PNG_LIB) $(JPEG_LIB) $(ZLIB_LIB) $(SMB_LIB) $(EXPAT_LIB) -lpthread -lm
+LIBS := -lSceNotification -lSceSystemService -lSceUserService -lSceAppInstUtil -lSceNet -lSceSsl -lSceHttp -lSceIpmi -lsqlite3 $(JSON_C_LIB) $(MHD_LIB) $(PNG_LIB) $(JPEG_LIB) $(ZLIB_LIB) $(SMB_LIB) $(EXPAT_LIB) $(CRYPTO_LIB) -lpthread -lm
 PS5_SCE_STUBS_DIR ?= $(PS5_PAYLOAD_SDK)/src/sce_stubs
 KERNEL_SYS_STUB_SO := src/libkernel_sys_ext.so
 KERNEL_SYS_STUB_SRCS := $(PS5_SCE_STUBS_DIR)/libkernel_sys.c src/libkernel_sys_ext.c
@@ -35,7 +36,7 @@ ASSET_SRCS += src/shell_icon_param_asset.c
 SRCS := src/main.c $(wildcard src/sm_*.c) $(ASSET_SRCS)
 ASM_SRCS := src/sm_shellcore_bridge.S src/sm_ps4_clock.S src/sm_ps4_pro.S src/sm_ps4_video_bridge.S src/sm_ps4_video_loader.S
 OBJS := $(SRCS:.c=.o) $(ASM_SRCS:.S=.o)
-HEADERS := $(wildcard include/*.h)
+HEADERS := $(wildcard include/*.h src/*.h)
 L10N_CATALOGS := $(wildcard include/lang/*.inc)
 
 # Targets
@@ -77,7 +78,7 @@ src/shell_icon_param_asset.c: assets/shell_icon_param.json
 
 src/sm_api_service.o src/sm_icon_thumb.o src/sm_gameinfo.o src/sm_pkg.o: CFLAGS += $(HOMEBREW_CFLAGS)
 src/sm_smb.o src/sm_vfs.o: CFLAGS += $(HOMEBREW_CFLAGS)
-src/sm_patch_xml.o: CFLAGS += $(HOMEBREW_CFLAGS)
+src/sm_patch_xml.o src/sm_cheat_formats.o src/sm_patch_sources.o: CFLAGS += $(HOMEBREW_CFLAGS)
 src/main.o src/sm_image_index.o: CFLAGS += -DSHADOWMOUNT_BUILD_TIME=\"$(BUILD_TIME)\"
 src/main.o src/sm_image_index.o: FORCE
 
@@ -99,3 +100,5 @@ clean:
 
 src/sm_ps4_profiles.o: src/sm_ps4_profiles.inc
 src/sm_ps4_memory.o: src/sm_ps4_memory_profiles.inc
+
+src/sm_patch_xml.o src/sm_cheat_formats.o: src/sm_patch_internal.h

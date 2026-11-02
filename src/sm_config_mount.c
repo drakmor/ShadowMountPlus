@@ -270,6 +270,13 @@ bool sm_config_debug_enabled(void) {
   return enabled;
 }
 
+void sm_config_patch_sources_snapshot(sm_patch_source_config_t *sources) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  *sources = g_runtime_state.cfg.patch_sources;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+}
+
 bool sm_config_quiet_mode(void) {
   ensure_runtime_config_ready();
   pthread_mutex_lock(&g_runtime_state_mutex);
@@ -971,7 +978,7 @@ static bool read_documents(sm_ini_t *main, sm_ini_t *profiles) {
 static bool flatten_documents(const sm_ini_t *main, const sm_ini_t *profiles, sm_ini_t *flat) {
   for (size_t i = 0; i < main->count; ++i) {
     const sm_ini_line_t *line = &main->lines[i];
-    if (!line->key || !strcasecmp(line->section, "config") || !strcasecmp(line->section, "ps4")) continue;
+    if (!line->key || !strcasecmp(line->section, "config") || !strcasecmp(line->section, "ps4") || !strcasecmp(line->section, "patches")) continue;
     if (!strncasecmp(line->section, "smb:", 4)) {
       if (strcasecmp(line->key, "path") && strcasecmp(line->key, "username") &&
           strcasecmp(line->key, "password") && strcasecmp(line->key, "active") &&
@@ -1069,12 +1076,46 @@ static bool read_smb_connections(const sm_ini_t *doc, sm_smb_connection_t *items
   return true;
 }
 
+static bool read_patch_sources(const sm_ini_t *doc, sm_patch_source_config_t *config) {
+  memset(config, 0, sizeof(*config));
+  const char *period = sm_ini_get(doc, "patches", "update_interval_hours");
+  if (period && (!parse_u32_ini(period, &config->interval_hours) || config->interval_hours > 8760)) {
+    log_debug("  [CFG] invalid [patches] update_interval_hours (0..8760)"); errno = EINVAL; return false;
+  }
+  bool custom = false;
+  for (size_t i = 0; i < doc->count; ++i) {
+    const sm_ini_line_t *line = &doc->lines[i];
+    if (!line->key || strcasecmp(line->section, "patches")) continue;
+    if (strcasecmp(line->key, "source")) {
+      if (strcasecmp(line->key, "update_interval_hours")) log_debug("  [CFG] unknown [patches] %s", line->key);
+      continue;
+    }
+    custom = true;
+    if (!line->value || !*line->value) continue; // Explicit empty list.
+    if (config->count == SM_PATCH_SOURCE_MAX) { errno = EFBIG; return false; }
+    const char *value = line->value, *separator = strchr(value, '|');
+    sm_patch_source_t *source = &config->sources[config->count];
+    if (!separator || (separator - value != 6 && separator - value != 7)) { errno = EINVAL; return false; }
+    source->cheats = separator - value == 6 && !strncmp(value, "cheats", 6);
+    if ((!source->cheats && (separator - value != 7 || strncmp(value, "patches", 7))) ||
+        strlcpy(source->url, separator + 1, sizeof(source->url)) >= sizeof(source->url) || !sm_patch_source_valid(source)) {
+      log_debug("  [CFG] invalid [patches] source at line %zu", i + 1); errno = EINVAL; return false;
+    }
+    for (size_t j = 0; j < config->count; ++j)
+      if (source->cheats == config->sources[j].cheats && !strcmp(source->url, config->sources[j].url)) { errno = EEXIST; return false; }
+    ++config->count;
+  }
+  if (!custom) { config->count = SM_PATCH_SOURCE_PRESETS; memcpy(config->sources, sm_patch_source_presets, sizeof(sm_patch_source_presets)); }
+  return true;
+}
+
 static config_load_status_t parse_runtime_config_state(runtime_config_state_t *state,
     const sm_ini_t *main, const sm_ini_t *profiles, bool report_loaded) {
   init_runtime_config_defaults(state);
 
   sm_ini_t flat = {0};
   if (!read_ps4_settings(main, profiles, &state->cfg) ||
+      !read_patch_sources(main, &state->cfg.patch_sources) ||
       !flatten_documents(main, profiles, &flat) ||
       !read_smb_connections(main, state->smb, &state->smb_count)) {
     sm_ini_free(&flat);
@@ -1838,6 +1879,28 @@ bool sm_config_set_title_global_fakelib_excluded(const char *title_id,
 bool sm_config_set_title_fakelib_enabled(const char *title_id, bool enabled) {
   return sm_config_set_title_fakelib_mode(
       title_id, enabled ? SM_FAKELIB_FULL : SM_FAKELIB_DISABLED);
+}
+
+bool sm_config_write_patch_sources(const sm_patch_source_config_t *config) {
+  if (!config || config->count > SM_PATCH_SOURCE_MAX || config->interval_hours > 8760) { errno = EINVAL; return false; }
+  for (size_t i = 0; i < config->count; ++i) if (!sm_patch_source_valid(&config->sources[i])) { errno = EINVAL; return false; }
+  pthread_mutex_lock(&g_config_file_mutex);
+  sm_ini_t main = {0}, profiles = {0};
+  char period[16]; snprintf(period, sizeof(period), "%u", config->interval_hours);
+  bool ok = read_documents(&main, &profiles) &&
+      sm_ini_set(&main, "patches", "update_interval_hours", period) && sm_ini_set(&main, "patches", "source", NULL);
+  if (ok && !config->count) ok = sm_ini_append(&main, "patches", "source", "");
+  for (size_t i = 0; ok && i < config->count; ++i) {
+    char value[SM_PATCH_SOURCE_URL_MAX + 16];
+    snprintf(value, sizeof(value), "%s|%s", config->sources[i].cheats ? "cheats" : "patches", config->sources[i].url);
+    ok = sm_ini_append(&main, "patches", "source", value);
+  }
+  if (ok) ok = save_document(&main, &profiles, CONFIG_SAVE_MAIN);
+  int error = errno;
+  sm_ini_free(&main); sm_ini_free(&profiles);
+  pthread_mutex_unlock(&g_config_file_mutex);
+  errno = error;
+  return ok;
 }
 
 bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
