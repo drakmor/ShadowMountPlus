@@ -5,12 +5,13 @@
 
 #include "sm_ampr_updater.h"
 #include "sm_config_mount.h"
+#include "sm_filesystem.h"
 #include "sm_game_lifecycle.h"
 #include "sm_log.h"
+#include "sm_paths.h"
 #include "sm_runtime.h"
 #include "sm_shellcore_service.h"
 
-#define AMPR_FILE_NAME "libSceAmpr.sprx"
 #define AMPR_TEMP_FILE_NAME ".libSceAmpr.sprx.download"
 #define AMPR_INITIAL_CHECK_DELAY_SECONDS 30u
 #define AMPR_UPDATE_INTERVAL_SECONDS (4u * 60u * 60u)
@@ -68,6 +69,7 @@ typedef struct {
   bool enabled;
   uint64_t generation;
   char url[MAX_PATH];
+  char ng_url[MAX_PATH];
   char emulators_path[MAX_PATH];
 } ampr_update_config_t;
 
@@ -110,6 +112,8 @@ static void snapshot_update_config(ampr_update_config_t *snapshot) {
   snapshot->enabled = cfg.auto_update_ampr_enabled;
   snapshot->generation = g_ampr_updater.config_generation;
   (void)strlcpy(snapshot->url, cfg.ampr_update_url, sizeof(snapshot->url));
+  (void)strlcpy(snapshot->ng_url, cfg.ampr_ng_update_url,
+                sizeof(snapshot->ng_url));
   (void)strlcpy(snapshot->emulators_path, cfg.emulators_path,
                 sizeof(snapshot->emulators_path));
 }
@@ -121,6 +125,7 @@ update_snapshot_is_current_locked(const ampr_update_config_t *snapshot) {
          snapshot->generation == g_ampr_updater.config_generation &&
          cfg.auto_update_ampr_enabled &&
          strcmp(snapshot->url, cfg.ampr_update_url) == 0 &&
+         strcmp(snapshot->ng_url, cfg.ampr_ng_update_url) == 0 &&
          strcmp(snapshot->emulators_path, cfg.emulators_path) == 0;
 }
 
@@ -572,11 +577,11 @@ static bool configure_http_template(int template_id) {
 }
 
 static bool create_and_send_request(
-    int connection_id, const char *method, const ampr_update_config_t *snapshot,
-    int *request_id_out, int *status_code_out,
-    ampr_update_result_t *result_out) {
-  int request_id = sceHttpCreateRequestWithURL2(connection_id, method,
-                                                snapshot->url, 0);
+    int connection_id, const char *method, const char *url,
+    const ampr_update_config_t *snapshot, int *request_id_out,
+    int *status_code_out, ampr_update_result_t *result_out) {
+  int request_id =
+      sceHttpCreateRequestWithURL2(connection_id, method, url, 0);
   if (request_id < 0) {
     log_sce_failure("sceHttpCreateRequestWithURL2", request_id);
     return false;
@@ -608,8 +613,11 @@ static bool create_and_send_request(
   return true;
 }
 
+// Updates dir/libSceAmpr.sprx from url, downloading it when missing.
+// ng_runtime rejects downloads that are not ampr-emu-ng builds.
 static ampr_update_result_t
-check_and_update_ampr(const ampr_update_config_t *snapshot) {
+check_and_update_ampr(const ampr_update_config_t *snapshot, const char *url,
+                      const char *dir, bool ng_runtime) {
   int net_pool_id = -1;
   int ssl_id = -1;
   int http_id = -1;
@@ -627,14 +635,13 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
   char destination[MAX_PATH];
   char temp_path[MAX_PATH];
 
-  int written = snprintf(destination, sizeof(destination), "%s/%s",
-                         snapshot->emulators_path, AMPR_FILE_NAME);
-  int temp_written = snprintf(temp_path, sizeof(temp_path), "%s/%s",
-                              snapshot->emulators_path, AMPR_TEMP_FILE_NAME);
+  int written = snprintf(destination, sizeof(destination), "%s/%s", dir,
+                         AMPR_EMULATOR_FILE_NAME);
+  int temp_written = snprintf(temp_path, sizeof(temp_path), "%s/%s", dir,
+                              AMPR_TEMP_FILE_NAME);
   if (written <= 0 || (size_t)written >= sizeof(destination) ||
       temp_written <= 0 || (size_t)temp_written >= sizeof(temp_path)) {
-    log_debug("  [AMPR] emulator destination path is too long: %s",
-              snapshot->emulators_path);
+    log_debug("  [AMPR] emulator destination path is too long: %s", dir);
     return AMPR_UPDATE_FAILED;
   }
 
@@ -658,7 +665,7 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
     log_sce_failure("sceSslInit", ssl_id);
     goto cleanup;
   }
-  if (strncasecmp(snapshot->url, "https://", 8u) == 0) {
+  if (strncasecmp(url, "https://", 8u) == 0) {
     if (!load_ampr_ca_certificates(ssl_id))
       goto cleanup;
     ca_certificates_loaded = true;
@@ -677,7 +684,7 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
   }
   if (!configure_http_template(template_id))
     goto cleanup;
-  connection_id = sceHttpCreateConnectionWithURL(template_id, snapshot->url, 1);
+  connection_id = sceHttpCreateConnectionWithURL(template_id, url, 1);
   if (connection_id < 0) {
     log_sce_failure("sceHttpCreateConnectionWithURL", connection_id);
     goto cleanup;
@@ -685,13 +692,13 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
 
   int status_code = 0;
   if (!destination_missing) {
-    if (!create_and_send_request(connection_id, "HEAD", snapshot, &request_id,
-                                 &status_code, &result)) {
+    if (!create_and_send_request(connection_id, "HEAD", url, snapshot,
+                                 &request_id, &status_code, &result)) {
       goto cleanup;
     }
     if (status_code != 200) {
       log_debug("  [AMPR] metadata check returned HTTP %d: %s", status_code,
-                snapshot->url);
+                url);
       goto cleanup;
     }
     if (!try_read_remote_modified_time(request_id, &remote_modified_time)) {
@@ -714,20 +721,20 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
     result = AMPR_UPDATE_CANCELLED;
     goto cleanup;
   }
-  if (!ensure_emulators_directory(snapshot->emulators_path)) {
-    log_debug("  [AMPR] cannot use emulator folder %s: %s",
-              snapshot->emulators_path, strerror(errno));
+  if (!ensure_emulators_directory(dir)) {
+    log_debug("  [AMPR] cannot use emulator folder %s: %s", dir,
+              strerror(errno));
     goto cleanup;
   }
 
   status_code = 0;
-  if (!create_and_send_request(connection_id, "GET", snapshot, &request_id,
-                               &status_code, &result)) {
+  if (!create_and_send_request(connection_id, "GET", url, snapshot,
+                               &request_id, &status_code, &result)) {
     goto cleanup;
   }
   if (status_code != 200) {
     log_debug("  [AMPR] update download returned HTTP %d: %s", status_code,
-              snapshot->url);
+              url);
     goto cleanup;
   }
 
@@ -808,6 +815,10 @@ check_and_update_ampr(const ampr_update_config_t *snapshot) {
     log_debug("  [AMPR] downloaded file has an invalid SELF/ELF header");
     goto cleanup;
   }
+  if (ng_runtime && sm_file_is_ampr_ng(temp_path) != 1) {
+    log_debug("  [AMPR] downloaded file is not an ampr-emu-ng build: %s", url);
+    goto cleanup;
+  }
 
   bool unchanged = false;
   if (!regular_files_equal(destination, temp_path, &unchanged)) {
@@ -857,6 +868,19 @@ cleanup:
   if (temp_exists)
     (void)unlink(temp_path);
   return result;
+}
+
+static bool run_ampr_update(const ampr_update_config_t *snapshot,
+                            const char *url, const char *dir,
+                            bool ng_runtime) {
+  log_debug("  [AMPR] checking emulator modification time: %s", url);
+  ampr_update_result_t result =
+      check_and_update_ampr(snapshot, url, dir, ng_runtime);
+  if (result == AMPR_UPDATE_REPLACED)
+    log_debug("  [AMPR] emulator updated: %s/%s", dir, AMPR_EMULATOR_FILE_NAME);
+  else if (result == AMPR_UPDATE_UNCHANGED)
+    log_debug("  [AMPR] emulator is already current: %s", dir);
+  return result == AMPR_UPDATE_REPLACED;
 }
 
 static void *ampr_updater_thread_main(void *unused) {
@@ -917,16 +941,25 @@ static void *ampr_updater_thread_main(void *unused) {
     }
 
     pthread_mutex_unlock(&g_ampr_updater.mutex);
-    log_debug("  [AMPR] checking emulator modification time: %s",
-              snapshot.url);
-    ampr_update_result_t result = check_and_update_ampr(&snapshot);
-    if (result == AMPR_UPDATE_REPLACED) {
-      log_debug("  [AMPR] emulator updated: %s/%s", snapshot.emulators_path,
-                AMPR_FILE_NAME);
+    bool replaced =
+        run_ampr_update(&snapshot, snapshot.url, snapshot.emulators_path,
+                        false);
+    // ampr-emu-ng is only upgraded once the user has installed it.
+    char ng_dir[MAX_PATH];
+    char ng_file[MAX_PATH];
+    struct stat ng_st;
+    int ng_written = snprintf(ng_dir, sizeof(ng_dir), "%s/%s",
+                              snapshot.emulators_path, AMPR_NG_EMULATOR_DIR);
+    int ng_file_written = snprintf(ng_file, sizeof(ng_file), "%s/%s", ng_dir,
+                                   AMPR_EMULATOR_FILE_NAME);
+    if (ng_written > 0 && (size_t)ng_written < sizeof(ng_dir) &&
+        ng_file_written > 0 && (size_t)ng_file_written < sizeof(ng_file) &&
+        lstat(ng_file, &ng_st) == 0 && S_ISREG(ng_st.st_mode) &&
+        update_snapshot_is_current(&snapshot) &&
+        run_ampr_update(&snapshot, snapshot.ng_url, ng_dir, true))
+      replaced = true;
+    if (replaced)
       notify_system_l10n(SM_L10N_AMPR_EMULATOR_UPDATED);
-    } else if (result == AMPR_UPDATE_UNCHANGED) {
-      log_debug("  [AMPR] emulator is already current");
-    }
     pthread_mutex_lock(&g_ampr_updater.mutex);
 
     if (!g_ampr_updater.stop_requested &&
@@ -1013,6 +1046,8 @@ void sm_ampr_updater_on_config_reload(const runtime_config_t *old_cfg,
       (old_cfg->auto_update_ampr_enabled ==
            new_cfg->auto_update_ampr_enabled &&
        strcmp(old_cfg->ampr_update_url, new_cfg->ampr_update_url) == 0 &&
+       strcmp(old_cfg->ampr_ng_update_url, new_cfg->ampr_ng_update_url) ==
+           0 &&
        strcmp(old_cfg->emulators_path, new_cfg->emulators_path) == 0)) {
     return;
   }
