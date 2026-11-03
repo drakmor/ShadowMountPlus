@@ -956,7 +956,8 @@ static int directory_entry_exists(const char *directory, const char *name) {
 
 static const char *const fakelib_emulator_names[] = {
     "libSceAppContent.sprx", "libSceGameUpdate.sprx",
-    "libSceNpEntitlementAccess.sprx", "libSceAmpr.sprx", "libScePlayGo.sprx"};
+    "libSceNpEntitlementAccess.sprx", AMPR_EMULATOR_FILE_NAME,
+    "libScePlayGo.sprx"};
 
 static bool fakelib_emulator_allowed(const char *name, uint32_t flags) {
   size_t count = flags & FAKELIB_CACHE_PACKAGE ? 3u : 5u;
@@ -993,14 +994,106 @@ static bool compute_fakelib_signature(const char *source_path, uint32_t flags,
   return true;
 }
 
-static bool compute_emulator_files_signature(
-    const char *emulators_path, const char *source_path,
-    const char *higher_priority_path,
-    uint32_t flags, fakelib_cache_signature_t *signature,
-    size_t *matching_count_out) {
-  memset(signature, 0, sizeof(*signature));
-  *matching_count_out = 0;
+// Stats emulators_path<subdir>/name. Returns 1 for a regular file, 0 when
+// missing or not regular, -1 on errors.
+static int stat_emulator_file(const char *emulators_path, const char *subdir,
+                              const char *name, char path[MAX_PATH],
+                              struct stat *st) {
+  int written =
+      snprintf(path, MAX_PATH, "%s%s/%s", emulators_path, subdir, name);
+  if (written <= 0 || (size_t)written >= MAX_PATH) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  if (stat(path, st) != 0)
+    return errno == ENOENT || errno == ENOTDIR ? 0 : -1;
+  return S_ISREG(st->st_mode) ? 1 : 0;
+}
 
+// Resolves the emulators_path file that replaces source_path/name.
+// libSceAmpr.sprx is replaced only by a build of the same runtime:
+// ampr-emu-ng from AMPR_NG_EMULATOR_DIR, upstream ampr_emu from the top level.
+// ponytail: both AMPR files are read on every fingerprint while AMPR
+// emulators are installed (~0.5-0.7 MB each); memoize by stat if that shows
+// up in launch latency.
+// Returns 1 with emulator_file/emulator_st set, 0 to skip, -1 on errors.
+static int resolve_emulator_replacement(const char *emulators_path,
+                                        const char *name,
+                                        const char *source_path,
+                                        const char *higher_priority_path,
+                                        uint32_t flags,
+                                        char emulator_file[MAX_PATH],
+                                        struct stat *emulator_st) {
+  if (strcmp(name, "libkernel.sprx") == 0 ||
+      ((flags & FAKELIB_CACHE_EMULATORS_ONLY) &&
+       !fakelib_emulator_allowed(name, flags)))
+    return 0;
+
+  char source_file[MAX_PATH];
+  int source_len =
+      snprintf(source_file, sizeof(source_file), "%s/%s", source_path, name);
+  if (source_len <= 0 || (size_t)source_len >= sizeof(source_file)) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  struct stat source_st;
+  if (stat(source_file, &source_st) != 0)
+    return errno == ENOENT || errno == ENOTDIR ? 0 : -1;
+  if (!S_ISREG(source_st.st_mode))
+    return 0;
+  int shadowed = directory_entry_exists(higher_priority_path, name);
+  if (shadowed != 0)
+    return shadowed < 0 ? -1 : 0;
+
+  int found = stat_emulator_file(emulators_path, "", name, emulator_file,
+                                 emulator_st);
+  if (found >= 0 && strcasecmp(name, AMPR_EMULATOR_FILE_NAME) == 0) {
+    char ng_file[MAX_PATH];
+    struct stat ng_st;
+    int ng_found = stat_emulator_file(emulators_path, "/" AMPR_NG_EMULATOR_DIR,
+                                      name, ng_file, &ng_st);
+    if (ng_found < 0)
+      return -1;
+    // Only read files when some AMPR emulator could apply.
+    if (!found && !ng_found)
+      return 0;
+    int source_ng = sm_file_is_ampr_ng(source_file);
+    if (source_ng < 0)
+      return -1;
+    if (source_ng) {
+      found = ng_found;
+      if (found) {
+        (void)strlcpy(emulator_file, ng_file, MAX_PATH);
+        *emulator_st = ng_st;
+      }
+    }
+    if (found) {
+      int emulator_ng = sm_file_is_ampr_ng(emulator_file);
+      if (emulator_ng < 0)
+        return -1;
+      if (emulator_ng != source_ng)
+        found = 0;
+    }
+  }
+  if (found <= 0)
+    return found;
+  if (emulator_st->st_dev == source_st.st_dev &&
+      emulator_st->st_ino == source_st.st_ino)
+    return 0;
+  return 1;
+}
+
+typedef bool (*emulator_replacement_fn)(void *ctx, const char *name,
+                                        const char *emulator_file,
+                                        const struct stat *emulator_st);
+
+// Calls fn for every emulators_path file that replaces a source_path file.
+static bool for_each_emulator_replacement(const char *emulators_path,
+                                          const char *source_path,
+                                          const char *higher_priority_path,
+                                          uint32_t flags,
+                                          emulator_replacement_fn fn,
+                                          void *ctx) {
   DIR *d = opendir(emulators_path);
   if (!d)
     return errno == ENOENT;
@@ -1014,66 +1107,63 @@ static bool compute_emulator_files_signature(
         ok = false;
       break;
     }
-    if (entry->d_name[0] == '.' &&
-        (entry->d_name[1] == '\0' ||
-         (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
+    // libSceAmpr.sprx is resolved once below: its source may live in
+    // AMPR_NG_EMULATOR_DIR even when emulators_path has no top-level copy.
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 ||
+        strcasecmp(entry->d_name, AMPR_EMULATOR_FILE_NAME) == 0)
       continue;
-    }
-
-    if (strcmp(entry->d_name, "libkernel.sprx") == 0 ||
-        ((flags & FAKELIB_CACHE_EMULATORS_ONLY) &&
-         !fakelib_emulator_allowed(entry->d_name, flags)))
-      continue;
-
     char emulator_file[MAX_PATH];
-    char source_file[MAX_PATH];
-    int emulator_len = snprintf(emulator_file, sizeof(emulator_file), "%s/%s",
-                                emulators_path, entry->d_name);
-    int source_len = snprintf(source_file, sizeof(source_file), "%s/%s",
-                              source_path, entry->d_name);
-    if (emulator_len <= 0 ||
-        (size_t)emulator_len >= sizeof(emulator_file) || source_len <= 0 ||
-        (size_t)source_len >= sizeof(source_file)) {
-      ok = false;
-      break;
-    }
-
     struct stat emulator_st;
-    struct stat source_st;
-    if (stat(emulator_file, &emulator_st) != 0) {
-      if (errno == ENOENT || errno == ENOTDIR)
-        continue;
+    int found = resolve_emulator_replacement(
+        emulators_path, entry->d_name, source_path, higher_priority_path,
+        flags, emulator_file, &emulator_st);
+    if (found < 0 ||
+        (found > 0 && !fn(ctx, entry->d_name, emulator_file, &emulator_st))) {
       ok = false;
       break;
     }
-    if (!S_ISREG(emulator_st.st_mode)) {
-      continue;
-    }
-    if (stat(source_file, &source_st) != 0) {
-      if (errno == ENOENT || errno == ENOTDIR)
-        continue;
-      ok = false;
-      break;
-    }
-    if (!S_ISREG(source_st.st_mode))
-      continue;
-    int shadowed = directory_entry_exists(higher_priority_path, entry->d_name);
-    if (shadowed < 0) {
-      ok = false;
-      break;
-    }
-    if (shadowed > 0)
-      continue;
-    if (emulator_st.st_dev == source_st.st_dev &&
-        emulator_st.st_ino == source_st.st_ino) {
-      continue;
-    }
-    cache_signature_add(signature, entry->d_name, &emulator_st);
-    (*matching_count_out)++;
   }
   if (closedir(d) != 0)
     ok = false;
-  return ok;
+  if (!ok)
+    return false;
+
+  char emulator_file[MAX_PATH];
+  struct stat emulator_st;
+  int found = resolve_emulator_replacement(
+      emulators_path, AMPR_EMULATOR_FILE_NAME, source_path,
+      higher_priority_path, flags, emulator_file, &emulator_st);
+  return found == 0 ||
+         (found > 0 &&
+          fn(ctx, AMPR_EMULATOR_FILE_NAME, emulator_file, &emulator_st));
+}
+
+typedef struct {
+  fakelib_cache_signature_t *signature;
+  size_t *count;
+} emulator_signature_ctx_t;
+
+static bool add_emulator_signature(void *ctx, const char *name,
+                                   const char *emulator_file,
+                                   const struct stat *emulator_st) {
+  (void)emulator_file;
+  emulator_signature_ctx_t *sig = ctx;
+  cache_signature_add(sig->signature, name, emulator_st);
+  (*sig->count)++;
+  return true;
+}
+
+static bool compute_emulator_files_signature(
+    const char *emulators_path, const char *source_path,
+    const char *higher_priority_path,
+    uint32_t flags, fakelib_cache_signature_t *signature,
+    size_t *matching_count_out) {
+  memset(signature, 0, sizeof(*signature));
+  *matching_count_out = 0;
+  emulator_signature_ctx_t ctx = {signature, matching_count_out};
+  return for_each_emulator_replacement(emulators_path, source_path,
+                                       higher_priority_path, flags,
+                                       add_emulator_signature, &ctx);
 }
 
 static bool cache_signatures_equal(const fakelib_cache_signature_t *a,
@@ -1291,6 +1381,26 @@ static bool cache_manifest_is_current(
                                 &context->emulator_files_signature);
 }
 
+typedef struct {
+  const char *cache_fakelib_path;
+  size_t *count;
+} emulator_copy_ctx_t;
+
+static bool copy_emulator_file(void *ctx, const char *name,
+                               const char *emulator_file,
+                               const struct stat *emulator_st) {
+  (void)emulator_st;
+  emulator_copy_ctx_t *copy = ctx;
+  char cache_file[MAX_PATH];
+  int cache_len = snprintf(cache_file, sizeof(cache_file), "%s/%s",
+                           copy->cache_fakelib_path, name);
+  if (cache_len <= 0 || (size_t)cache_len >= sizeof(cache_file) ||
+      copy_file_with_mode(emulator_file, cache_file, 0777) != 0)
+    return false;
+  (*copy->count)++;
+  return true;
+}
+
 static bool copy_emulator_files_to_cache(const char *emulators_path,
                                          const char *source_path,
                                          const char *higher_priority_path,
@@ -1298,85 +1408,10 @@ static bool copy_emulator_files_to_cache(const char *emulators_path,
                                          uint32_t flags,
                                          size_t *copied_count_out) {
   *copied_count_out = 0;
-  DIR *d = opendir(emulators_path);
-  if (!d)
-    return errno == ENOENT;
-
-  bool ok = true;
-  for (;;) {
-    errno = 0;
-    struct dirent *entry = readdir(d);
-    if (!entry) {
-      if (errno != 0)
-        ok = false;
-      break;
-    }
-    if (entry->d_name[0] == '.' &&
-        (entry->d_name[1] == '\0' ||
-         (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
-      continue;
-    }
-
-    char emulator_file[MAX_PATH];
-    char source_file[MAX_PATH];
-    char cache_file[MAX_PATH];
-    if (strcmp(entry->d_name, "libkernel.sprx") == 0 ||
-        ((flags & FAKELIB_CACHE_EMULATORS_ONLY) &&
-         !fakelib_emulator_allowed(entry->d_name, flags)))
-      continue;
-    int emulator_len = snprintf(emulator_file, sizeof(emulator_file), "%s/%s",
-                                emulators_path, entry->d_name);
-    int source_len = snprintf(source_file, sizeof(source_file), "%s/%s",
-                              source_path, entry->d_name);
-    int cache_len = snprintf(cache_file, sizeof(cache_file), "%s/%s",
-                             cache_fakelib_path, entry->d_name);
-    if (emulator_len <= 0 ||
-        (size_t)emulator_len >= sizeof(emulator_file) || source_len <= 0 ||
-        (size_t)source_len >= sizeof(source_file) || cache_len <= 0 ||
-        (size_t)cache_len >= sizeof(cache_file)) {
-      ok = false;
-      break;
-    }
-
-    struct stat emulator_st;
-    struct stat source_st;
-    if (stat(emulator_file, &emulator_st) != 0) {
-      if (errno == ENOENT || errno == ENOTDIR)
-        continue;
-      ok = false;
-      break;
-    }
-    if (!S_ISREG(emulator_st.st_mode)) {
-      continue;
-    }
-    if (stat(source_file, &source_st) != 0) {
-      if (errno == ENOENT || errno == ENOTDIR)
-        continue;
-      ok = false;
-      break;
-    }
-    if (!S_ISREG(source_st.st_mode))
-      continue;
-    int shadowed = directory_entry_exists(higher_priority_path, entry->d_name);
-    if (shadowed < 0) {
-      ok = false;
-      break;
-    }
-    if (shadowed > 0)
-      continue;
-    if (emulator_st.st_dev == source_st.st_dev &&
-        emulator_st.st_ino == source_st.st_ino) {
-      continue;
-    }
-    if (copy_file_with_mode(emulator_file, cache_file, 0777) != 0) {
-      ok = false;
-      break;
-    }
-    (*copied_count_out)++;
-  }
-  if (closedir(d) != 0)
-    ok = false;
-  return ok;
+  emulator_copy_ctx_t ctx = {cache_fakelib_path, copied_count_out};
+  return for_each_emulator_replacement(emulators_path, source_path,
+                                       higher_priority_path, flags,
+                                       copy_emulator_file, &ctx);
 }
 
 static bool ensure_fakelib_cache_root(void) {

@@ -172,6 +172,13 @@
 #
 # HTTP or HTTPS download URL:
 # ampr_update_url=https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx
+#
+# ampr-emu-ng shares the libSceAmpr.sprx name. Game fakelibs that ship it are
+# updated only from emulators_path/ampr-emu-ng/libSceAmpr.sprx, never from the
+# upstream file above; a file of the other runtime is skipped in either place.
+# With auto_update_ampr=1 that file is upgraded from this
+# URL once you place it there; it is not downloaded when missing.
+# ampr_ng_update_url=https://github.com/quer3q/ampr-emu-ng/releases/latest/download/libSceAmpr.sprx
 
 # Global fakelib overlay:
 # 1/true/yes/on  -> use global fakelib for every tracked game when present;
