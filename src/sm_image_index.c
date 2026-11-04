@@ -14,7 +14,7 @@
 #define IMAGE_INDEX_FILE IMAGE_INDEX_FILE_PATH
 #define IMAGE_INDEX_TEMP_FILE LOG_DIR "/image_index.bin.tmp"
 #define IMAGE_INDEX_MAGIC 0x58444953u
-#define IMAGE_INDEX_VERSION 4u
+#define IMAGE_INDEX_VERSION 5u
 #define IMAGE_INDEX_BUILD_TIME_LENGTH 24u
 
 #ifndef SHADOWMOUNT_BUILD_TIME
@@ -55,7 +55,7 @@ typedef struct {
 
 typedef struct {
   image_index_file_stamp_t config;
-  image_index_file_stamp_t autotune;
+  image_index_file_stamp_t profiles;
 } image_index_context_t;
 
 typedef struct {
@@ -95,8 +95,8 @@ static bool read_file_stamp(const char *path,
 
 static bool read_index_context(image_index_context_t *context) {
   bool config_ready = read_file_stamp(CONFIG_FILE, &context->config);
-  bool autotune_ready = read_file_stamp(AUTOTUNE_FILE, &context->autotune);
-  return config_ready && autotune_ready;
+  bool profiles_ready = read_file_stamp(PROFILES_FILE, &context->profiles);
+  return config_ready && profiles_ready;
 }
 
 static bool file_stamp_equals(const image_index_file_stamp_t *a,
@@ -136,9 +136,9 @@ static bool refresh_index_context(void) {
   } else if (!file_stamp_equals(&g_image_index_context.config,
                                 &context.config)) {
     discard_index("config.ini changed");
-  } else if (!file_stamp_equals(&g_image_index_context.autotune,
-                                &context.autotune)) {
-    discard_index("autotune.ini changed");
+  } else if (!file_stamp_equals(&g_image_index_context.profiles,
+                                &context.profiles)) {
+    discard_index("profiles.ini changed");
   } else {
     return true;
   }
@@ -256,9 +256,9 @@ static const char *index_header_invalid_reason(
                          &g_image_index_context.config)) {
     return "config.ini changed";
   }
-  if (!file_stamp_equals(&header->context.autotune,
-                         &g_image_index_context.autotune)) {
-    return "autotune.ini changed";
+  if (!file_stamp_equals(&header->context.profiles,
+                         &g_image_index_context.profiles)) {
+    return "profiles.ini changed";
   }
   return NULL;
 }

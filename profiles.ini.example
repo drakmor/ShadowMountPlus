@@ -1,0 +1,29 @@
+# ShadowMountPlus individual settings: /data/shadowmount/profiles.ini
+# Keep [config] version. Uncomment sections and fields to enable overrides.
+# Missing fields or default inherit the corresponding global/built-in setting.
+# Changes apply on the next game launch/mount; active mounts stay unchanged.
+
+[config]
+version = 2
+
+# Game profiles use the title ID (case-insensitive), up to 128 explicit fakelib rules.
+# Supported IDs include PPSA, CUSA and homebrew IDs.
+# [game:PPSA13197]
+# fakelib = emulators
+# ignore_global_fakelib = on
+
+# fakelib: default, full, emulators, disabled.
+# ignore_global_fakelib: on/off/default (default is off).
+# [game:CUSA27145]
+# fakelib = full
+
+# Image profiles use ONLY the filename, never the full path. Names are
+# case-insensitive; identically named images on different drives share settings.
+# Spaces and brackets in names are supported. Up to 128 image profiles.
+# [image:My Game [v1].exfat]
+# mount_mode = ro
+# sector_size = 512
+
+# mount_mode: default, ro, rw.
+# sector_size: default or a power of two from 512 to 1048576.
+# Automatic sector-size corrections are saved here too; autotune.ini is retired.

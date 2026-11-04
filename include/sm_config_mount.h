@@ -6,12 +6,19 @@
 #include <stdint.h>
 
 #include "sm_types.h"
+#include "sm_smb.h"
+
+// Migrate legacy files before starting services. Originals remain in the backup directory.
+bool sm_config_prepare_files(void);
+size_t sm_config_smb_snapshot(sm_smb_connection_t *out);
+int sm_config_smb_get(const char *name, sm_smb_connection_t *out);
+int sm_config_smb_update(const char *previous, const sm_smb_connection_t *connection);
 
 // Ensure runtime configuration is loaded before use.
 void ensure_runtime_config_ready(void);
 // Load runtime configuration from disk and apply defaults.
 bool load_runtime_config(void);
-// Reload runtime configuration from disk when config.ini changed.
+// Reload runtime configuration from disk when config.ini or profiles.ini changed.
 bool reload_runtime_config_if_changed(bool *reloaded_out);
 // Atomically persist the settings exposed by the HTTP API while preserving
 // unrelated config.ini keys and comments. Runtime reload remains scanner-owned.
@@ -45,7 +52,7 @@ bool get_custom_scan_path(int index, char path_out[MAX_PATH]);
 uint32_t get_scan_depth_for_root(const char *scan_path);
 // Resolve a per-image read-only override from the file name.
 bool get_image_mode_override(const char *filename, bool *mount_read_only_out);
-// Resolve a per-image sector-size override from autotune.ini or config.ini.
+// Resolve a per-image sector-size override from profiles.ini.
 bool get_image_sector_size_override(const char *filename,
                                     uint32_t *sector_size_out);
 // Upsert an autotuned per-image sector-size override.

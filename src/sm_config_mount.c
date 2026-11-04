@@ -6,6 +6,8 @@
 
 #include "sm_api_protocol.h"
 #include "sm_config_mount.h"
+#include "sm_config_file.h"
+#include "sm_smb.h"
 #include "sm_gameinfo.h"
 #include "sm_types.h"
 #include "sm_limits.h"
@@ -33,6 +35,8 @@ typedef struct {
   int scan_path_count;
   int custom_scan_path_count;
   image_mode_rule_t image_mode_rules[MAX_IMAGE_MODE_RULES];
+  sm_smb_connection_t smb[SM_SMB_CONNECTIONS_MAX];
+  size_t smb_count;
 } runtime_config_state_t;
 
 typedef struct {
@@ -47,7 +51,6 @@ typedef struct {
 
 typedef enum {
   CONFIG_LOAD_OK = 0,
-  CONFIG_LOAD_MISSING,
   CONFIG_LOAD_ERROR,
 } config_load_status_t;
 
@@ -56,13 +59,10 @@ static runtime_config_state_t g_runtime_parse_state;
 static pthread_once_t g_runtime_init_once = PTHREAD_ONCE_INIT;
 // Never hold the state mutex across I/O or logging: those can read config.
 static pthread_mutex_t g_runtime_state_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t g_runtime_load_mutex = PTHREAD_MUTEX_INITIALIZER;
-static config_file_stamp_t g_config_file_stamp;
-static pthread_mutex_t g_autotune_file_mutex = PTHREAD_MUTEX_INITIALIZER;
+static config_file_stamp_t g_config_file_stamp, g_profiles_file_stamp;
 static pthread_mutex_t g_config_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static char *trim_ascii(char *s);
-static bool parse_ini_line(char *line, char **key_out, char **value_out);
 static bool normalize_title_id_value(const char *value,
                                      char out[MAX_TITLE_ID]);
 static config_load_status_t load_runtime_config_state(runtime_config_state_t *state);
@@ -80,31 +80,6 @@ static bool set_image_sector_rule(runtime_config_state_t *state,
 static bool parse_image_sector_rule_value(const char *value,
                                           char filename_out[MAX_PATH],
                                           uint32_t *sector_size_out);
-static bool lookup_image_sector_override_in_file(const char *path,
-                                                 const char *filename,
-                                                 uint32_t *sector_size_out);
-static bool upsert_image_sector_override_in_file(const char *path,
-                                                 const char *filename,
-                                                 uint32_t sector_size);
-
-static bool web_managed_config_key(const char *key) {
-  return strcasecmp(key, "debug") == 0 ||
-         strcasecmp(key, "quiet_mode") == 0 ||
-         strcasecmp(key, "update_emulators") == 0 ||
-         strcasecmp(key, "fakelib_default_mode") == 0 ||
-         strcasecmp(key, "auto_update_ampr") == 0 ||
-         strcasecmp(key, "auto_remove_missing_games") == 0 ||
-         strcasecmp(key, "auto_remove_missing_delay_seconds") == 0 ||
-         strcasecmp(key, "auto_remove_missing_delay_sec") == 0 ||
-         strcasecmp(key, "fan_target_temperature") == 0 ||
-         strcasecmp(key, "api_bind_address") == 0 ||
-         strcasecmp(key, "api_bind_adress") == 0 ||
-         strcasecmp(key, "scanpath") == 0;
-}
-
-static int config_io_error(void) {
-  return errno != 0 ? errno : EIO;
-}
 
 static char *trim_ascii(char *s) {
   while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
@@ -120,42 +95,6 @@ static char *trim_ascii(char *s) {
   }
 
   return s;
-}
-
-static bool parse_ini_line(char *line, char **key_out, char **value_out) {
-  if (!line || !key_out || !value_out)
-    return false;
-
-  char *s = trim_ascii(line);
-  if (s[0] == '\0' || s[0] == '#' || s[0] == ';' || s[0] == '[')
-    return false;
-
-  char *eq = strchr(s, '=');
-  if (!eq)
-    return false;
-
-  *eq = '\0';
-  char *key = trim_ascii(s);
-  char *value = trim_ascii(eq + 1);
-
-  char *comment = strchr(value, '#');
-  if (comment) {
-    *comment = '\0';
-    value = trim_ascii(value);
-  }
-
-  comment = strchr(value, ';');
-  if (comment) {
-    *comment = '\0';
-    value = trim_ascii(value);
-  }
-
-  if (key[0] == '\0' || value[0] == '\0')
-    return false;
-
-  *key_out = key;
-  *value_out = value;
-  return true;
 }
 
 static attach_backend_t default_exfat_backend(void) {
@@ -242,7 +181,6 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.global_fakelib_game_priority = true;
   state->cfg.update_emulators_enabled = true;
   state->cfg.auto_update_ampr_enabled = false;
-  state->cfg.legacy_recursive_scan_forced = false;
   (void)strlcpy(state->cfg.api_bind_address, SM_API_DEFAULT_BIND_ADDRESS,
                 sizeof(state->cfg.api_bind_address));
   state->cfg.api_port = SM_API_DEFAULT_PORT;
@@ -271,12 +209,12 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   init_runtime_scan_paths_defaults(state);
 }
 
-static config_file_stamp_t read_config_file_stamp(void) {
+static config_file_stamp_t read_config_file_stamp(const char *path) {
   config_file_stamp_t stamp;
   memset(&stamp, 0, sizeof(stamp));
 
   struct stat st;
-  if (stat(CONFIG_FILE, &st) != 0)
+  if (stat(path, &st) != 0)
     return stamp;
 
   stamp.present = true;
@@ -304,7 +242,8 @@ static bool runtime_config_states_equal(const runtime_config_state_t *a,
 
 static void init_runtime_config(void) {
   init_runtime_config_defaults(&g_runtime_state);
-  g_config_file_stamp = read_config_file_stamp();
+  g_config_file_stamp = read_config_file_stamp(CONFIG_FILE);
+  g_profiles_file_stamp = read_config_file_stamp(PROFILES_FILE);
 }
 
 void ensure_runtime_config_ready(void) {
@@ -434,14 +373,6 @@ bool get_image_sector_size_override(const char *filename,
   if (!filename || !sector_size_out)
     return false;
 
-  pthread_mutex_lock(&g_autotune_file_mutex);
-  bool autotuned = lookup_image_sector_override_in_file(
-      AUTOTUNE_FILE, filename, sector_size_out);
-  pthread_mutex_unlock(&g_autotune_file_mutex);
-  if (autotuned) {
-    return true;
-  }
-
   char normalized[MAX_PATH];
   if (!normalize_image_filename_value(filename, normalized))
     return false;
@@ -543,31 +474,6 @@ bool is_global_fakelib_excluded_for_title(const char *title_id) {
                                                          normalized);
   pthread_mutex_unlock(&g_runtime_state_mutex);
   return excluded;
-}
-
-bool upsert_image_sector_size_autotune(const char *filename,
-                                       uint32_t sector_size,
-                                       uint32_t *sector_size_out) {
-  if (sector_size_out)
-    *sector_size_out = 0;
-  if (!is_valid_sector_size(sector_size))
-    return false;
-
-  char normalized_filename[MAX_PATH];
-  if (!normalize_image_filename_value(filename, normalized_filename))
-    return false;
-
-  pthread_mutex_lock(&g_autotune_file_mutex);
-  bool updated = upsert_image_sector_override_in_file(
-      AUTOTUNE_FILE, normalized_filename, sector_size);
-  pthread_mutex_unlock(&g_autotune_file_mutex);
-  if (!updated) {
-    return false;
-  }
-
-  if (sector_size_out)
-    *sector_size_out = sector_size;
-  return true;
 }
 
 static bool normalize_title_id_value(const char *value,
@@ -715,163 +621,6 @@ static bool parse_image_sector_rule_value(const char *value,
   }
 
   return true;
-}
-
-static bool lookup_image_sector_override_in_file(const char *path,
-                                                 const char *filename,
-                                                 uint32_t *sector_size_out) {
-  if (!path || !filename || !sector_size_out)
-    return false;
-
-  char normalized_filename[MAX_PATH];
-  if (!normalize_image_filename_value(filename, normalized_filename))
-    return false;
-
-  FILE *f = fopen(path, "r");
-  if (!f)
-    return false;
-
-  bool found = false;
-  uint32_t last_sector_size = 0;
-  char line[512];
-  while (fgets(line, sizeof(line), f)) {
-    char *key = NULL;
-    char *value = NULL;
-    if (!parse_ini_line(line, &key, &value))
-      continue;
-    if (strcasecmp(key, "image_sector") != 0)
-      continue;
-
-    uint32_t sector_size = 0;
-    char parsed_filename[MAX_PATH];
-    if (!parse_image_sector_rule_value(value, parsed_filename, &sector_size))
-      continue;
-    if (strcasecmp(parsed_filename, normalized_filename) != 0)
-      continue;
-
-    last_sector_size = sector_size;
-    found = true;
-  }
-
-  bool read_failed = ferror(f) != 0;
-  if (fclose(f) != 0)
-    read_failed = true;
-  if (read_failed || !found)
-    return false;
-
-  *sector_size_out = last_sector_size;
-  return true;
-}
-
-static bool upsert_image_sector_override_in_file(const char *path,
-                                                 const char *filename,
-                                                 uint32_t sector_size) {
-  if (!path || !filename || !is_valid_sector_size(sector_size))
-    return false;
-
-  char normalized_filename[MAX_PATH];
-  if (!normalize_image_filename_value(filename, normalized_filename))
-    return false;
-
-  char temp_path[MAX_PATH];
-  int written = snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
-  if (written <= 0 || (size_t)written >= sizeof(temp_path))
-    return false;
-
-  FILE *in = fopen(path, "r");
-  if (!in && errno != ENOENT) {
-    log_debug("  [CFG] autotune open failed: %s (%s)", path, strerror(errno));
-    return false;
-  }
-  FILE *out = fopen(temp_path, "w");
-  if (!out) {
-    log_debug("  [CFG] autotune temp open failed: %s (%s)", temp_path,
-              strerror(errno));
-    if (in)
-      fclose(in);
-    return false;
-  }
-
-  bool found = false;
-  if (in) {
-    char line[512];
-    while (fgets(line, sizeof(line), in)) {
-      char original[sizeof(line)];
-      (void)strlcpy(original, line, sizeof(original));
-
-      char *key = NULL;
-      char *value = NULL;
-      if (!parse_ini_line(line, &key, &value)) {
-        if (fputs(original, out) == EOF)
-          goto write_failed;
-        continue;
-      }
-
-      if (strcasecmp(key, "image_sector") != 0) {
-        if (fputs(original, out) == EOF)
-          goto write_failed;
-        continue;
-      }
-
-      uint32_t parsed_sector = 0;
-      char parsed_filename[MAX_PATH];
-      if (!parse_image_sector_rule_value(value, parsed_filename,
-                                         &parsed_sector) ||
-          strcasecmp(parsed_filename, normalized_filename) != 0) {
-        if (fputs(original, out) == EOF)
-          goto write_failed;
-        continue;
-      }
-
-      if (!found) {
-        if (fprintf(out, "image_sector=%s:%u\n", normalized_filename,
-                    (unsigned)sector_size) < 0) {
-          goto write_failed;
-        }
-        found = true;
-      }
-    }
-
-    if (ferror(in))
-      goto write_failed;
-    int close_result = fclose(in);
-    in = NULL;
-    if (close_result != 0)
-      goto write_failed;
-  }
-
-  if (!found &&
-      fprintf(out, "image_sector=%s:%u\n", normalized_filename,
-              (unsigned)sector_size) < 0) {
-    goto write_failed;
-  }
-
-  if (fclose(out) != 0) {
-    out = NULL;
-    log_debug("  [CFG] autotune temp close failed: %s (%s)", temp_path,
-              strerror(errno));
-    unlink(temp_path);
-    return false;
-  }
-  out = NULL;
-
-  if (rename(temp_path, path) != 0) {
-    log_debug("  [CFG] autotune replace failed: %s -> %s (%s)", temp_path, path,
-              strerror(errno));
-    unlink(temp_path);
-    return false;
-  }
-
-  return true;
-
-write_failed:
-  log_debug("  [CFG] autotune temp write failed: %s (%s)", temp_path,
-            strerror(errno));
-  if (in)
-    fclose(in);
-  fclose(out);
-  unlink(temp_path);
-  return false;
 }
 
 static bool parse_backend_ini(const char *value, attach_backend_t *out) {
@@ -1039,37 +788,126 @@ static bool add_global_fakelib_exclude_rule(runtime_config_state_t *state,
   return true;
 }
 
-static config_load_status_t load_runtime_config_state(runtime_config_state_t *state) {
-  init_runtime_config_defaults(state);
+static bool read_documents(sm_ini_t *main, sm_ini_t *profiles) {
+  return sm_ini_read(CONFIG_FILE, main, false) && sm_ini_version(main) &&
+         sm_ini_read(PROFILES_FILE, profiles, false) &&
+         (!profiles->count || sm_ini_version(profiles));
+}
 
-  FILE *f = fopen(CONFIG_FILE, "r");
-  if (!f) {
-    if (errno != ENOENT) {
-      log_debug("  [CFG] open failed: %s (%s)", CONFIG_FILE, strerror(errno));
-      return CONFIG_LOAD_ERROR;
-    } else {
-      log_debug("  [CFG] not found, using defaults");
-      return CONFIG_LOAD_MISSING;
-    }
-  }
-
-  char line[512];
-  int line_no = 0;
-  bool has_custom_scanpaths = false;
-  bool legacy_recursive_scan_requested = false;
-  while (fgets(line, sizeof(line), f)) {
-    line_no++;
-    char *key = NULL;
-    char *value = NULL;
-    if (!parse_ini_line(line, &key, &value)) {
-      char *trimmed = trim_ascii(line);
-      if (trimmed[0] == '\0' || trimmed[0] == '#' || trimmed[0] == ';' ||
-          trimmed[0] == '[') {
-        continue;
-      }
-      log_debug("  [CFG] invalid line %d (missing '=')", line_no);
+static bool flatten_documents(const sm_ini_t *main, const sm_ini_t *profiles, sm_ini_t *flat) {
+  for (size_t i = 0; i < main->count; ++i) {
+    const sm_ini_line_t *line = &main->lines[i];
+    if (!line->key || !strcasecmp(line->section, "config")) continue;
+    if (!strncasecmp(line->section, "smb:", 4)) {
+      if (strcasecmp(line->key, "path") && strcasecmp(line->key, "username") &&
+          strcasecmp(line->key, "password") && strcasecmp(line->key, "active") &&
+          strcasecmp(line->key, "read_only"))
+        log_debug("  [CFG] unknown SMB setting [%s] %s", line->section, line->key);
       continue;
     }
+    const sm_config_key_t *mapping = NULL;
+    for (size_t j = 0; j < sm_config_key_count; ++j)
+      if (!strcasecmp(line->section, sm_config_keys[j].section) &&
+          !strcasecmp(line->key, sm_config_keys[j].key)) { mapping = &sm_config_keys[j]; break; }
+    if (!mapping) {
+      log_debug("  [CFG] unknown setting [%s] %s", line->section, line->key);
+      continue;
+    }
+    if (strcmp(mapping->legacy, "scanpath") &&
+        sm_ini_get(main, line->section, line->key) != line->value) continue;
+    if (!sm_ini_append(flat, "runtime", mapping->legacy, line->value)) return false;
+  }
+  for (size_t i = 0; i < profiles->count; ++i) {
+    const sm_ini_line_t *line = &profiles->lines[i];
+    if (!line->key || !strcasecmp(line->section, "config")) continue;
+    // Scalars use the last occurrence, including an explicit reset to default/off.
+    if (sm_ini_get(profiles, line->section, line->key) != line->value) continue;
+    char value[MAX_PATH + 64];
+    const char *key = NULL;
+    if (!strncasecmp(line->section, "game:", 5)) {
+      char title[MAX_TITLE_ID];
+      if (!normalize_title_id_value(line->section + 5, title) || !is_supported_game_title_id(title)) {
+        errno = EINVAL; return false;
+      }
+      if (!strcasecmp(line->key, "fakelib")) {
+        key = "fakelib_mode"; snprintf(value, sizeof(value), "%s:%s", title, line->value);
+      } else if (!strcasecmp(line->key, "ignore_global_fakelib")) {
+        bool excluded;
+        if (!strcasecmp(line->value, "default")) continue;
+        if (!parse_bool_ini(line->value, &excluded)) { errno = EINVAL; return false; }
+        if (!excluded) continue;
+        key = "global_fakelib_exclude"; strlcpy(value, title, sizeof(value));
+      }
+    } else if (!strncasecmp(line->section, "image:", 6)) {
+      char filename[MAX_PATH];
+      if (strchr(line->section + 6, '/') || !normalize_image_filename_value(line->section + 6, filename)) { errno = EINVAL; return false; }
+      if (!strcasecmp(line->value, "default")) continue;
+      if (!strcasecmp(line->key, "mount_mode")) {
+        if (!strcasecmp(line->value, "ro")) key = "image_ro";
+        else if (!strcasecmp(line->value, "rw")) key = "image_rw";
+        else { errno = EINVAL; return false; }
+        strlcpy(value, filename, sizeof(value));
+      } else if (!strcasecmp(line->key, "sector_size")) {
+        key = "image_sector"; snprintf(value, sizeof(value), "%s:%s", filename, line->value);
+      }
+    }
+    if (!key) {
+      log_debug("  [CFG] unknown profile setting [%s] %s", line->section, line->key);
+      continue;
+    }
+    if (!sm_ini_append(flat, "runtime", key, value)) return false;
+  }
+  return true;
+}
+
+static bool read_smb_connections(const sm_ini_t *doc, sm_smb_connection_t *items, size_t *count) {
+  *count = 0;
+  memset(items, 0, SM_SMB_CONNECTIONS_MAX * sizeof(*items));
+  for (size_t i = 0; i < doc->count; ++i) {
+    const sm_ini_line_t *line = &doc->lines[i];
+    if (!line->header || strncasecmp(line->section, "smb:", 4)) continue;
+    bool seen = false;
+    for (size_t j = 0; j < *count; ++j)
+      if (!strcasecmp(items[j].name, line->section + 4)) seen = true;
+    if (seen) continue;
+    if (*count == SM_SMB_CONNECTIONS_MAX) { errno = ENOSPC; return false; }
+    sm_smb_connection_t *c = &items[*count];
+    if (strlcpy(c->name, line->section + 4, sizeof(c->name)) >= sizeof(c->name)) { errno = EINVAL; return false; }
+    const char *path = sm_ini_get(doc, line->section, "path");
+    const char *user = sm_ini_get(doc, line->section, "username");
+    const char *password = sm_ini_get(doc, line->section, "password");
+    const char *active = sm_ini_get(doc, line->section, "active");
+    const char *ro = sm_ini_get(doc, line->section, "read_only");
+    c->active = true;
+    if (!path || strlcpy(c->path, path, sizeof(c->path)) >= sizeof(c->path) ||
+        strlcpy(c->username, user ? user : "", sizeof(c->username)) >= sizeof(c->username) ||
+        strlcpy(c->password, password ? password : "", sizeof(c->password)) >= sizeof(c->password) ||
+        (active && !parse_bool_ini(active, &c->active)) || (ro && !parse_bool_ini(ro, &c->read_only)) || sm_smb_validate(c)) {
+      log_debug("  [CFG] invalid SMB connection near line %zu", i + 1);
+      errno = EINVAL; return false;
+    }
+    ++*count;
+  }
+  return true;
+}
+
+static config_load_status_t parse_runtime_config_state(runtime_config_state_t *state,
+    const sm_ini_t *main, const sm_ini_t *profiles, bool report_loaded) {
+  init_runtime_config_defaults(state);
+
+  sm_ini_t flat = {0};
+  if (!flatten_documents(main, profiles, &flat) ||
+      !read_smb_connections(main, state->smb, &state->smb_count)) {
+    sm_ini_free(&flat);
+    return CONFIG_LOAD_ERROR;
+  }
+  bool has_custom_scanpaths = false;
+  bool invalid = false;
+  for (size_t index = 0; index < flat.count; ++index) {
+    const sm_ini_line_t *entry = &flat.lines[index];
+    if (!entry->key) continue;
+    const char *key = entry->key, *value = entry->value;
+    int line_no = (int)index + 1;
 
     bool bval = false;
     uint32_t u32 = 0;
@@ -1077,6 +915,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "debug") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1086,6 +925,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "quiet_mode") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1097,6 +937,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
         strcasecmp(key, "locale") == 0) {
       int32_t language_id = SM_LANGUAGE_AUTO;
       if (!sm_l10n_parse_language_id(value, &language_id)) {
+        invalid = true;
         log_debug("  [CFG] invalid language at line %d: %s=%s "
                   "(use auto or a supported locale like en-US, ru-RU)",
                   line_no, key, value);
@@ -1108,6 +949,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "api_enabled") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key,
                   value);
         continue;
@@ -1121,6 +963,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       struct in_addr address;
       if (strlen(value) >= sizeof(state->cfg.api_bind_address) ||
           inet_pton(AF_INET, value, &address) != 1) {
+        invalid = true;
         log_debug("  [CFG] invalid API IPv4 address at line %d: %s=%s",
                   line_no, key, value);
         continue;
@@ -1135,6 +978,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "api_port") == 0) {
       if (!parse_u32_ini(value, &u32) || u32 == 0 || u32 > 65535u) {
+        invalid = true;
         log_debug("  [CFG] invalid API port at line %d: %s=%s (range: 1..65535)",
                   line_no, key, value);
         continue;
@@ -1146,6 +990,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     if (strcasecmp(key, "mount_read_only") == 0 ||
         strcasecmp(key, "read_only") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1155,6 +1000,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "force_mount") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1164,6 +1010,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "persistent_image_mounts") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1173,6 +1020,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "app_install_all") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1182,6 +1030,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "auto_remove_missing_games") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1191,6 +1040,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "auto_remove_games_with_dlc") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1202,6 +1052,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
         strcasecmp(key, "image_rw") == 0) {
       bool rule_read_only = (strcasecmp(key, "image_ro") == 0);
       if (!set_image_mode_rule(state, value, rule_read_only)) {
+        invalid = true;
         log_debug("  [CFG] invalid image mode rule at line %d: %s=%s", line_no,
                   key, value);
       }
@@ -1210,6 +1061,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "image_sector") == 0) {
       if (!set_image_sector_rule(state, value)) {
+        invalid = true;
         log_debug("  [CFG] invalid image sector rule at line %d: %s=%s "
                   "(format: IMAGE_FILENAME:SECTOR_SIZE)",
                   line_no, key, value);
@@ -1217,19 +1069,10 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       continue;
     }
 
-    if (strcasecmp(key, "recursive_scan") == 0) {
-      if (!parse_bool_ini(value, &bval)) {
-        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
-        continue;
-      }
-      if (bval)
-        legacy_recursive_scan_requested = true;
-      continue;
-    }
-
     if (strcasecmp(key, "scan_depth") == 0) {
       if (!parse_u32_ini(value, &u32) || u32 < MIN_SCAN_DEPTH ||
           u32 > MAX_SCAN_DEPTH) {
+        invalid = true;
         log_debug("  [CFG] invalid scan depth at line %d: %s=%s (range: %u..%u)",
                   line_no, key, value, (unsigned)MIN_SCAN_DEPTH,
                   (unsigned)MAX_SCAN_DEPTH);
@@ -1241,6 +1084,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "backport_fakelib") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1253,6 +1097,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       if (sm_config_parse_fakelib_mode(value, &mode) && mode != SM_FAKELIB_DEFAULT) {
         state->cfg.fakelib_default_mode = mode;
       } else {
+        invalid = true;
         log_debug("  [CFG] invalid fakelib_default_mode at line %d: %s",
                   line_no, value);
       }
@@ -1266,6 +1111,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       if (!parse_title_fakelib_rule(key, value, title_id, &mode) ||
           !set_title_fakelib_rule(state->cfg.fakelib_rules,
                                  &state->cfg.fakelib_rule_count, title_id, mode)) {
+        invalid = true;
         log_debug("  [CFG] invalid fakelib mode rule or limit reached "
                   "(%u) at line %d: %s=%s",
                   (unsigned)MAX_FAKELIB_EXCLUDE_RULES, line_no, key, value);
@@ -1276,6 +1122,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     if (strcasecmp(key, "global_fakelib") == 0 ||
         strcasecmp(key, "global_fakelib_enabled") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1286,6 +1133,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     if (strcasecmp(key, "global_fakelib_path") == 0) {
       char path[MAX_PATH];
       if (!normalize_absolute_path_value(value, path)) {
+        invalid = true;
         log_debug("  [CFG] invalid global fakelib path at line %d: %s=%s",
                   line_no, key, value);
         continue;
@@ -1301,6 +1149,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       } else if (strcasecmp(value, "global") == 0) {
         state->cfg.global_fakelib_game_priority = false;
       } else {
+        invalid = true;
         log_debug("  [CFG] invalid global fakelib priority at line %d: %s=%s "
                   "(use game or global)",
                   line_no, key, value);
@@ -1312,6 +1161,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     if (strcasecmp(key, "global_fakelib_exclude") == 0 ||
         strcasecmp(key, "global_fakelib_exclude_title") == 0) {
       if (!add_global_fakelib_exclude_rule(state, value)) {
+        invalid = true;
         log_debug("  [CFG] invalid global fakelib exclude rule at line %d: "
                   "%s=%s",
                   line_no, key, value);
@@ -1321,6 +1171,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "update_emulators") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1331,6 +1182,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     if (strcasecmp(key, "emulators_path") == 0) {
       char path[MAX_PATH];
       if (!normalize_absolute_path_value(value, path)) {
+        invalid = true;
         log_debug("  [CFG] invalid emulator path at line %d: %s=%s",
                   line_no, key, value);
         continue;
@@ -1342,6 +1194,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "auto_update_ampr") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
@@ -1352,6 +1205,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     if (strcasecmp(key, "ampr_update_url") == 0) {
       char url[MAX_PATH];
       if (!normalize_http_url_value(value, url)) {
+        invalid = true;
         log_debug("  [CFG] invalid AMPR update URL at line %d: %s=%s "
                   "(HTTP or HTTPS required)",
                   line_no, key, value);
@@ -1369,6 +1223,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       } else if (!parse_u32_ini(value, &u32) ||
                  u32 < MIN_FAN_TARGET_TEMPERATURE_C ||
                  u32 > MAX_FAN_TARGET_TEMPERATURE_C) {
+        invalid = true;
         log_debug("  [CFG] invalid fan target at line %d: %s=%s "
                   "(use system or %u..%u C)",
                   line_no, key, value,
@@ -1385,6 +1240,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
         strcasecmp(key, "scan_interval_sec") == 0) {
       if (!parse_u32_ini(value, &u32) || u32 < MIN_SCAN_INTERVAL_SECONDS ||
           u32 > MAX_SCAN_INTERVAL_SECONDS) {
+        invalid = true;
         log_debug("  [CFG] invalid scan interval at line %d: %s=%s (range: %u..%u)",
                   line_no, key, value, (unsigned)MIN_SCAN_INTERVAL_SECONDS,
                   (unsigned)MAX_SCAN_INTERVAL_SECONDS);
@@ -1397,6 +1253,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     if (strcasecmp(key, "stability_wait_seconds") == 0 ||
         strcasecmp(key, "stability_wait_sec") == 0) {
       if (!parse_u32_ini(value, &u32) || u32 > MAX_STABILITY_WAIT_SECONDS) {
+        invalid = true;
         log_debug("  [CFG] invalid stability wait at line %d: %s=%s (max: %u)",
                   line_no, key, value, (unsigned)MAX_STABILITY_WAIT_SECONDS);
         continue;
@@ -1410,6 +1267,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
       if (!parse_u32_ini(value, &u32) ||
           u32 < MIN_AUTO_REMOVE_MISSING_DELAY_SECONDS ||
           u32 > MAX_AUTO_REMOVE_MISSING_DELAY_SECONDS) {
+        invalid = true;
         log_debug("  [CFG] invalid auto-remove delay at line %d: %s=%s "
                   "(range: %u..%u)",
                   line_no, key, value,
@@ -1423,6 +1281,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "exfat_backend") == 0) {
       if (!parse_backend_ini(value, &backend)) {
+        invalid = true;
         log_debug("  [CFG] invalid backend at line %d: %s=%s", line_no, key,
                   value);
         continue;
@@ -1433,6 +1292,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
 
     if (strcasecmp(key, "ufs_backend") == 0) {
       if (!parse_backend_ini(value, &backend)) {
+        invalid = true;
         log_debug("  [CFG] invalid backend at line %d: %s=%s", line_no, key,
                   value);
         continue;
@@ -1444,6 +1304,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     if (strcasecmp(key, "nested_pfs_index_cache") == 0 ||
         strcasecmp(key, "legacy_gddr5_cache") == 0) {
       if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key,
                   value);
         continue;
@@ -1458,6 +1319,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
         has_custom_scanpaths = true;
       }
       if (!add_runtime_scan_path(state, value)) {
+        invalid = true;
         log_debug("  [CFG] invalid scanpath at line %d: %s=%s", line_no, key,
                   value);
       }
@@ -1477,7 +1339,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     }
 
     if (!parse_u32_ini(value, &u32) || !is_valid_sector_size(u32)) {
-      log_debug("  [CFG] invalid sector size at line %d: %s=%s", line_no, key,
+      invalid = true;
+        log_debug("  [CFG] invalid sector size at line %d: %s=%s", line_no, key,
                 value);
       continue;
     }
@@ -1495,15 +1358,8 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
     }
   }
 
-  int read_error = ferror(f) ? (errno != 0 ? errno : EIO) : 0;
-  if (fclose(f) != 0 && read_error == 0)
-    read_error = errno;
-  if (read_error != 0) {
-    log_debug("  [CFG] read failed: %s (%s)", CONFIG_FILE,
-              strerror(read_error));
-    errno = read_error;
-    return CONFIG_LOAD_ERROR;
-  }
+  sm_ini_free(&flat);
+  if (invalid) { errno = EINVAL; return CONFIG_LOAD_ERROR; }
 
   if (has_custom_scanpaths && state->scan_path_count == 0) {
     log_debug("  [CFG] no valid scanpath entries, using defaults");
@@ -1513,11 +1369,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
   }
   add_runtime_managed_scan_paths(state);
 
-  if (legacy_recursive_scan_requested) {
-    state->cfg.scan_depth = 2u;
-    state->cfg.legacy_recursive_scan_forced = true;
-    log_debug("  [CFG] recursive_scan=1 is deprecated; forcing scan_depth=2");
-  }
+  if (!report_loaded) return CONFIG_LOAD_OK;
 
   int image_rule_count = 0;
   for (int k = 0; k < MAX_IMAGE_MODE_RULES; k++) {
@@ -1531,7 +1383,7 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             "auto_remove_missing_games=%d "
             "auto_remove_games_with_dlc=%d auto_remove_missing_delay_s=%u "
             "api=%s:%u scan_depth=%u "
-            "legacy_recursive_scan_forced=%d backport_fakelib=%d "
+            "backport_fakelib=%d "
             "fakelib_default_mode=%s fakelib_rules=%u "
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
@@ -1554,7 +1406,6 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
             state->cfg.auto_remove_missing_delay_seconds,
             state->cfg.api_bind_address, state->cfg.api_port,
             state->cfg.scan_depth,
-            state->cfg.legacy_recursive_scan_forced ? 1 : 0,
             state->cfg.backport_fakelib_enabled ? 1 : 0,
             sm_config_fakelib_mode_name(state->cfg.fakelib_default_mode),
             state->cfg.fakelib_rule_count,
@@ -1579,20 +1430,45 @@ static config_load_status_t load_runtime_config_state(runtime_config_state_t *st
   return CONFIG_LOAD_OK;
 }
 
+static config_load_status_t load_runtime_config_state(runtime_config_state_t *state) {
+  sm_ini_t main = {0}, profiles = {0};
+  config_load_status_t status = read_documents(&main, &profiles)
+      ? parse_runtime_config_state(state, &main, &profiles, true) : CONFIG_LOAD_ERROR;
+  sm_ini_free(&main); sm_ini_free(&profiles);
+  return status;
+}
+
+static bool validate_documents(const sm_ini_t *main, const sm_ini_t *profiles) {
+  return parse_runtime_config_state(&g_runtime_parse_state, main, profiles, false) == CONFIG_LOAD_OK;
+}
+
+bool sm_config_prepare_files(void) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_config_file_mutex);
+  bool ok = sm_config_migrate_files(validate_documents);
+  int error = errno;
+  pthread_mutex_unlock(&g_config_file_mutex);
+  errno = error;
+  return ok;
+}
+
 bool load_runtime_config(void) {
   ensure_runtime_config_ready();
-  pthread_mutex_lock(&g_runtime_load_mutex);
+  pthread_mutex_lock(&g_config_file_mutex);
+  config_file_stamp_t main_stamp = read_config_file_stamp(CONFIG_FILE);
+  config_file_stamp_t profiles_stamp = read_config_file_stamp(PROFILES_FILE);
   config_load_status_t status = load_runtime_config_state(&g_runtime_parse_state);
   if (status == CONFIG_LOAD_ERROR) {
-    pthread_mutex_unlock(&g_runtime_load_mutex);
+    pthread_mutex_unlock(&g_config_file_mutex);
     return false;
   }
   bool loaded = status == CONFIG_LOAD_OK;
   pthread_mutex_lock(&g_runtime_state_mutex);
   memcpy(&g_runtime_state, &g_runtime_parse_state, sizeof(g_runtime_state));
   pthread_mutex_unlock(&g_runtime_state_mutex);
-  g_config_file_stamp = read_config_file_stamp();
-  pthread_mutex_unlock(&g_runtime_load_mutex);
+  g_config_file_stamp = main_stamp;
+  g_profiles_file_stamp = profiles_stamp;
+  pthread_mutex_unlock(&g_config_file_mutex);
   return loaded;
 }
 
@@ -1601,17 +1477,19 @@ bool reload_runtime_config_if_changed(bool *reloaded_out) {
   if (reloaded_out)
     *reloaded_out = false;
 
-  pthread_mutex_lock(&g_runtime_load_mutex);
-  config_file_stamp_t new_stamp = read_config_file_stamp();
-  if (config_file_stamp_equals(&new_stamp, &g_config_file_stamp)) {
-    pthread_mutex_unlock(&g_runtime_load_mutex);
+  pthread_mutex_lock(&g_config_file_mutex);
+  config_file_stamp_t new_stamp = read_config_file_stamp(CONFIG_FILE);
+  config_file_stamp_t profiles_stamp = read_config_file_stamp(PROFILES_FILE);
+  if (config_file_stamp_equals(&new_stamp, &g_config_file_stamp) &&
+      config_file_stamp_equals(&profiles_stamp, &g_profiles_file_stamp)) {
+    pthread_mutex_unlock(&g_config_file_mutex);
     return true;
   }
 
   runtime_config_state_t *parsed = &g_runtime_parse_state;
   config_load_status_t status = load_runtime_config_state(parsed);
   if (status == CONFIG_LOAD_ERROR) {
-    pthread_mutex_unlock(&g_runtime_load_mutex);
+    pthread_mutex_unlock(&g_config_file_mutex);
     return false;
   }
 
@@ -1622,163 +1500,128 @@ bool reload_runtime_config_if_changed(bool *reloaded_out) {
   pthread_mutex_unlock(&g_runtime_state_mutex);
 
   g_config_file_stamp = new_stamp;
-  pthread_mutex_unlock(&g_runtime_load_mutex);
+  g_profiles_file_stamp = profiles_stamp;
+  pthread_mutex_unlock(&g_config_file_mutex);
   if (reloaded_out)
     *reloaded_out = changed;
   return true;
 }
 
-static bool write_title_fakelib_policy(const char *title_id,
-                                      sm_fakelib_mode_t mode,
-                                      bool global_only) {
-  char normalized[MAX_TITLE_ID];
-  if (!normalize_title_id_value(title_id, normalized) ||
-      !is_supported_game_title_id(normalized) || !sm_config_fakelib_mode_name(mode)) {
-    errno = EINVAL;
-    return false;
-  }
-  ensure_runtime_config_ready();
-  pthread_mutex_lock(&g_config_file_mutex);
-  (void)mkdir(LOG_DIR, 0777);
-  FILE *in = fopen(CONFIG_FILE, "r");
-  if (!in && errno != ENOENT) {
-    int saved_errno = config_io_error();
-    pthread_mutex_unlock(&g_config_file_mutex);
-    errno = saved_errno;
-    return false;
-  }
-  char temp_path[MAX_PATH];
-  int written = snprintf(temp_path, sizeof(temp_path), "%s.fakelib.XXXXXX",
-                          CONFIG_FILE);
-  int temp_fd = written > 0 && (size_t)written < sizeof(temp_path)
-                    ? mkstemp(temp_path) : -1;
-  FILE *out = NULL;
-  if (temp_fd >= 0) {
-    struct stat st;
-    if (!in || (fstat(fileno(in), &st) == 0 &&
-                fchmod(temp_fd, st.st_mode & 0777) == 0)) {
-      out = fdopen(temp_fd, "w");
-    }
-  }
-  if (!out) {
-    int saved_errno = written <= 0 || (size_t)written >= sizeof(temp_path)
-                          ? ENAMETOOLONG : config_io_error();
-    if (temp_fd >= 0) {
-      close(temp_fd);
-      (void)unlink(temp_path);
-    }
-    if (in)
-      fclose(in);
-    pthread_mutex_unlock(&g_config_file_mutex);
-    errno = saved_errno;
-    return false;
-  }
-
-  sm_fakelib_rule_t rules[MAX_FAKELIB_EXCLUDE_RULES] = {0};
-  uint32_t count = 0;
-  int saved_errno = 0;
-  int last_written = '\n';
-  char line[MAX_PATH + 256u];
-  while (in && fgets(line, sizeof(line), in)) {
-    bool truncated = strchr(line, '\n') == NULL && !feof(in);
-    char parsed[sizeof(line)];
-    (void)strlcpy(parsed, line, sizeof(parsed));
-    char *key = NULL;
-    char *value = NULL;
-    char parsed_title[MAX_TITLE_ID];
-    sm_fakelib_mode_t parsed_mode;
-    bool rule = false;
-    if (parse_ini_line(parsed, &key, &value)) {
-      if (global_only) {
-        rule = (strcasecmp(key, "global_fakelib_exclude") == 0 ||
-                strcasecmp(key, "global_fakelib_exclude_title") == 0) &&
-               normalize_title_id_value(value, parsed_title);
-        parsed_mode = SM_FAKELIB_DISABLED;
-      } else {
-        rule = parse_title_fakelib_rule(key, value, parsed_title, &parsed_mode);
-      }
-    }
-    bool skip = rule && strcmp(parsed_title, normalized) == 0;
-    if (rule && !skip)
-      (void)set_title_fakelib_rule(rules, &count, parsed_title, parsed_mode);
-    if (!skip && fputs(line, out) == EOF) {
-      saved_errno = config_io_error();
-      break;
-    }
-    if (!skip && line[0] != '\0')
-      last_written = (unsigned char)line[strlen(line) - 1u];
-    if (!truncated)
-      continue;
-    int ch;
-    while ((ch = fgetc(in)) != EOF) {
-      if (!skip && fputc(ch, out) == EOF && saved_errno == 0)
-        saved_errno = config_io_error();
-      if (!skip)
-        last_written = ch;
-      if (ch == '\n')
-        break;
-    }
-    if (saved_errno != 0)
-      break;
-  }
-  if (in && ferror(in) && saved_errno == 0)
-    saved_errno = config_io_error();
-  if (mode != SM_FAKELIB_DEFAULT && count == MAX_FAKELIB_EXCLUDE_RULES && saved_errno == 0)
-    saved_errno = ENOSPC;
-  if (saved_errno == 0 && last_written != '\n' && fputc('\n', out) == EOF)
-    saved_errno = config_io_error();
-  if (mode != SM_FAKELIB_DEFAULT && saved_errno == 0) {
-    int result = global_only
-                     ? fprintf(out, "global_fakelib_exclude=%s\n", normalized)
-                     : mode == SM_FAKELIB_DISABLED
-                     ? fprintf(out, "fakelib_exclude=%s\n", normalized)
-                     : fprintf(out, "fakelib_mode=%s:%s\n", normalized,
-                               sm_config_fakelib_mode_name(mode));
-    if (result < 0)
-      saved_errno = config_io_error();
-    else
-      (void)set_title_fakelib_rule(rules, &count, normalized, mode);
-  }
-  if (fflush(out) != 0 && saved_errno == 0)
-    saved_errno = config_io_error();
-  if (saved_errno == 0 && fsync(fileno(out)) != 0)
-    saved_errno = config_io_error();
-  if (fclose(out) != 0 && saved_errno == 0)
-    saved_errno = config_io_error();
-  if (in && fclose(in) != 0 && saved_errno == 0)
-    saved_errno = config_io_error();
-  if (saved_errno == 0 && rename(temp_path, CONFIG_FILE) != 0)
-    saved_errno = config_io_error();
-  if (saved_errno == 0) {
-    // Publish just this policy. Leave the file stamp for the scanner so it
-    // still applies any other config edits through its normal reload path.
-    pthread_mutex_lock(&g_runtime_load_mutex);
+// The shared file lock also owns the loader's scratch state. Reuse its
+// validators; only the modified domain is published before scanner reload.
+static bool save_document(sm_ini_t *main, sm_ini_t *profiles, bool individual, bool smb) {
+  bool ok = sm_ini_set(individual ? profiles : main, "config", "version", "2") &&
+      parse_runtime_config_state(&g_runtime_parse_state, main, profiles, false) == CONFIG_LOAD_OK &&
+      sm_ini_write(individual ? PROFILES_FILE : CONFIG_FILE, individual ? profiles : main);
+  if (ok && (individual || smb)) {
     pthread_mutex_lock(&g_runtime_state_mutex);
-    if (global_only) {
-      g_runtime_state.cfg.global_fakelib_exclude_title_count = count;
-      memset(g_runtime_state.cfg.global_fakelib_exclude_title_ids, 0,
-             sizeof(g_runtime_state.cfg.global_fakelib_exclude_title_ids));
-      for (uint32_t i = 0; i < count; ++i)
-        (void)strlcpy(g_runtime_state.cfg.global_fakelib_exclude_title_ids[i],
-                      rules[i].title_id, MAX_TITLE_ID);
-    } else {
-      g_runtime_state.cfg.fakelib_rule_count = count;
-      memcpy(g_runtime_state.cfg.fakelib_rules, rules, sizeof(rules));
+    if (individual) {
+      runtime_config_t *dst = &g_runtime_state.cfg, *src = &g_runtime_parse_state.cfg;
+      dst->fakelib_rule_count = src->fakelib_rule_count;
+      memcpy(dst->fakelib_rules, src->fakelib_rules, sizeof(dst->fakelib_rules));
+      dst->global_fakelib_exclude_title_count = src->global_fakelib_exclude_title_count;
+      memcpy(dst->global_fakelib_exclude_title_ids, src->global_fakelib_exclude_title_ids,
+             sizeof(dst->global_fakelib_exclude_title_ids));
+      memcpy(g_runtime_state.image_mode_rules, g_runtime_parse_state.image_mode_rules,
+             sizeof(g_runtime_state.image_mode_rules));
+    }
+    if (smb) {
+      g_runtime_state.smb_count = g_runtime_parse_state.smb_count;
+      memcpy(g_runtime_state.smb, g_runtime_parse_state.smb, sizeof(g_runtime_state.smb));
     }
     pthread_mutex_unlock(&g_runtime_state_mutex);
-    pthread_mutex_unlock(&g_runtime_load_mutex);
-  } else {
-    (void)unlink(temp_path);
   }
+  return ok;
+}
+
+static bool write_title_fakelib_policy(const char *title_id, sm_fakelib_mode_t mode, bool global_only) {
+  char title[MAX_TITLE_ID], section[MAX_TITLE_ID + 8];
+  if (!normalize_title_id_value(title_id, title) || !is_supported_game_title_id(title) || !sm_config_fakelib_mode_name(mode)) {
+    errno = EINVAL; return false;
+  }
+  snprintf(section, sizeof(section), "game:%s", title);
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_config_file_mutex);
+  sm_ini_t main = {0}, profiles = {0};
+  const char *value = global_only ? (mode == SM_FAKELIB_DISABLED ? "on" : NULL)
+      : mode == SM_FAKELIB_DEFAULT ? NULL : sm_config_fakelib_mode_name(mode);
+  bool ok = read_documents(&main, &profiles) &&
+      sm_ini_set(&profiles, section, global_only ? "ignore_global_fakelib" : "fakelib", value) &&
+      save_document(&main, &profiles, true, false);
+  int error = errno;
+  sm_ini_free(&main); sm_ini_free(&profiles);
   pthread_mutex_unlock(&g_config_file_mutex);
-  if (saved_errno != 0) {
-    errno = saved_errno;
-    return false;
+  errno = error; return ok;
+}
+
+bool upsert_image_sector_size_autotune(const char *filename, uint32_t sector_size, uint32_t *sector_size_out) {
+  char name[MAX_PATH], section[MAX_PATH + 8], value[16];
+  if (!normalize_image_filename_value(filename, name) || !is_valid_sector_size(sector_size)) { errno = EINVAL; return false; }
+  snprintf(section, sizeof(section), "image:%s", name);
+  snprintf(value, sizeof(value), "%u", sector_size);
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_config_file_mutex);
+  sm_ini_t main = {0}, profiles = {0};
+  bool ok = read_documents(&main, &profiles) && sm_ini_set(&profiles, section, "sector_size", value) &&
+      save_document(&main, &profiles, true, false);
+  int error = errno;
+  sm_ini_free(&main); sm_ini_free(&profiles);
+  pthread_mutex_unlock(&g_config_file_mutex);
+  if (ok && sector_size_out) *sector_size_out = sector_size;
+  errno = error; return ok;
+}
+
+size_t sm_config_smb_snapshot(sm_smb_connection_t *out) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  size_t count = g_runtime_state.smb_count;
+  memcpy(out, g_runtime_state.smb, count * sizeof(*out));
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return count;
+}
+
+int sm_config_smb_get(const char *name, sm_smb_connection_t *out) {
+  if (!name || !out) return EINVAL;
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  int status = ENOENT;
+  for (size_t i = 0; i < g_runtime_state.smb_count; ++i)
+    if (!strcasecmp(name, g_runtime_state.smb[i].name)) { *out = g_runtime_state.smb[i]; status = 0; break; }
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return status;
+}
+
+int sm_config_smb_update(const char *previous, const sm_smb_connection_t *connection) {
+  int status = connection ? sm_smb_validate(connection) : (!previous || !*previous ? EINVAL : 0);
+  if (status) return status;
+  if (previous && strlen(previous) >= sizeof(((sm_smb_connection_t *)0)->name)) return EINVAL;
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_config_file_mutex);
+  sm_ini_t main = {0}, profiles = {0};
+  bool ok = read_documents(&main, &profiles);
+  char old[80], section[80];
+  snprintf(old, sizeof(old), "smb:%s", previous ? previous : "");
+  snprintf(section, sizeof(section), "smb:%s", connection ? connection->name : "");
+  if (ok && previous && *previous && !sm_ini_get(&main, old, "path")) { errno = ENOENT; ok = false; }
+  if (ok && connection && (!previous || strcasecmp(previous, connection->name)) && sm_ini_get(&main, section, "path")) {
+    errno = EEXIST; ok = false;
   }
-  log_debug("  [CFG] %sfakelib for %s %s; applies on next launch",
-            global_only ? "global " : "", normalized,
-            sm_config_fakelib_mode_name(mode));
-  return true;
+  if (ok && previous && *previous) {
+    if (!connection) ok = sm_ini_remove_section(&main, old);
+    else if (strcmp(previous, connection->name)) ok = sm_ini_rename_section(&main, old, section);
+  }
+  if (ok && connection) {
+    ok = sm_ini_set(&main, section, "path", connection->path) &&
+         sm_ini_set(&main, section, "username", connection->username) &&
+         sm_ini_set(&main, section, "password", connection->password) &&
+         sm_ini_set(&main, section, "active", connection->active ? "on" : "off") &&
+         sm_ini_set(&main, section, "read_only", connection->read_only ? "on" : "off");
+  }
+  if (ok) ok = save_document(&main, &profiles, false, true);
+  status = ok ? 0 : (errno ? errno : EIO);
+  sm_ini_free(&main); sm_ini_free(&profiles);
+  pthread_mutex_unlock(&g_config_file_mutex);
+  return status;
 }
 
 bool sm_config_set_title_fakelib_mode(const char *title_id, sm_fakelib_mode_t mode) {
@@ -1850,127 +1693,30 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
     }
   }
 
+  ensure_runtime_config_ready();
   pthread_mutex_lock(&g_config_file_mutex);
-  (void)mkdir(LOG_DIR, 0777);
-  FILE *in = fopen(CONFIG_FILE, "r");
-  if (!in && errno != ENOENT) {
-    int saved_errno = config_io_error();
-    pthread_mutex_unlock(&g_config_file_mutex);
-    free(normalized_paths);
-    errno = saved_errno;
-    return false;
-  }
-
-  char temp_path[MAX_PATH];
-  int temp_written = snprintf(temp_path, sizeof(temp_path), "%s.web.tmp",
-                              CONFIG_FILE);
-  if (temp_written < 0 || (size_t)temp_written >= sizeof(temp_path)) {
-    if (in)
-      (void)fclose(in);
-    pthread_mutex_unlock(&g_config_file_mutex);
-    free(normalized_paths);
-    errno = ENAMETOOLONG;
-    return false;
-  }
-  (void)unlink(temp_path);
-  FILE *out = fopen(temp_path, "w");
-  if (!out) {
-    int saved_errno = config_io_error();
-    if (in)
-      (void)fclose(in);
-    pthread_mutex_unlock(&g_config_file_mutex);
-    free(normalized_paths);
-    errno = saved_errno;
-    return false;
-  }
-
-  errno = 0;
-  int saved_errno = 0;
-  int last_written = '\n';
-  char line[MAX_PATH + 256u];
-  while (in && fgets(line, sizeof(line), in)) {
-    bool truncated = strchr(line, '\n') == NULL && !feof(in);
-    char parsed[sizeof(line)];
-    (void)strlcpy(parsed, line, sizeof(parsed));
-    char *key = NULL;
-    char *value = NULL;
-    char *trimmed = trim_ascii(parsed);
-    bool skip = strcmp(trimmed,
-                       "# Managed by the ShadowMount web interface.") == 0;
-    if (!skip)
-      skip = parse_ini_line(parsed, &key, &value) &&
-             web_managed_config_key(key);
-    if (!skip && fputs(line, out) == EOF) {
-      saved_errno = config_io_error();
-      break;
-    }
-    if (!skip && line[0] != '\0')
-      last_written = (unsigned char)line[strlen(line) - 1u];
-    if (!truncated)
-      continue;
-    int ch;
-    while ((ch = fgetc(in)) != EOF) {
-      if (!skip && fputc(ch, out) == EOF && saved_errno == 0)
-        saved_errno = config_io_error();
-      if (!skip)
-        last_written = ch;
-      if (ch == '\n')
-        break;
-    }
-    if (saved_errno != 0)
-      break;
-  }
-  if (in && ferror(in) && saved_errno == 0)
-    saved_errno = config_io_error();
-  if (saved_errno == 0 && last_written != '\n' && fputc('\n', out) == EOF)
-    saved_errno = config_io_error();
-  if (saved_errno == 0 &&
-      fprintf(out,
-              "\n# Managed by the ShadowMount web interface.\n"
-              "debug=%u\nquiet_mode=%u\nupdate_emulators=%u\n"
-              "auto_update_ampr=%u\nfakelib_default_mode=%s\n"
-              "auto_remove_missing_games=%u\n"
-              "auto_remove_missing_delay_seconds=%u\n"
-              "api_bind_address=%s\n",
-              debug_enabled ? 1u : 0u, quiet_mode ? 1u : 0u,
-              update_emulators_enabled ? 1u : 0u,
-              auto_update_ampr_enabled ? 1u : 0u,
-              sm_config_fakelib_mode_name(fakelib_default_mode),
-              auto_remove_missing_games ? 1u : 0u,
-              auto_remove_missing_delay_seconds,
-              allow_lan_access ? "0.0.0.0" : "127.0.0.1") < 0) {
-    saved_errno = config_io_error();
-  }
-  if (saved_errno == 0) {
-    if (fan_target_temperature_c == FAN_TARGET_TEMPERATURE_SYSTEM) {
-      if (fputs("fan_target_temperature=system\n", out) == EOF)
-        saved_errno = config_io_error();
-    } else if (fprintf(out, "fan_target_temperature=%u\n",
-                       fan_target_temperature_c) < 0) {
-      saved_errno = config_io_error();
-    }
-  }
-  for (size_t i = 0; saved_errno == 0 && i < normalized_count; ++i) {
-    if (fprintf(out, "scanpath=%s\n", normalized_paths[i]) < 0)
-      saved_errno = config_io_error();
-  }
-  if (fflush(out) != 0 && saved_errno == 0)
-    saved_errno = config_io_error();
-  if (saved_errno == 0 && fsync(fileno(out)) != 0)
-    saved_errno = config_io_error();
-  if (fclose(out) != 0 && saved_errno == 0)
-    saved_errno = config_io_error();
-  if (in && fclose(in) != 0 && saved_errno == 0)
-    saved_errno = config_io_error();
-  if (saved_errno == 0 && rename(temp_path, CONFIG_FILE) != 0)
-    saved_errno = config_io_error();
-  if (saved_errno != 0)
-    (void)unlink(temp_path);
-  pthread_mutex_unlock(&g_config_file_mutex);
+  sm_ini_t main = {0}, profiles = {0};
+  char delay[16], temperature[16];
+  snprintf(delay, sizeof(delay), "%u", auto_remove_missing_delay_seconds);
+  if (fan_target_temperature_c == FAN_TARGET_TEMPERATURE_SYSTEM) strlcpy(temperature, "system", sizeof(temperature));
+  else snprintf(temperature, sizeof(temperature), "%u", fan_target_temperature_c);
+  bool ok = read_documents(&main, &profiles) &&
+      sm_ini_set(&main, "general", "debug", debug_enabled ? "on" : "off") &&
+      sm_ini_set(&main, "general", "quiet_mode", quiet_mode ? "on" : "off") &&
+      sm_ini_set(&main, "emulators", "update_enabled", update_emulators_enabled ? "on" : "off") &&
+      sm_ini_set(&main, "emulators", "auto_update_ampr", auto_update_ampr_enabled ? "on" : "off") &&
+      sm_ini_set(&main, "fakelib", "default_mode", sm_config_fakelib_mode_name(fakelib_default_mode)) &&
+      sm_ini_set(&main, "library", "remove_missing", auto_remove_missing_games ? "on" : "off") &&
+      sm_ini_set(&main, "library", "remove_delay_seconds", delay) &&
+      sm_ini_set(&main, "api", "bind_address", allow_lan_access ? "0.0.0.0" : "127.0.0.1") &&
+      sm_ini_set(&main, "fan", "target_temperature", temperature) &&
+      sm_ini_set(&main, "scan", "path", NULL);
+  for (size_t i = 0; ok && i < normalized_count; ++i)
+    ok = sm_ini_append(&main, "scan", "path", normalized_paths[i]);
+  if (ok) ok = save_document(&main, &profiles, false, false);
+  int error = errno;
   free(normalized_paths);
-  if (saved_errno != 0) {
-    errno = saved_errno;
-    return false;
-  }
-  return true;
+  sm_ini_free(&main); sm_ini_free(&profiles);
+  pthread_mutex_unlock(&g_config_file_mutex);
+  errno = error; return ok;
 }

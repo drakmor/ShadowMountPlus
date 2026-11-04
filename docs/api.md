@@ -1,5 +1,9 @@
 # ShadowMount HTTP/JSON API v1
 
+Configuration storage uses INI format v2: global settings and SMB connections are
+in `config.ini`, while game/image overrides are in `profiles.ini`. Public JSON
+field names and endpoints are unchanged; legacy files migrate at startup.
+
 The machine-readable OpenAPI 3.1 description is available in
 [`openapi.yaml`](openapi.yaml).
 

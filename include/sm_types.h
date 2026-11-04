@@ -154,7 +154,6 @@ typedef struct runtime_config {
   bool global_fakelib_game_priority;
   bool update_emulators_enabled;
   bool auto_update_ampr_enabled;
-  bool legacy_recursive_scan_forced;
   char api_bind_address[MAX_API_BIND_ADDRESS];
   uint32_t api_port;
   char global_fakelib_path[MAX_PATH];

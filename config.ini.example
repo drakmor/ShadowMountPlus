@@ -1,231 +1,101 @@
-# ShadowMount runtime config example
-# Place as: /data/shadowmount/config.ini
-#
-# This file is a template.
-# Nothing below is active until you remove the leading '#'.
-#
-# How to use this file:
-# 1. Uncomment only the parameters you really want to override.
-# 2. Lines that start with '# key=value' are real parameters you can uncomment directly.
-# 3. Lines that start with '##' are examples/templates only. Edit them before use.
+# ShadowMountPlus main configuration: /data/shadowmount/config.ini
+# Keep [config] version. Uncomment only settings you want to override.
+# Individual game/image settings belong in profiles.ini (see profiles.ini.example).
+# Boolean values: on/off, true/false, yes/no, 1/0.
+# Quote values containing # or ;, or leading/trailing spaces.
+# In quoted strings escape backslash as \\ and double quote as \".
+# Web edits preserve unrelated settings and comments.
 
-# Debug logging:
-# 1/true/yes/on  -> enable log_debug output to console and /data/shadowmount/debug.log
-# 0/false/no/off -> disable log_debug output
-# Default: 1
-# debug=1
+[config]
+version = 2
 
-# Quiet mode:
-# 1/true/yes/on  -> only show the startup version popup and runtime errors
-# 0/false/no/off -> also show normal informational popups
-# Default: 0
-# quiet_mode=0
+[general]
+# Debug output to console and /data/shadowmount/debug.log.
+# debug = on
+# Suppress ordinary informational notifications; errors still appear.
+# quiet_mode = off
+# auto uses the console language; locale examples: en-US, ru-RU.
+# language = auto
 
-# Notification language:
-# auto -> use the console system language
-# Or set a supported locale, for example: en-US, ru-RU, de-DE, fr-FR, es-ES
-# Default: auto
-# language=auto
-
-# Public HTTP/JSON API listener:
+[api]
 # Disabling the API also skips Shell UI launcher installation at startup.
-# Network access is enabled by default. Use 127.0.0.1 for PS5-only access.
-# Defaults: 0.0.0.0:10101
-# api_enabled=1
-# api_bind_address=0.0.0.0
-# api_port=10101
+# enabled = on
+# 127.0.0.1 restricts access to the console; default allows LAN access.
+# bind_address = 0.0.0.0
+# port = 10101
 
-# Global mount mode:
-# 1/true/yes/on/ro  -> read-only mounts
-# 0/false/no/off/rw -> read-write mounts
-# Default: 1
-# mount_read_only=1
+[scan]
+# Depth 1: first-level subfolders; 2: one extra nested level.
+# depth = 1
+# Full scan interval: 1..3600 seconds.
+# interval_seconds = 15
+# Minimum source age: 0..3600 seconds.
+# stability_wait_seconds = 10
+# Repeat path to replace built-in scan roots. With no path, use built-in roots.
+# Managed image roots are always added; /data/homebrew/backports stays a fallback.
+# path = /data/homebrew
+# path = /data/etaHEN/games
 
-# Mounting even damaged file systems:
-# 1/true/yes/on  -> include force option
-# 0/false/no/off -> default mount options
-# Default: 0
-# force_mount=0
+[mount]
+# ro: read-only; rw: read-write.
+# mode = ro
+# Attempt mounting damaged filesystems.
+# force = off
+# Keep backing images mounted between launches. USB images still unmount for sleep.
+# persistent_images = off
+# Backends: lvd or md. Internal BFS exFAT fast path requires lvd and 64 KiB clusters.
+# exfat_backend = lvd
+# ufs_backend = lvd
+# Cache the containing PFS compressed-file index before attaching nested images.
+# nested_pfs_index_cache = off
 
-# Keep discovered images mounted between game launches:
-# 1/true/yes/on  -> mount during scans and keep images mounted
-# 0/false/no/off -> mount images on demand for each game (default)
-# USB-backed images are still unmounted during suspend.
-# Default: 0
-# persistent_image_mounts=0
+[library]
+# Batch registration. Default is off on all firmware, including 12.00+.
+# install_all = off
+# Remove registrations whose sources stay unavailable for the delay below.
+# remove_missing = off
+# Allow removal when installed DLC exists.
+# remove_with_dlc = off
+# Delay: 1..86400 seconds.
+# remove_delay_seconds = 300
 
-# Use batch registration for newly staged titles:
-# 1/true/yes/on  -> submit queued installs through sceAppInstUtilAppInstallAll
-# 0/false/no/off -> register each title directly
-# Default: 0 on FW below 12.00, forced to 1 on FW 12.00 and newer
-# app_install_all=0
+[fakelib]
+# Sandbox fakelib overlays. Disable the standalone BackPork payload when enabled.
+# enabled = on
+# full, emulators, disabled. Individual game profiles override this default.
+# default_mode = full
+# global_enabled = on
+# global_path = /data/shadowmount/fakelib
+# game: game-specific files win; global: global files win. fakelib2 stays exclusive.
+# global_priority = game
 
-# Automatically remove games from the system library when their source
-# is no longer available:
-# 1/true/yes/on  -> remove after the configured missing delay
-# 0/false/no/off -> keep the registration (default)
-# Default: 0
-# auto_remove_missing_games=0
+[emulators]
+# Replace matching cached game fakelib files from path; excludes fakelib2 and PKGs.
+# update_enabled = on
+# path = /data/shadowmount/emus
+# Check for AMPR 30 seconds after startup, then every four hours; defer during games.
+# auto_update_ampr = off
+# ampr_update_url = https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx
 
-# Allow automatic removal of games that have installed DLC:
-# 1/true/yes/on  -> allow removal
-# 0/false/no/off -> keep games with installed DLC (default)
-# Default: 0
-# auto_remove_games_with_dlc=0
+[fan]
+# system: keep the system target; 50..91: apply a temperature target at game launch.
+# target_temperature = system
 
-# How long a source must remain unavailable before removal (seconds),
-# range: 1..86400
-# Default: 300
-# auto_remove_missing_delay_seconds=300
+[sectors]
+# Logical device sector sizes, not filesystem clusters: powers of two, 512..1048576.
+# BFS fast path uses lvd_exfat=512; the exFAT cluster size must be 65536.
+# lvd_exfat = 512
+# lvd_ufs = 4096
+# lvd_pfs = 4096
+# md_exfat = 512
+# md_ufs = 4096
 
-# Scan depth relative to each scan root:
-# 1 -> scan only first-level subdirectories
-# 2 -> also scan one additional nested level
-# Default: 1
-# scan_depth=1
-
-# Legacy compatibility:
-# recursive_scan=1 forces scan_depth=2
-# Default: disabled
-# recursive_scan=0
-
-# Full scan loop interval (seconds), range: 1..3600
-# Default: 15
-# scan_interval_seconds=15
-
-# Source stabilization wait window (seconds), range: 0..3600
-# If source mtime/ctime is newer than this window, it will be deferred to next scan.
-# Default: 10
-# stability_wait_seconds=10
-
-# Backend selection per filesystem:
-# lvd   -> /dev/lvdctl -> /dev/lvdN
-# md    -> /dev/mdctl  -> /dev/mdN
-# Defaults: exfat=lvd, ufs=lvd
-# LVD is required for the exFAT img_type=5/BFS sdimg fast path. The image file
-# must also reside on internal BFS and be formatted with a 64 KiB cluster.
-# exfat_backend=lvd
-# ufs_backend=lvd
-
-# PFS compressed-file index cache for nested images:
-# 1/true/yes/on  -> cache the containing PFS compressed-file index before
-#                   attaching a nested image
-# 0/false/no/off -> skip this optional request (default)
-# The old legacy_gddr5_cache key remains accepted for compatibility.
-# nested_pfs_index_cache=0
-
-# Sandbox fakelib support:
-# 1/true/yes/on  -> mount fakelib2 when present, otherwise fakelib, into common/lib
-# Installed PKGs can receive an external backport through the earlier NSFS app0
-# redirect; this switch controls only the later common/lib fakelib overlay.
-# 0/false/no/off -> disable fakelib overlays
-# Default: 1
-# backport_fakelib=1
-
-# Default fakelib mode for games without an individual override.
-# full (default), emulators, disabled; also configurable in the web interface.
-# Changes apply on the next launch; active mounts stay unchanged.
-# fakelib_default_mode=full
-
-# Per-game fakelib mode: default (inherit), full, emulators, disabled.
-# Applies to fakelib/fakelib2/global fakelib on the next launch; active mounts stay.
-# Repeatable, up to 128 explicit title rules shared with fakelib_exclude.
-# An explicit full overrides the default; default removes the title override.
-# Last valid entry wins; invalid modes/title IDs and excess rules are logged/ignored.
-# fakelib_mode=PPSA12345:emulators
-# fakelib_mode=PPSA54321:disabled
-# Emulators: AppContent, GameUpdate, NpEntitlementAccess; folder/image games
-# also Ampr and PlayGo (libSce*.sprx). Missing files are silently skipped.
-# libkernel.sprx is removed from writable folder sources. Images/PKGs use a
-# cache without it; source files stay unchanged. Filtering also applies to fakelib2.
-
-# Disable all fakelib overlays for specific games (repeatable, up to 128 titles):
-# Includes fakelib, fakelib2 and global fakelib. No exclusions by default.
-# Reloaded changes apply on the next game launch; active mounts are kept.
-# fakelib_exclude=PPSA12345
-# fakelib_exclude=CUSA12345
-# fakelib_exclude=LAPY12345
-# fakelib_exclude=FAKE12345
-
-# Updates for multiple emulators in the game fakelib:
-# 1/true/yes/on  -> cache the game's fakelib before launch and replace matching
-#                   cached files from emulators_path; fakelib2 and installed
-#                   PKGs are never changed
-# 0/false/no/off -> disable emulator updates
-# Default: 1
-# update_emulators=1
-#
-# Folder containing emulator update files (absolute path):
-# emulators_path=/data/shadowmount/emus
-# Cache: /data/shadowmount/cache/<TITLE_ID>/fakelib
-# Unused caches expire seven days after the most recent game launch.
-
-# Automatic libSceAmpr emulator download:
-# 1/true/yes/on  -> check 30 seconds after startup and then every four hours
-# 0/false/no/off -> do not access the network (default)
-# A missing local emulator is downloaded directly. 
-# Otherwise, the SPRX is downloaded only when the server file is newer, then
-# replaces emulators_path/libSceAmpr.sprx only when its contents differ.
-# Downloads are deferred while a game mount is active.
-# Default: 0
-# auto_update_ampr=0
-#
-# HTTP or HTTPS download URL:
-# ampr_update_url=https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx
-
-# Global fakelib overlay:
-# 1/true/yes/on  -> use global fakelib for every tracked game when present;
-#                   fakelib2 always remains exclusive when present
-# 0/false/no/off -> do not use the global fakelib folder
-# Default: 1
-# global_fakelib=1
-#
-# Default global fakelib folder:
-# global_fakelib_path=/data/shadowmount/fakelib
-#
-# Priority when both global and per-game fakelib exist in the combined cache:
-# game   -> game-specific files win
-# global -> global files win
-# Default: game
-# global_fakelib_priority=game
-#
-## Exclude specific title IDs from the global fakelib overlay (repeatable):
-## global_fakelib_exclude=PPSA12345
-
-# Automatic fan-controller target for games:
-# system -> leave the system-managed target unchanged (default)
-# 50..91 -> apply this target when a game starts
-# The stock automatic fan controller remains enabled.
-# Default: system
-# fan_target_temperature=system
-
-# Backend-specific sector size overrides:
-# Defaults: lvd_exfat=512, lvd_ufs=4096, lvd_pfs=4096, md_exfat=512,md_ufs=4096.
-# Keep lvd_exfat at 512 for the BFS fast path. 65536 is the exFAT cluster and
-# LVD secondary unit in the optimized profile, not the logical sector size.
-# lvd_exfat_sector_size=512
-# lvd_ufs_sector_size=4096
-# lvd_pfs_sector_size=4096
-# md_exfat_sector_size=512
-# md_ufs_sector_size=4096
-
-# Optional custom scan roots (can be repeated):
-# If at least one scanpath=... is present, only these paths are used.
-# /data/homebrew/backports remains available as a backport fallback.
-# "/mnt/shadowmnt/pfsc" and "/mnt/shadowmnt" are always added automatically.
-# Default: use built-in scan path list
-# scanpath=/data/homebrew
-
-## Per-image mount mode override by file name (repeatable):
-## image_ro=<image_filename>
-## image_rw=<image_filename>
-## image_sector=<image_filename>:<sector_size>
-##
-## Examples:
-## image_ro=PPSA12345.ffpfs
-## image_rw=My Game Dump.exfat
-## image_sector=Legacy 512 Sector.exfat:512
-
-## More custom scan root examples:
-## scanpath=/data/homebrew
-## scanpath=/data/etaHEN/games
+# Up to 16 SMB connections; each needs a unique name and path. Credentials are
+# plaintext; protect this file and config-v1-backup. New files use mode 0600.
+# Uncomment the section AND its fields to add a connection.
+# [smb:NAS]
+# path = smb://192.168.1.10/games
+# username = "DOMAIN\\user"
+# password = "change me"
+# active = on
+# read_only = off

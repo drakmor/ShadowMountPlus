@@ -101,7 +101,8 @@ static int g_scanner_wake_pipe[2] = {-1, -1};
 static atomic_bool g_usb_watches_suspended = ATOMIC_VAR_INIT(true);
 enum { USB_EJECT_IDLE, USB_EJECT_REQUESTED, USB_EJECT_PAUSED, USB_EJECT_RESUMING };
 static atomic_int g_usb_eject_pause = ATOMIC_VAR_INIT(USB_EJECT_IDLE);
-static int g_scanner_config_fd = -1;
+static const char *const g_scanner_config_paths[] = {CONFIG_FILE, PROFILES_FILE};
+static int g_scanner_config_fds[2] = {-1, -1};
 static int g_scanner_manual_fd = -1;
 static volatile sig_atomic_t g_scanner_wake_write_fd = -1;
 static scan_candidate_t g_scanner_scan_candidates[MAX_PENDING];
@@ -332,9 +333,9 @@ static void close_scanner_wake_pipe(void) {
 }
 
 static void close_scanner_config_file(void) {
-  if (g_scanner_config_fd >= 0) {
-    close(g_scanner_config_fd);
-    g_scanner_config_fd = -1;
+  for (size_t i = 0; i < 2; ++i) {
+    if (g_scanner_config_fds[i] >= 0) close(g_scanner_config_fds[i]);
+    g_scanner_config_fds[i] = -1;
   }
 }
 
@@ -1236,40 +1237,36 @@ static void schedule_scan_root_watch_tree_rebuild(
 }
 
 static void register_config_file_watch(int kq, uint64_t now_us) {
-  if (g_scanner_config_fd < 0)
-    return;
-
-  struct kevent kev;
-  EV_SET(&kev, (uintptr_t)g_scanner_config_fd, EVFILT_VNODE,
-         EV_ADD | EV_ENABLE | EV_CLEAR,
-         NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_DELETE | NOTE_RENAME |
-             NOTE_REVOKE,
-         0, NULL);
-  if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) {
-    log_debug("  [CFG] config watcher registration failed: %s",
-              strerror(errno));
-    close_scanner_config_file();
-    schedule_config_probe(now_us);
-    return;
-  }
-
   g_scanner_config_probe_due_us = 0;
+  for (size_t i = 0; i < 2; ++i) {
+    int fd = g_scanner_config_fds[i];
+    if (fd >= 0) {
+      struct kevent kev;
+      EV_SET(&kev, (uintptr_t)fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR,
+             NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE,
+             0, NULL);
+      if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0) {
+        log_debug("  [CFG] watcher registration failed for %s: %s",
+                  g_scanner_config_paths[i], strerror(errno));
+        close(fd);
+        g_scanner_config_fds[i] = -1;
+      }
+    }
+    if (g_scanner_config_fds[i] < 0) schedule_config_probe(now_us);
+  }
 }
 
 static void reopen_config_file_watch(int kq, uint64_t now_us) {
-  close_scanner_config_file();
-
-  g_scanner_config_fd = open(CONFIG_FILE, O_RDONLY);
-  if (g_scanner_config_fd < 0) {
-    if (errno != ENOENT) {
-      log_debug("  [CFG] config watcher unavailable for %s: %s", CONFIG_FILE,
-                strerror(errno));
+  for (size_t i = 0; i < 2; ++i) {
+    if (g_scanner_config_fds[i] >= 0) continue;
+    g_scanner_config_fds[i] = open(g_scanner_config_paths[i], O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+    if (g_scanner_config_fds[i] < 0) {
+      if (errno != ENOENT)
+        log_debug("  [CFG] watcher unavailable for %s: %s", g_scanner_config_paths[i], strerror(errno));
+      schedule_config_probe(now_us);
     }
-    schedule_config_probe(now_us);
-    return;
   }
-
-  register_config_file_watch(kq, now_us);
+  if (kq >= 0) register_config_file_watch(kq, now_us);
 }
 
 static void register_manual_file_watch(int kq, uint64_t now_us) {
@@ -1546,7 +1543,8 @@ static bool config_reload_due(uint64_t now_us) {
 }
 
 static bool config_probe_due(uint64_t now_us) {
-  return g_scanner_config_fd < 0 && g_scanner_config_probe_due_us != 0 &&
+  return (g_scanner_config_fds[0] < 0 || g_scanner_config_fds[1] < 0) &&
+         g_scanner_config_probe_due_us != 0 &&
          now_us >= g_scanner_config_probe_due_us;
 }
 
@@ -1587,7 +1585,8 @@ static uint64_t compute_next_scan_deadline_us(uint64_t now_us,
     next_deadline = g_scanner_config_reload_ready_after_us;
   }
 
-  if (g_scanner_config_fd < 0 && g_scanner_config_probe_due_us != 0 &&
+  if ((g_scanner_config_fds[0] < 0 || g_scanner_config_fds[1] < 0) &&
+         g_scanner_config_probe_due_us != 0 &&
       (next_deadline == 0 || g_scanner_config_probe_due_us < next_deadline)) {
     next_deadline = g_scanner_config_probe_due_us;
   }
@@ -1693,9 +1692,13 @@ static bool handle_scanner_control_event(int kq, const struct kevent *event,
   }
   if (event->filter != EVFILT_VNODE)
     return false;
-  if (event->ident == (uintptr_t)g_scanner_config_fd) {
-    if ((event->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0)
+  for (size_t i = 0; i < 2; ++i) {
+    if (g_scanner_config_fds[i] < 0 || event->ident != (uintptr_t)g_scanner_config_fds[i]) continue;
+    if ((event->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0) {
+      close(g_scanner_config_fds[i]);
+      g_scanner_config_fds[i] = -1;
       reopen_config_file_watch(kq, now_us);
+    }
     schedule_config_reload(now_us);
     return true;
   }
@@ -1952,13 +1955,7 @@ bool sm_scanner_init(void) {
   }
   g_scanner_wake_write_fd = (sig_atomic_t)g_scanner_wake_pipe[1];
 
-  g_scanner_config_fd = open(CONFIG_FILE, O_RDONLY);
-  if (g_scanner_config_fd < 0 && errno != ENOENT) {
-    log_debug("  [CFG] config watch unavailable for %s: %s", CONFIG_FILE,
-              strerror(errno));
-  }
-  if (g_scanner_config_fd < 0)
-    schedule_config_probe(monotonic_time_us());
+  reopen_config_file_watch(-1, monotonic_time_us());
 
   g_scanner_manual_fd = open_manual_list_file();
   if (g_scanner_manual_fd < 0)
@@ -2190,6 +2187,7 @@ void sm_scanner_run_loop(void) {
       // Sleep may have discarded config/manual rename or write events. Reopen
       // the current files and schedule reloads before returning to idle waits.
       uint64_t resume_us = monotonic_time_us();
+      close_scanner_config_file();
       reopen_config_file_watch(kq, resume_us);
       schedule_config_reload(resume_us);
       reopen_manual_file_watch(kq, resume_us);
@@ -2270,7 +2268,7 @@ void sm_scanner_run_loop(void) {
     if (config_probe_due(now_us)) {
       g_scanner_config_probe_due_us = 0;
       reopen_config_file_watch(kq, now_us);
-      if (g_scanner_config_fd >= 0)
+      if (g_scanner_config_fds[0] >= 0 && g_scanner_config_fds[1] >= 0)
         schedule_config_reload(now_us);
       continue;
     }

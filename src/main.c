@@ -480,30 +480,25 @@ static bool write_buffer_to_fd(int fd, const unsigned char *buf, size_t size) {
   return true;
 }
 
-static void ensure_runtime_config_file(void) {
-  int fd = open(CONFIG_FILE, O_WRONLY | O_CREAT | O_EXCL, 0666);
-  if (fd < 0) {
-    if (errno == EEXIST)
-      return;
-    printf("[CFG] Failed to create %s: %s\n", CONFIG_FILE, strerror(errno));
-    return;
+static bool ensure_runtime_config_file(void) {
+  // Existing legacy files must be migrated together, even without config.ini.
+  const char *paths[] = {CONFIG_FILE, LEGACY_AUTOTUNE_FILE, LEGACY_SMB_FILE};
+  struct stat st;
+  for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+    if (lstat(paths[i], &st) == 0) return true;
+    if (errno != ENOENT) return false;
   }
-
-  size_t template_size = (size_t)config_ini_example_len;
-  int saved_errno = 0;
-  if (!write_buffer_to_fd(fd, config_ini_example, template_size))
-    saved_errno = errno;
-  if (close(fd) != 0 && saved_errno == 0)
-    saved_errno = errno;
-
-  if (saved_errno != 0) {
-    errno = saved_errno;
-    printf("[CFG] Failed to write %s: %s\n", CONFIG_FILE, strerror(errno));
-    (void)unlink(CONFIG_FILE);
-    return;
-  }
-
-  printf("[CFG] Created default config from template: %s\n", CONFIG_FILE);
+  char temp[] = CONFIG_FILE ".XXXXXX";
+  int fd = mkstemp(temp);
+  if (fd < 0) return false;
+  int error = 0;
+  if (!write_buffer_to_fd(fd, config_ini_example, (size_t)config_ini_example_len) || fsync(fd))
+    error = errno;
+  if (close(fd) && !error) error = errno;
+  if (!error && rename(temp, CONFIG_FILE)) error = errno;
+  if (error) unlink(temp);
+  errno = error;
+  return !error;
 }
 
 static void cleanup_kstuff_noautomount_file(void) {
@@ -564,7 +559,6 @@ int main(void) {
   install_signal_handlers();
 
   mkdir(LOG_DIR, 0777);
-  ensure_runtime_config_file();
   existing_pid = find_pid_by_name(PAYLOAD_NAME, true);
   if (existing_pid < 0) {
     printf("[RESTART] Failed to enumerate running processes.\n");
@@ -600,6 +594,12 @@ int main(void) {
 
   (void)unlink(LOG_FILE_PREV);
   (void)rename(LOG_FILE, LOG_FILE_PREV);
+  if (!ensure_runtime_config_file() || !sm_config_prepare_files() || !load_runtime_config()) {
+    printf("[CFG] Configuration could not be loaded/migrated: %s. Original files retained.\n", strerror(errno));
+    cleanup_kstuff_noautomount_file();
+    sceUserServiceTerminate();
+    return 1;
+  }
   if (!sm_scanner_init())
     log_debug("  [SCAN] scanner service init incomplete; steady-state scanner will stop if initialization cannot be completed");
 
@@ -613,7 +613,6 @@ int main(void) {
       SHADOWMOUNT_VERSION, firmware_version, SHADOWMOUNT_BUILD_TIME);
   if (restarted_previous_instance)
     log_debug("[RESTART] Previous instance stopped, continuing startup");
-  load_runtime_config();
   const runtime_config_t startup_cfg = runtime_config();
   sm_notifications_init();
   if (!wait_for_kstuff_ready()) {
@@ -657,11 +656,9 @@ int main(void) {
   }
   log_non_empty_scan_paths();
 
-  if (runtime_config().legacy_recursive_scan_forced) {
-    notify_system_info_l10n(SM_L10N_RECURSIVE_SCAN_DEPRECATED);
-  } else if (runtime_config().scan_depth > 1u) {
+  if (startup_cfg.scan_depth > 1u) {
     notify_system_info_l10n(SM_L10N_SCAN_DEPTH_ENABLED,
-                            runtime_config().scan_depth);
+                            startup_cfg.scan_depth);
   }
 
   cleanup_mount_dirs();
