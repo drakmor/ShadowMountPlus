@@ -454,22 +454,23 @@ static void build_image_mount_point_for_fs(const char *file_path,
                                            char mount_point[MAX_PATH]) {
   const char *filename = get_filename_component(file_path);
   char base_name[MAX_PATH];
-  char mount_name[MAX_PATH];
   strip_extension(filename, base_name, sizeof(base_name));
-
-  size_t base_len = strlen(base_name);
-  size_t max_base_len = sizeof(mount_name) - 1u - 9u;
-  if (base_len > max_base_len)
-    base_len = max_base_len;
-  memcpy(mount_name, base_name, base_len);
-  mount_name[base_len] = '\0';
-  snprintf(mount_name + base_len, sizeof(mount_name) - base_len, "_%08x",
-           sm_fnv1a32(file_path));
 
   const char *mount_base =
       fs_type == IMAGE_FS_PFSC_CONTAINER ? PFSC_IMAGE_MOUNT_BASE
                                          : IMAGE_MOUNT_BASE;
-  snprintf(mount_point, MAX_PATH, "%s/%s", mount_base, mount_name);
+  _Static_assert(sizeof(IMAGE_MOUNT_BASE) + 10u <
+                     sizeof(((struct statfs *)0)->f_mntonname),
+                 "image mount base leaves no room for a hashed name");
+  _Static_assert(sizeof(PFSC_IMAGE_MOUNT_BASE) + 10u <
+                     sizeof(((struct statfs *)0)->f_mntonname),
+                 "PFSC mount base leaves no room for a hashed name");
+  // Leave room for '/', the nine-byte hash suffix and the terminating NUL.
+  // Mount lookup compares this path with statfs.f_mntonname verbatim.
+  size_t max_base_len = sizeof(((struct statfs *)0)->f_mntonname) -
+                        strlen(mount_base) - 11u;
+  snprintf(mount_point, MAX_PATH, "%s/%.*s_%08x", mount_base,
+           (int)max_base_len, base_name, sm_fnv1a32(file_path));
 }
 
 static void build_image_mount_point(const char *file_path,
