@@ -450,6 +450,34 @@ static bool prepare_title_runtime(const char *title_id,
 static bool release_title_runtime(const char *title_id,
                                   bool public_request);
 
+static void cleanup_abandoned_launch(const char *next_title_id) {
+  char abandoned[MAX_TITLE_ID] = {0};
+  pthread_mutex_lock(&g_service.mutex);
+  const shellcore_mount_owner_t *owner = &g_service.prepared;
+  if (owner->title_id[0] != '\0' &&
+      !mount_owner_matches(owner, next_title_id) &&
+      owner->pid <= 0 && owner->app_id == 0 && g_service.launch_pending &&
+      !g_service.prepare_in_progress && !g_service.external_mutation_in_progress &&
+      g_service.outgoing.title_id[0] == '\0' &&
+      g_service.releasing_title_id[0] == '\0' &&
+      strcmp(g_service.pending_launch_title_id, owner->title_id) != 0) {
+    (void)strlcpy(abandoned, owner->title_id, sizeof(abandoned));
+  }
+  pthread_mutex_unlock(&g_service.mutex);
+  if (abandoned[0] == '\0')
+    return;
+
+  // A different explicit launch ends ShellCore's retry of this unbound title.
+  // The release gate rechecks ownership if NOTE_EXEC bound it meanwhile.
+  if (release_title_runtime(abandoned, false)) {
+    log_debug("  [SHELLCORE] abandoned launch released: %s (launching %s)",
+              abandoned, next_title_id);
+  } else {
+    log_debug("  [SHELLCORE] abandoned launch cleanup incomplete: %s (%s)",
+              abandoned, strerror(errno));
+  }
+}
+
 static int mount_managed_title_runtime(const char *title_id,
                                        bool allow_unmanaged,
                                        bool launch_request,
@@ -517,6 +545,9 @@ static int handle_launch_request(const char *title_id) {
   pthread_mutex_unlock(&g_service.mutex);
   if (changed)
     sm_scanner_wake();
+
+  if (is_supported_game_title_id(title_id) && !runtime_sleep_mode_active())
+    cleanup_abandoned_launch(title_id);
 
   int status = mount_managed_title_runtime(title_id, false, true, NULL);
   if (status != 0) {

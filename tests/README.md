@@ -4,6 +4,7 @@ Host regression tests (Linux/WSL; no console connection):
 python3 tools/test_runtime_config.py --sanitize
 python3 tools/test_shellcore.py --sanitize
 python3 tools/test_scan_permissions.py
+python3 tools/test_shellcore_launch.py --sanitize
 ```
 
 The config test compiles the production implementation with host stubs for
