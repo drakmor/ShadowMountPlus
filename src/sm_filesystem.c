@@ -1023,6 +1023,64 @@ void cleanup_duplicate_title_mounts(void) {
 }
 
 // --- Copy Helpers for Install Action ---
+void lowercase_sce_sys_name(char *name) {
+  for (char *p = name; *p; ++p)
+    *p = (char)tolower((unsigned char)*p);
+}
+
+bool resolve_sce_sys_file(const char *root, const char *relative,
+                          char out[MAX_PATH]) {
+  char remaining[MAX_PATH];
+  size_t used = strlcpy(out, root, MAX_PATH);
+  if (used >= MAX_PATH ||
+      strlcpy(remaining, relative, sizeof(remaining)) >= sizeof(remaining)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  char *part = remaining;
+  for (;;) {
+    char *next = strchr(part, '/');
+    if (next)
+      *next++ = '\0';
+    if (!part[0] || strcmp(part, ".") == 0 || strcmp(part, "..") == 0) {
+      errno = EINVAL;
+      return false;
+    }
+    DIR *dir = opendir(out);
+    if (!dir)
+      return false;
+    char found[sizeof(((struct dirent *)0)->d_name)] = {0};
+    int error = 0;
+    for (;;) {
+      errno = 0;
+      struct dirent *entry = readdir(dir);
+      if (!entry) {
+        error = errno;
+        break;
+      }
+      if (strcasecmp(entry->d_name, part) != 0)
+        continue;
+      (void)strlcpy(found, entry->d_name, sizeof(found));
+      break;
+    }
+    if (closedir(dir) != 0 && error == 0)
+      error = errno;
+    if (error != 0 || !found[0]) {
+      errno = error != 0 ? error : ENOENT;
+      return false;
+    }
+    int written = snprintf(out + used, MAX_PATH - used, "/%s", found);
+    if (written < 0 || (size_t)written >= MAX_PATH - used) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    used += (size_t)written;
+    if (!next)
+      return true;
+    part = next;
+  }
+}
+
 static FILE *open_copy_destination(const char *path, bool set_mode,
                                    mode_t mode) {
   if (!set_mode)
@@ -1107,7 +1165,10 @@ static int copy_param_json_rewrite(const char *src, const char *dst,
 static int copy_file_buffered(const char *src, const char *dst, bool set_mode,
                               mode_t mode, char *buffer,
                               size_t buffer_size) {
-  if (strstr(src, "/sce_sys/param.json")) {
+  static const char param_suffix[] = "/sce_sys/param.json";
+  size_t src_len = strlen(src);
+  if (src_len >= sizeof(param_suffix) - 1u &&
+      strcasecmp(src + src_len - (sizeof(param_suffix) - 1u), param_suffix) == 0) {
     return copy_param_json_rewrite(src, dst, set_mode, mode);
   }
 
@@ -1186,22 +1247,27 @@ static int remove_copy_path(const char *path) {
 
 static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
                          mode_t mode, bool overlay, char *buffer,
-                         size_t buffer_size) {
-  if (mkdir(dst, set_mode ? mode : 0777) != 0) {
-    if (errno != EEXIST)
-      return -1;
-    struct stat dst_st;
-    if (lstat(dst, &dst_st) != 0)
-      return -1;
-    if (!S_ISDIR(dst_st.st_mode)) {
-      errno = ENOTDIR;
-      return -1;
-    }
-  }
+                         size_t buffer_size, bool lowercase_names) {
+  int ret = 0, saved_errno = 0;
   DIR *d = opendir(src);
   if (!d)
     return -1;
-  int ret = 0;
+  if (mkdir(dst, set_mode ? mode : 0777) != 0) {
+    if (errno != EEXIST) {
+      ret = -1;
+      goto cleanup;
+    }
+    struct stat dst_st;
+    if (lstat(dst, &dst_st) != 0) {
+      ret = -1;
+      goto cleanup;
+    }
+    if (!S_ISDIR(dst_st.st_mode)) {
+      errno = ENOTDIR;
+      ret = -1;
+      goto cleanup;
+    }
+  }
   char ss[MAX_PATH], dd[MAX_PATH];
   struct stat st;
   struct stat lst;
@@ -1223,6 +1289,8 @@ static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
       ret = -1;
       break;
     }
+    if (lowercase_names)
+      lowercase_sce_sys_name(dd + strlen(dst) + 1);
     if (lstat(ss, &lst) != 0) {
       ret = -1;
       break;
@@ -1262,7 +1330,7 @@ static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
     }
     if (S_ISDIR(st.st_mode)) {
       if (copy_dir_impl(ss, dd, set_mode, mode, overlay, buffer,
-                        buffer_size) != 0) {
+                        buffer_size, lowercase_names) != 0) {
         ret = -1;
         break;
       }
@@ -1274,8 +1342,9 @@ static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
       }
     }
   }
-  int saved_errno = ret != 0 ? errno : 0;
-  if (closedir(d) != 0 && ret == 0) {
+cleanup:
+  saved_errno = ret != 0 ? errno : 0;
+  if (d && closedir(d) != 0 && ret == 0) {
     ret = -1;
     saved_errno = errno;
   }
@@ -1285,13 +1354,14 @@ static int copy_dir_impl(const char *src, const char *dst, bool set_mode,
 }
 
 static int copy_dir_with_options(const char *src, const char *dst,
-                                 bool set_mode, mode_t mode, bool overlay) {
+                                 bool set_mode, mode_t mode, bool overlay,
+                                 bool sce_sys) {
   const size_t buffer_size = 64u * 1024u;
   char *buffer = malloc(buffer_size);
   if (!buffer)
     return -1;
   int ret = copy_dir_impl(src, dst, set_mode, mode, overlay, buffer,
-                          buffer_size);
+                          buffer_size, sce_sys);
   free(buffer);
   return ret;
 }
@@ -1305,11 +1375,15 @@ int copy_file_with_mode(const char *src, const char *dst, mode_t mode) {
 }
 
 int copy_dir(const char *src, const char *dst) {
-  return copy_dir_with_options(src, dst, false, 0, false);
+  return copy_dir_with_options(src, dst, false, 0, false, false);
+}
+
+int copy_sce_sys_dir(const char *src, const char *dst) {
+  return copy_dir_with_options(src, dst, false, 0, false, true);
 }
 
 int copy_dir_with_mode(const char *src, const char *dst, mode_t mode) {
-  return copy_dir_with_options(src, dst, true, mode, true);
+  return copy_dir_with_options(src, dst, true, mode, true, false);
 }
 
 int remount_system_ex(void) {

@@ -76,6 +76,12 @@ void cleanup_mount_links_for_source_unmount(const char *source_root);
 void cleanup_usb_mount_links_for_suspend(void);
 // Recursively copy a directory tree.
 int copy_dir(const char *src, const char *dst);
+// Copy system metadata with lowercase file and directory names.
+int copy_sce_sys_dir(const char *src, const char *dst);
+void lowercase_sce_sys_name(char *name);
+// Resolve each relative component without case.
+bool resolve_sce_sys_file(const char *root, const char *relative,
+                          char out[MAX_PATH]);
 // Merge a directory tree and set mode as each destination entry is created.
 int copy_dir_with_mode(const char *src, const char *dst, mode_t mode);
 // Copy a single file.

@@ -102,8 +102,8 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
     errno = ECANCELED;
     return false;
   }
-  DIR *d = opendir(src_sce_sys);
-  if (!d)
+  DIR *dir = opendir(src_sce_sys);
+  if (!dir)
     return false;
 
   int error = 0;
@@ -116,7 +116,7 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
       break;
     }
     errno = 0;
-    struct dirent *e = readdir(d);
+    const struct dirent *e = readdir(dir);
     if (!e) {
       error = errno;
       break;
@@ -145,6 +145,7 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
       error = ENAMETOOLONG;
       break;
     }
+    lowercase_sce_sys_name(dst_path + strlen(user_appmeta_dir) + 1);
     errno = 0;
     if (copy_file(src_path, dst_path) != 0) {
       error = errno != 0 ? errno : EIO;
@@ -152,7 +153,7 @@ static bool copy_sce_sys_to_appmeta(const char *src_sce_sys,
     }
   }
 
-  if (closedir(d) != 0 && error == 0)
+  if (closedir(dir) != 0 && error == 0)
     error = errno;
 
   if (error != 0)
@@ -170,12 +171,8 @@ static bool copy_optional_trophy_metadata_file(const char *src_sce_sys,
   char src_path[MAX_PATH];
   char dst_path[MAX_PATH];
 
-  int written = snprintf(src_path, sizeof(src_path), "%s/%s", src_sce_sys,
-                          relative_path);
-  if (written < 0 || (size_t)written >= sizeof(src_path)) {
-    errno = ENAMETOOLONG;
-    return false;
-  }
+  if (!resolve_sce_sys_file(src_sce_sys, relative_path, src_path))
+    return errno == ENOENT || errno == ENOTDIR;
   struct stat st;
   if (stat(src_path, &st) != 0)
     return errno == ENOENT || errno == ENOTDIR;
@@ -184,8 +181,8 @@ static bool copy_optional_trophy_metadata_file(const char *src_sce_sys,
     return false;
   }
 
-  written = snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_base,
-                      relative_path);
+  int written = snprintf(dst_path, sizeof(dst_path), "%s/%s", dst_base,
+                          relative_path);
   if (written < 0 || (size_t)written >= sizeof(dst_path)) {
     errno = ENAMETOOLONG;
     return false;
@@ -297,7 +294,8 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     }
   }
 
-  snprintf(src_sce_sys, sizeof(src_sce_sys), "%s/sce_sys", src_path);
+  if (!resolve_sce_sys_file(src_path, "sce_sys", src_sce_sys))
+    return false;
   appmeta_missing = !has_appmeta_data(title_id);
   if (is_remount && appmeta_missing) {
     log_debug("  [REG] appmeta missing, restaging metadata only: %s", title_id);
@@ -310,8 +308,8 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     return false;
 
   // COPY FILES
-  snprintf(src_snd0, sizeof(src_snd0), "%s/snd0.at9", src_sce_sys);
-  has_src_snd0 = path_exists(src_snd0);
+  has_src_snd0 = resolve_sce_sys_file(src_sce_sys, "snd0.at9", src_snd0) &&
+                 path_exists(src_snd0);
   if (!restage_staging && !restage_appmeta)
     log_debug("  [SPEED] Skipping file copy (Assets already exist)");
 
@@ -320,7 +318,7 @@ static bool mount_and_install(const char *src_path, const char *title_id,
     mkdir(user_app_dir, 0777);
     snprintf(user_sce_sys, sizeof(user_sce_sys), "%s/sce_sys", user_app_dir);
     mkdir(user_sce_sys, 0777);
-    if (copy_dir(src_sce_sys, user_sce_sys) != 0) {
+    if (copy_sce_sys_dir(src_sce_sys, user_sce_sys) != 0) {
       log_debug("  [COPY] Failed to copy sce_sys staging: %s -> %s", src_sce_sys,
                 user_sce_sys);
       return false;
@@ -328,7 +326,7 @@ static bool mount_and_install(const char *src_path, const char *title_id,
 
     char icon_src[MAX_PATH];
     char icon_dst[MAX_PATH];
-    snprintf(icon_src, sizeof(icon_src), "%s/icon0.png", src_sce_sys);
+    snprintf(icon_src, sizeof(icon_src), "%s/icon0.png", user_sce_sys);
     snprintf(icon_dst, sizeof(icon_dst), "%s/icon0.png", user_app_dir);
     if (copy_file(icon_src, icon_dst) != 0) {
       log_debug("  [COPY] Failed to copy staged icon: %s -> %s", icon_src,
