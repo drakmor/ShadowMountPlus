@@ -5828,6 +5828,8 @@
           return;
         }
         if (key === "Escape" || key === "BrowserBack") {
+          // Circle closes the PS5 browser card when the page leaves it unhandled.
+          if (playStationBrowser && !dialog && navigation.view === "library") return;
           event.preventDefault();
           goBack();
           return;
