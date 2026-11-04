@@ -21,6 +21,7 @@
 #include "sm_image.h"
 #include "sm_install_queue.h"
 #include "sm_manual.h"
+#include "sm_self.h"
 #include "sm_shellcore_service.h"
 
 typedef struct {
@@ -414,6 +415,223 @@ static bool enqueue_directory_candidate(
   return true;
 }
 
+typedef struct {
+  char path[MAX_PATH];
+  struct stat st;
+} module_case_file_t;
+
+typedef struct {
+  module_case_file_t *files;
+  size_t count, capacity;
+  dev_t device;
+} module_case_snapshot_t;
+
+static bool is_module_filename(const char *name) {
+  const char *ext = strrchr(name, '.');
+  return ext && (!strcasecmp(ext, ".prx") || !strcasecmp(ext, ".sprx"));
+}
+
+static uint64_t module_case_file_fingerprint(const module_case_file_t *file) {
+  uint64_t hash = 14695981039346656037ull;
+  for (const unsigned char *p = (const unsigned char *)file->path; *p; ++p)
+    hash = (hash ^ *p) * 1099511628211ull;
+  const uint64_t fields[] = {
+      (uint64_t)file->st.st_dev, (uint64_t)file->st.st_ino,
+      (uint64_t)file->st.st_size, (uint64_t)file->st.st_mtim.tv_sec,
+      (uint64_t)file->st.st_mtim.tv_nsec, (uint64_t)file->st.st_ctim.tv_sec,
+      (uint64_t)file->st.st_ctim.tv_nsec};
+  for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
+    for (unsigned byte = 0; byte < 8; ++byte)
+      hash = (hash ^ ((fields[i] >> (byte * 8u)) & 0xffu)) * 1099511628211ull;
+  return hash;
+}
+
+static bool collect_module_case_files(const char *path, unsigned depth,
+                                      module_case_snapshot_t *snapshot) {
+  if (depth > 32 || should_stop_requested() || runtime_sleep_mode_active() ||
+      sm_game_lifecycle_has_active_game())
+    return false;
+  DIR *dir = opendir(path);
+  if (!dir)
+    return false;
+  bool complete = true;
+  for (;;) {
+    if (should_stop_requested() || runtime_sleep_mode_active() ||
+        sm_game_lifecycle_has_active_game()) {
+      complete = false;
+      break;
+    }
+    errno = 0;
+    const struct dirent *entry = readdir(dir);
+    if (!entry) {
+      complete = errno == 0;
+      break;
+    }
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+      continue;
+    if (entry->d_type != DT_DIR && entry->d_type != DT_UNKNOWN &&
+        !is_module_filename(entry->d_name))
+      continue;
+    module_case_file_t file;
+    int written = snprintf(file.path, sizeof(file.path), "%s/%s", path,
+                            entry->d_name);
+    if (written < 0 || (size_t)written >= sizeof(file.path) ||
+        lstat(file.path, &file.st) != 0) {
+      complete = false;
+      break;
+    }
+    if (file.st.st_dev != snapshot->device)
+      continue;
+    if (S_ISDIR(file.st.st_mode)) {
+      if (!collect_module_case_files(file.path, depth + 1u, snapshot)) {
+        complete = false;
+        break;
+      }
+      continue;
+    }
+    if (!S_ISREG(file.st.st_mode) || !is_module_filename(entry->d_name))
+      continue;
+    if (snapshot->count == snapshot->capacity) {
+      if (snapshot->capacity > SIZE_MAX / 2u / sizeof(*snapshot->files)) {
+        complete = false;
+        break;
+      }
+      size_t capacity = snapshot->capacity ? snapshot->capacity * 2u : 16u;
+      module_case_file_t *files = realloc(snapshot->files, capacity * sizeof(*files));
+      if (!files) {
+        complete = false;
+        break;
+      }
+      snapshot->files = files;
+      snapshot->capacity = capacity;
+    }
+    snapshot->files[snapshot->count++] = file;
+  }
+  if (closedir(dir) != 0)
+    complete = false;
+  return complete;
+}
+
+// Normal scanner passes also catch in-place writes without new vnode watches.
+// Parse metadata only when this directory's library snapshot changes.
+static void repair_module_case_for_source(const char *path) {
+  if ((!path_matches_root_or_child(path, "/data") &&
+       !path_matches_root_or_child(path, "/mnt/ext0/homebrew") &&
+       !path_matches_root_or_child(path, "/mnt/ext1/homebrew")) ||
+      should_stop_requested() || runtime_sleep_mode_active() ||
+      sm_game_lifecycle_has_active_game())
+    return;
+  struct stat st;
+  struct statfs fs;
+  if (lstat(path, &st) != 0 || !S_ISDIR(st.st_mode) || statfs(path, &fs) != 0 ||
+      (fs.f_flags & MNT_RDONLY) ||
+      (strcmp(fs.f_fstypename, "ufs") && strcmp(fs.f_fstypename, "bfs")))
+    return;
+  module_case_snapshot_t snapshot = {.device = st.st_dev};
+  if (!collect_module_case_files(path, 0, &snapshot))
+    goto cleanup;
+  uint64_t fingerprint = 0;
+  time_t now = time(NULL);
+  unsigned stability = runtime_config().stability_wait_seconds;
+  for (size_t i = 0; i < snapshot.count; ++i) {
+    const module_case_file_t *file = &snapshot.files[i];
+    time_t changed = file->st.st_mtime > file->st.st_ctime
+                         ? file->st.st_mtime : file->st.st_ctime;
+    double age = difftime(now, changed);
+    if (age >= 0 && age < (double)stability)
+      goto cleanup;
+    fingerprint += module_case_file_fingerprint(file);
+  }
+  if (module_case_fingerprint_matches(path, fingerprint))
+    goto cleanup;
+  size_t fixed = 0, conflicts = 0, failures = 0;
+  int first_error = 0;
+  const char *failed_path = NULL;
+  for (size_t i = 0; i < snapshot.count; ++i) {
+    if (should_stop_requested() || runtime_sleep_mode_active() ||
+        sm_game_lifecycle_has_active_game())
+      goto cleanup;
+    module_case_file_t *file = &snapshot.files[i];
+    char original[MAX_PATH];
+    bool named = sm_self_read_original_filename(file->path, original);
+    module_case_file_t current = *file;
+    if (lstat(current.path, &current.st) != 0 ||
+        module_case_file_fingerprint(&current) != module_case_file_fingerprint(file))
+      goto cleanup;
+    if (!named)
+      continue;
+    const char *name = original;
+    for (const char *p = original; *p; ++p)
+      if (*p == '/' || *p == '\\') name = p + 1;
+    const char *original_ext = strrchr(name, '.');
+    if (!is_module_filename(name) &&
+        (!original_ext || strcasecmp(original_ext, ".debug_prx")))
+      continue;
+    const char *source_name = strrchr(file->path, '/') + 1;
+    const char *source_ext = strrchr(source_name, '.');
+    size_t stem_length = (size_t)(source_ext - source_name);
+    if ((size_t)(original_ext - name) != stem_length ||
+        strncasecmp(source_name, name, stem_length))
+      continue;
+    // Build names may end in .prx or .debug_prx while the SELF uses .sprx.
+    // Keep the installed extension and restore only the library stem's case.
+    char target[MAX_PATH];
+    size_t prefix = (size_t)(source_name - file->path);
+    memcpy(target, file->path, prefix);
+    memcpy(target + prefix, name, stem_length);
+    strcpy(target + prefix + stem_length, source_ext);
+    lowercase_sce_sys_name(target + prefix + stem_length);
+    if (!strcmp(target, file->path))
+      continue;
+    if (should_stop_requested() || runtime_sleep_mode_active() ||
+        sm_game_lifecycle_has_active_game())
+      goto cleanup;
+    // link() publishes the new name atomically without replacing another file.
+    if (link(file->path, target) != 0) {
+      if (errno == EEXIST) {
+        ++conflicts;
+      } else {
+        ++failures;
+        if (!first_error) {
+          first_error = errno;
+          failed_path = file->path;
+        }
+      }
+      continue;
+    }
+    if (unlink(file->path) != 0) {
+      ++failures;
+      if (!first_error) {
+        first_error = errno;
+        failed_path = file->path;
+      }
+      continue;
+    }
+    (void)strlcpy(file->path, target, sizeof(file->path));
+    if (lstat(file->path, &file->st) != 0)
+      goto cleanup;
+    ++fixed;
+  }
+  fingerprint = 0;
+  for (size_t i = 0; i < snapshot.count; ++i) {
+    module_case_file_t current = snapshot.files[i];
+    if (lstat(current.path, &current.st) != 0 ||
+        module_case_file_fingerprint(&current) !=
+            module_case_file_fingerprint(&snapshot.files[i]))
+      goto cleanup;
+    fingerprint += module_case_file_fingerprint(&current);
+  }
+  store_module_case_fingerprint(path, fingerprint);
+  if (fixed || conflicts || failures)
+    log_debug("  [SELF] filename case: root=%s fixed=%zu conflicts=%zu failures=%zu",
+              path, fixed, conflicts, failures);
+  if (first_error)
+    log_debug("  [SELF] filename case failed: %s (%s)", failed_path,
+              strerror(first_error));
+cleanup:
+  free(snapshot.files);
+}
+
 static bool try_collect_candidate_for_directory(
     const char *full_path, scan_candidate_t *candidates, int max_candidates,
     int *candidate_count, const scan_app_db_context_t *app_db,
@@ -440,6 +658,7 @@ static bool try_collect_candidate_for_directory(
   if (sm_shellcore_title_is_protected(info.title_id))
     return true;
 
+  repair_module_case_for_source(full_path);
   note_game_cache_source_seen(full_path, info.title_id, info.title_name);
 
   int duplicate_candidate_index = find_scan_candidate_index_by_title_id(
@@ -1093,6 +1312,7 @@ static void repair_backport_permissions_for_scan_root(const char *scan_path) {
               backports_root, repair.failures, repair.first_failed_path,
               strerror(repair.first_error));
   }
+  repair_module_case_for_source(backports_root);
 }
 
 static void collect_scan_candidates_from_root(

@@ -17,6 +17,8 @@ struct PathStateEntry {
   bool manual_missing_source_logged;
   bool game_info_cached;
   bool game_info_valid;
+  bool module_case_checked;
+  uint64_t module_case_fingerprint;
   time_t game_info_mtime;
   long game_info_mtime_nsec;
   off_t game_info_size;
@@ -87,6 +89,7 @@ static struct PathStateEntry *create_path_state(const char *path) {
             !g_path_state[k].backport_mount_blocked &&
             !g_path_state[k].backport_permissions_incomplete_logged &&
             !g_path_state[k].manual_missing_source_logged &&
+            !g_path_state[k].module_case_checked &&
             !g_path_state[k].game_info_cached) {
           evict_k = k;
           break;
@@ -123,6 +126,20 @@ static struct PathStateEntry *create_path_state(const char *path) {
 static struct PathStateEntry *get_or_create_path_state(const char *path) {
   struct PathStateEntry *entry = find_path_state(path);
   return entry ? entry : create_path_state(path);
+}
+
+bool module_case_fingerprint_matches(const char *path, uint64_t fingerprint) {
+  struct PathStateEntry *entry = find_path_state(path);
+  return entry && entry->module_case_checked &&
+         entry->module_case_fingerprint == fingerprint;
+}
+
+void store_module_case_fingerprint(const char *path, uint64_t fingerprint) {
+  struct PathStateEntry *entry = get_or_create_path_state(path);
+  if (!entry)
+    return;
+  entry->module_case_checked = true;
+  entry->module_case_fingerprint = fingerprint;
 }
 
 bool load_cached_game_info(const char *path, const struct stat *param_st,

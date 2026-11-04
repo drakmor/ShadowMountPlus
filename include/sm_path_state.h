@@ -13,6 +13,9 @@ bool load_cached_game_info(const char *path, const struct stat *param_st,
 void store_cached_game_info(const char *path, const struct stat *param_st,
                             bool valid, const char *title_id,
                             const char *title_name);
+// Scanner-owned snapshot of library names and file identity/timestamps.
+bool module_case_fingerprint_matches(const char *path, uint64_t fingerprint);
+void store_module_case_fingerprint(const char *path, uint64_t fingerprint);
 // Drop expired entries from path-based retry and metadata state.
 void prune_path_state(void);
 // Drop expired entries that belong to a specific scan root.
