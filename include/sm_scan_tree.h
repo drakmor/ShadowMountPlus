@@ -20,6 +20,8 @@ typedef bool (*sm_scan_tree_image_fn)(const char *image_path,
 typedef struct {
   sm_scan_tree_dir_fn on_directory;
   sm_scan_tree_image_fn on_image_file;
+  // Watch discovery may skip inaccessible paths; content scans stay strict.
+  bool skip_permission_errors;
 } sm_scan_tree_callbacks_t;
 
 // Walk a managed scan subtree using the shared scan-depth and path filtering rules.

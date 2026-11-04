@@ -572,7 +572,7 @@ static bool register_scanner_watch_entry(int kq, int scan_root_index,
 
   int fd = open(path, O_RDONLY | O_DIRECTORY);
   if (fd < 0) {
-    if (errno != ENOENT && errno != ENOTDIR) {
+    if (errno != ENOENT && errno != ENOTDIR && errno != EACCES && errno != EPERM) {
       log_debug("  [SCAN] watcher open failed for %s: %s", path,
                 strerror(errno));
     }
@@ -886,6 +886,7 @@ static bool rebuild_scan_root_watch_tree(int kq, int scan_root_index) {
   sm_scan_tree_callbacks_t callbacks = {
       .on_directory = register_watch_directory_visit,
       .on_image_file = NULL,
+      .skip_permission_errors = true,
   };
   if (!sm_scan_tree_walk(scan_root, scan_root, 0u, scan_depth, &callbacks,
                          &walk_ctx)) {
@@ -929,6 +930,7 @@ static bool rebuild_scan_root_watch_subtree(int kq, int scan_root_index,
   sm_scan_tree_callbacks_t callbacks = {
       .on_directory = register_watch_directory_visit,
       .on_image_file = NULL,
+      .skip_permission_errors = true,
   };
   if (!sm_scan_tree_walk(scan_root, rebuild_path, rebuild_depth,
                          scan_depth - rebuild_depth, &callbacks, &walk_ctx)) {

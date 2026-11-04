@@ -82,7 +82,9 @@ bool sm_scan_tree_walk(const char *scan_root, const char *dir_path,
 
   DIR *d = opendir(dir_path);
   if (!d)
-    return errno == ENOENT || errno == ENOTDIR;
+    return errno == ENOENT || errno == ENOTDIR ||
+           (callbacks->skip_permission_errors &&
+            (errno == EACCES || errno == EPERM));
 
   bool scan_root_is_pfsc_mount_base =
       is_pfsc_image_mount_base_or_child(scan_root);
@@ -134,6 +136,9 @@ bool sm_scan_tree_walk(const char *scan_root, const char *dir_path,
     bool is_regular = false;
     if (!classify_scan_tree_entry(full_path, entry->d_type, &is_dir,
                                   &is_regular)) {
+      if (callbacks->skip_permission_errors &&
+          (errno == EACCES || errno == EPERM))
+        continue;
       read_error = errno;
       break;
     }
@@ -161,5 +166,7 @@ bool sm_scan_tree_walk(const char *scan_root, const char *dir_path,
     read_error = errno;
   if (read_error != 0)
     errno = read_error;
-  return read_error == 0;
+  return read_error == 0 ||
+         (callbacks->skip_permission_errors &&
+          (read_error == EACCES || read_error == EPERM));
 }
