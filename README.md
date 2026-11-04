@@ -157,7 +157,7 @@ Main sections (see the commented template for defaults and ranges):
 
 | Section | Keys |
 | --- | --- |
-| `[general]` | `debug`, `quiet_mode`, `language` |
+| `[general]` | `debug`, `quiet_mode`, `library_sync_notification`, `language` |
 | `[api]` | `enabled`, `bind_address`, `port` |
 | `[scan]` | `depth`, repeatable `path`, `interval_seconds`, `stability_wait_seconds` |
 | `[mount]` | `mode` (`ro/rw`), `force`, `persistent_images`, `exfat_backend`, `ufs_backend`, `nested_pfs_index_cache` |

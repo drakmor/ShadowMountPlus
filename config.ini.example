@@ -14,6 +14,9 @@ version = 2
 # debug = on
 # Suppress ordinary informational notifications; errors still appear.
 # quiet_mode = off
+# Show the startup "Library synchronized" notification, independently of quiet_mode.
+# Reload updates the setting; the notification is only emitted at payload startup.
+# library_sync_notification = on
 # auto uses the console language; locale examples: en-US, ru-RU.
 # language = auto
 

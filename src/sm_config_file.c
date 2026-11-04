@@ -12,6 +12,7 @@
 
 const sm_config_key_t sm_config_keys[] = {
   {"general", "debug", "debug"}, {"general", "quiet_mode", "quiet_mode"},
+  {"general", "library_sync_notification", "library_sync_notification"},
   {"general", "language", "language"},
   {"api", "enabled", "api_enabled"}, {"api", "bind_address", "api_bind_address"},
   {"api", "port", "api_port"},

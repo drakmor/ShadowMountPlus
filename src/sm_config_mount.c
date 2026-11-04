@@ -169,6 +169,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.api_enabled = true;
   state->cfg.debug_enabled = true;
   state->cfg.quiet_mode = false;
+  state->cfg.library_sync_notification = true;
   state->cfg.mount_read_only = (IMAGE_MOUNT_READ_ONLY != 0);
   state->cfg.force_mount = false;
   state->cfg.persistent_image_mounts = false;
@@ -272,6 +273,14 @@ bool sm_config_quiet_mode(void) {
   bool quiet = g_runtime_state.cfg.quiet_mode;
   pthread_mutex_unlock(&g_runtime_state_mutex);
   return quiet;
+}
+
+bool sm_config_library_sync_notification(void) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  bool enabled = g_runtime_state.cfg.library_sync_notification;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return enabled;
 }
 
 int get_scan_path_count(void) {
@@ -923,13 +932,17 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
       continue;
     }
 
-    if (strcasecmp(key, "quiet_mode") == 0) {
+    if (strcasecmp(key, "quiet_mode") == 0 ||
+        strcasecmp(key, "library_sync_notification") == 0) {
       if (!parse_bool_ini(value, &bval)) {
         invalid = true;
         log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
         continue;
       }
-      state->cfg.quiet_mode = bval;
+      if (strcasecmp(key, "quiet_mode") == 0)
+        state->cfg.quiet_mode = bval;
+      else
+        state->cfg.library_sync_notification = bval;
       continue;
     }
 
@@ -1377,7 +1390,8 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
       image_rule_count++;
   }
 
-  log_debug("  [CFG] loaded: api_enabled=%d debug=%d quiet=%d language=%s "
+  log_debug("  [CFG] loaded: api_enabled=%d debug=%d quiet=%d "
+            "library_sync_notification=%d language=%s "
             "ro=%d force=%d "
             "persistent_image_mounts=%d app_install_all=%d "
             "auto_remove_missing_games=%d "
@@ -1396,6 +1410,7 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
             "scan_interval_s=%u stability_wait_s=%u scan_paths=%d image_rules=%d",
             state->cfg.api_enabled ? 1 : 0,
             state->cfg.debug_enabled ? 1 : 0, state->cfg.quiet_mode ? 1 : 0,
+            state->cfg.library_sync_notification ? 1 : 0,
             sm_l10n_language_name(state->cfg.language_id),
             state->cfg.mount_read_only ? 1 : 0,
             state->cfg.force_mount ? 1 : 0,

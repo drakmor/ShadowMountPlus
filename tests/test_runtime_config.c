@@ -150,14 +150,27 @@ static void *reload_reader(void *unused) {
 }
 
 static void test_logging_flags(void) {
-  for (unsigned mask = 0; mask < 4; ++mask) {
+  for (unsigned mask = 0; mask < 8; ++mask) {
     FILE *file = fopen(CONFIG_FILE, "w");
     assert(file);
-    fprintf(file, "[config]\nversion=2\n[general]\ndebug=%u\nquiet_mode=%u\n", mask & 1u, (mask >> 1) & 1u);
+    fprintf(file, "[config]\nversion=2\n[general]\ndebug=%u\nquiet_mode=%u\nlibrary_sync_notification=%u\n",
+            mask & 1u, (mask >> 1) & 1u, (mask >> 2) & 1u);
     assert(fclose(file) == 0 && load_runtime_config());
     assert(sm_config_debug_enabled() == !!(mask & 1u));
     assert(sm_config_quiet_mode() == !!(mask & 2u));
+    assert(sm_config_library_sync_notification() == !!(mask & 4u));
   }
+  FILE *file = fopen(CONFIG_FILE, "w");
+  assert(file && fputs("[config]\nversion=2\n[general]\nlibrary_sync_notification=off\n", file) >= 0);
+  assert(!fclose(file) && load_runtime_config());
+  file = fopen(CONFIG_FILE, "w");
+  assert(file && fputs("[config]\nversion=2\n[general]\nlibrary_sync_notification=invalid\n", file) >= 0);
+  assert(!fclose(file) && !load_runtime_config());
+  assert(!sm_config_library_sync_notification());
+  file = fopen(CONFIG_FILE, "w");
+  assert(file && fputs("[config]\nversion=2\n", file) >= 0);
+  assert(!fclose(file) && load_runtime_config());
+  assert(sm_config_library_sync_notification());
 }
 
 static void put_file(const char *path, const char *text) {
