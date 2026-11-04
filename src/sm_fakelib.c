@@ -202,9 +202,9 @@ static int sandbox_mount_identity_present(const fakelib_layer_t *layer) {
   return found;
 }
 
-// A removed USB filesystem can make nullfs statfs fail with EPIPE/EAGAIN.
+// A removed sandbox/lower filesystem can make statfs fail with EPIPE/EAGAIN.
 // Resolve only the recorded mount, without traversing its reclaimed lower vnode.
-static bool unmount_unreachable_usb_layer(fakelib_layer_t *layer) {
+static bool unmount_unreachable_sandbox_layer(fakelib_layer_t *layer) {
   struct statfs *mounts = NULL;
   int count = sm_mount_table_snapshot(&mounts);
   if (count < 0)
@@ -221,7 +221,8 @@ static bool unmount_unreachable_usb_layer(fakelib_layer_t *layer) {
                sizeof(layer->mount_fsid)) == 0) {
       ++identity_mounts;
       matches = same_path &&
-          sandbox_mount_matches(&mounts[i], layer->source_path, false);
+          sandbox_mount_matches(&mounts[i], layer->source_path,
+                                strcmp(layer->label, "directory") != 0);
     }
   }
   free(mounts);
@@ -248,7 +249,7 @@ static bool unmount_unreachable_usb_layer(fakelib_layer_t *layer) {
     layer->created_mount_path = false;
     return true;
   }
-  log_debug("  [FAKELIB] USB directory unmounted by fsid: %s -> %s",
+  log_debug("  [FAKELIB] sandbox layer unmounted by fsid: %s -> %s",
             layer->source_path, layer->mount_path);
   return true;
 }
@@ -263,10 +264,8 @@ static bool unmount_sandbox_layer(fakelib_layer_t *layer) {
     if (statfs(mount_path, &fs) != 0) {
       int lookup_errno = errno;
       if ((lookup_errno == EPIPE || lookup_errno == EAGAIN) &&
-          layer->mount_identity_valid && layer->label &&
-          strcmp(layer->label, "directory") == 0 &&
-          is_sandbox_usb_root(layer->source_path)) {
-        if (!unmount_unreachable_usb_layer(layer))
+          layer->mount_identity_valid && layer->label) {
+        if (!unmount_unreachable_sandbox_layer(layer))
           return false;
       } else {
         if (lookup_errno != ENOENT && lookup_errno != ENOTDIR)
@@ -2234,8 +2233,12 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
     log_debug("  [FAKELIB] rebuilding sandbox mounts: %s pid=%ld",
               title_id, (long)pid);
     if (!cleanup_fakelib_mount()) {
-      log_debug("  [FAKELIB] handoff cleanup failed for pid=%ld, skipping %s",
-                (long)g_fakelib_mount.pid, title_id);
+      int cleanup_errno = errno != 0 ? errno : EIO;
+      log_debug("  [FAKELIB] handoff cleanup failed for pid=%ld, skipping %s "
+                "(title=%s layers=%u: %s)",
+                (long)g_fakelib_mount.pid, title_id, g_fakelib_mount.title_id,
+                (unsigned)g_fakelib_mount.layer_count, strerror(cleanup_errno));
+      errno = cleanup_errno;
       return false;
     }
   }
