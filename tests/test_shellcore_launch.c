@@ -120,6 +120,36 @@ int main(void) {
   start_title(TITLE_A, 0x18, 173);
   assert(handle_launch_request(TITLE_C) == 0 && unmounts == 0);
   assert(g_service.outgoing.pid == 173);
+
+  // A side app can exit while the original game stays alive in outgoing.
+  reset_state();
+  start_title(TITLE_A, 0x18, 173);
+  start_title(TITLE_B, 0x1a, 189);
+  assert(sm_shellcore_service_note_game_exit(189, 100000000, NULL));
+  shellcore_mount_owner_t exited = g_service.prepared;
+  assert(release_title_runtime_expected(TITLE_B, false, &exited));
+  assert(!g_service.prepared.title_id[0] && g_service.outgoing.pid == 173);
+  assert(handle_launch_request(TITLE_A) == 0);
+  assert(g_service.prepared.pid == 173 && g_service.prepared.app_id == 0x18);
+  assert(!g_service.outgoing.title_id[0]);
+  assert(!launch_preparation_pending_locked());
+  unsigned released = unmounts;
+  assert(handle_launch_failed_request(TITLE_A) == 0);
+  assert(unmounts == released && !launch_preparation_pending_locked());
+  assert(sm_shellcore_service_note_game_exit(173, 110000000, NULL));
+  exited = g_service.prepared;
+  assert(release_title_runtime_expected(TITLE_A, false, &exited));
+  assert(!g_service.prepared.title_id[0] && !g_service.outgoing.title_id[0]);
+  assert(handle_launch_request(TITLE_C) == 0);
+
+  reset_state();
+  set_mount_owner(&g_service.outgoing, TITLE_A);
+  g_service.outgoing.pid = 173;
+  g_service.outgoing.game_exited = true;
+  bool claimed = true;
+  assert(claim_prepared_title(TITLE_A, true, &claimed) == EBUSY);
+  assert(!claimed && !g_service.prepared.title_id[0]);
+  assert(g_service.outgoing.pid == 173 && g_service.outgoing.game_exited);
   puts("Launch ownership: abandoned switch recovery, retry identity, fallback, live owner and mutation guards passed");
   return 0;
 }

@@ -117,12 +117,27 @@ static int claim_prepared_title(const char *title_id, bool launch_request,
     return EBUSY;
   }
   if (g_service.prepared.title_id[0] == '\0') {
-    set_mount_owner(&g_service.prepared, title_id);
+    if (mount_owner_matches(&g_service.outgoing, title_id)) {
+      if (g_service.outgoing.game_exited) {
+        pthread_mutex_unlock(&g_service.mutex);
+        return EBUSY;
+      }
+      // Resuming a still-running app need not emit another NOTE_EXEC.
+      g_service.prepared = g_service.outgoing;
+      clear_mount_owner(&g_service.outgoing);
+      if (g_service.prepared.pid > 0 &&
+          strcmp(g_service.pending_launch_title_id, title_id) == 0) {
+        g_service.pending_launch_title_id[0] = '\0';
+        g_service.pending_sandbox_ready_handled = false;
+      }
+    } else {
+      set_mount_owner(&g_service.prepared, title_id);
+      if (claimed_out)
+        *claimed_out = true;
+    }
     g_service.prepare_in_progress = true;
-    g_service.launch_pending = launch_request;
+    g_service.launch_pending = launch_request && g_service.prepared.pid <= 0;
     changed = true;
-    if (claimed_out)
-      *claimed_out = true;
   } else if (!mount_owner_matches(&g_service.prepared, title_id)) {
     if (!launch_request || g_service.prepared.app_id == 0 ||
         g_service.outgoing.title_id[0] != '\0') {
