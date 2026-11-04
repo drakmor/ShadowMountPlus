@@ -227,6 +227,15 @@ static bool update_trophy_metadata(const char *title_id,
   mkdir("/system_data/priv/appmeta", 0755);
   mkdir(dst_base, 0755);
 
+  if (strncmp(title_id, "CUSA", 4u) == 0) {
+    return copy_optional_trophy_metadata_file(src_sce_sys, dst_base,
+                                              "npbind.dat") &&
+           copy_optional_trophy_metadata_file(src_sce_sys, dst_base,
+                                              "nptitle.dat") &&
+           copy_optional_trophy_metadata_file(src_sce_sys, dst_base,
+                                              "param.sfo");
+  }
+
   written = snprintf(dst_dir, sizeof(dst_dir), "%s/trophy2", dst_base);
   if (written < 0 || (size_t)written >= sizeof(dst_dir)) {
     errno = ENAMETOOLONG;
