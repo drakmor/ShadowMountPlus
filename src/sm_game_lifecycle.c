@@ -395,8 +395,9 @@ static bool dispatch_game_launch(int kq, pid_t pid, uint64_t exec_time_us,
   if (same_process && app_id == 0)
     app_id = g_active_game_app_id;
 
-  if ((!same_process ||
-       !sm_shellcore_service_title_is_prepared(title_id) ||
+  // Reuse the mounted runtime before binding a replacement process; its exited
+  // previous owner may still be waiting for sandbox cleanup.
+  if ((!sm_shellcore_service_title_is_prepared(title_id) ||
        !is_data_mounted(title_id)) &&
       !sm_shellcore_ensure_title_runtime(title_id)) {
     return false;
