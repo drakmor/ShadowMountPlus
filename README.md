@@ -246,7 +246,7 @@ Most common options are available through the web interface. For complete accept
 | `[mount]` | `mode`, `persistent_images`, `exfat_backend`, `ufs_backend` | Default image-mount behavior |
 | `[library]` | `install_all`, `remove_missing`, `remove_delay_seconds` | Registration and missing-title cleanup |
 | `[fakelib]` | `enabled`, `default_mode`, `global_enabled`, `global_path` | Fakelib overlays |
-| `[emulators]` | `update_enabled`, `path`, `auto_update_ampr` | Optional emulator-library updates |
+| `[emulators]` | `update_enabled`, `path`, `auto_update_ampr`, `ampr_update_url`, `ampr_ng_update_url` | Optional emulator-library updates |
 | `[fan]` | `target_temperature` | Optional fan target adjustment |
 | `[smb:NAME]` | `path`, `username`, `password`, `active` | Named network shares |
 
@@ -294,6 +294,8 @@ You can also use a `backports/` directory under a configured scan root. Backport
 For compatible titles, fakelib can be controlled globally or per game. In the web interface, select **Default**, **Full**, **Emulators only**, or **Disabled** from the game's fakelib settings. Global fakelib defaults to `/data/shadowmount/fakelib`; the emulator library directory defaults to `/data/shadowmount/emus`.
 
 Optional AMPR auto-update is controlled by `[emulators] auto_update_ampr` and is **off by default**. You may enable it when you want automatic update checks rather than managing the library manually.
+
+`libSceAmpr.sprx` from [ampr-emu-ng](https://github.com/quer3q/ampr-emu-ng) (zstd/LZ4 packs) is recognized by its embedded `ampr-emu-ng <version>` identity. A game fakelib with ampr-emu-ng is updated only from `<path>/ampr-emu-ng/libSceAmpr.sprx` and never replaced by the upstream `<path>/libSceAmpr.sprx`; other games keep using the upstream file. An emulator file whose runtime does not match the game's copy is skipped, wherever it is placed. With `auto_update_ampr` on, `<path>/ampr-emu-ng/libSceAmpr.sprx` is upgraded from `[emulators] ampr_ng_update_url` (default: `https://github.com/quer3q/ampr-emu-ng/releases/latest/download/libSceAmpr.sprx`) once it exists; it is never downloaded when missing.
 
 > [!IMPORTANT]
 > If ShadowMountPlus fakelib integration is enabled, **disable the standalone BackPork payload**. Running both can cause conflicts. Not every game needs a backport or fakelib override; start with defaults and change only what is needed.

@@ -12,6 +12,12 @@
 #define DEFAULT_AMPR_UPDATE_URL                                             \
   "https://github.com/drakmor/ampr_emu/releases/latest/download/"         \
   "libSceAmpr.sprx"
+#define AMPR_EMULATOR_FILE_NAME "libSceAmpr.sprx"
+/* ampr-emu-ng shares the libSceAmpr.sprx name; its updates live here. */
+#define AMPR_NG_EMULATOR_DIR "ampr-emu-ng"
+#define DEFAULT_AMPR_NG_UPDATE_URL                                          \
+  "https://github.com/quer3q/ampr-emu-ng/releases/latest/download/"       \
+  "libSceAmpr.sprx"
 #define FAKELIB_CACHE_PATH "/data/shadowmount/cache"
 #define ICON_CACHE_DIR "/data/shadowmount/icon-cache"
 #define LOG_DIR "/data/shadowmount"

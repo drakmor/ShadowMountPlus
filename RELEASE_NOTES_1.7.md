@@ -86,6 +86,8 @@ release of mount resources, and new management features.
 - Unused fakelib caches are automatically removed seven days after the last
   game launch.
 - Optional automatic checks and downloads for `libSceAmpr.sprx` updates.
+- `libSceAmpr.sprx` from ampr-emu-ng is recognized and updated only from
+  `emulators_path/ampr-emu-ng/`, so upstream updates no longer replace it.
 - `fakelib2` always has the highest priority: it is mounted directly and is
   not combined with global `fakelib` or emulator updates.
 - Fixed fakelib remounting across `ExitSpawn`/`LoadExec` transitions.

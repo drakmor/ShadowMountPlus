@@ -191,6 +191,8 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
                 sizeof(state->cfg.emulators_path));
   (void)strlcpy(state->cfg.ampr_update_url, DEFAULT_AMPR_UPDATE_URL,
                 sizeof(state->cfg.ampr_update_url));
+  (void)strlcpy(state->cfg.ampr_ng_update_url, DEFAULT_AMPR_NG_UPDATE_URL,
+                sizeof(state->cfg.ampr_ng_update_url));
   state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
   state->cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
   state->cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
@@ -1229,6 +1231,19 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
       continue;
     }
 
+    if (strcasecmp(key, "ampr_ng_update_url") == 0) {
+      char url[MAX_PATH];
+      if (!normalize_http_url_value(value, url)) {
+        log_debug("  [CFG] invalid ampr-emu-ng update URL at line %d: %s=%s "
+                  "(HTTP or HTTPS required)",
+                  line_no, key, value);
+        continue;
+      }
+      (void)strlcpy(state->cfg.ampr_ng_update_url, url,
+                    sizeof(state->cfg.ampr_ng_update_url));
+      continue;
+    }
+
     if (strcasecmp(key, "fan_target_temperature") == 0) {
       if (strcasecmp(value, "system") == 0 ||
           strcasecmp(value, "auto") == 0) {
@@ -1402,7 +1417,7 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
             "update_emulators=%d emulators_path=%s auto_update_ampr=%d "
-            "ampr_update_url=%s "
+            "ampr_update_url=%s ampr_ng_update_url=%s "
             "fan_target_temperature=%u (0=system) "
             "exfat_backend=%s ufs_backend=%s "
             "nested_pfs_index_cache=%d "
@@ -1431,7 +1446,7 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
             state->cfg.update_emulators_enabled ? 1 : 0,
             state->cfg.emulators_path,
             state->cfg.auto_update_ampr_enabled ? 1 : 0,
-            state->cfg.ampr_update_url,
+            state->cfg.ampr_update_url, state->cfg.ampr_ng_update_url,
             state->cfg.fan_target_temperature_c,
             attach_backend_name(state->cfg.exfat_backend),
             attach_backend_name(state->cfg.ufs_backend),

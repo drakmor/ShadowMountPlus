@@ -79,6 +79,12 @@ version = 2
 # Check for AMPR 30 seconds after startup, then every four hours; defer during games.
 # auto_update_ampr = off
 # ampr_update_url = https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx
+# ampr-emu-ng shares the libSceAmpr.sprx name. Game fakelibs that ship it are
+# updated only from <path>/ampr-emu-ng/libSceAmpr.sprx, never from the upstream
+# file; a file of the other runtime is skipped in either place. With
+# auto_update_ampr on, that file is upgraded from this URL once you place it
+# there; it is not downloaded when missing.
+# ampr_ng_update_url = https://github.com/quer3q/ampr-emu-ng/releases/latest/download/libSceAmpr.sprx
 
 [fan]
 # system: keep the system target; 50..91: apply a temperature target at game launch.

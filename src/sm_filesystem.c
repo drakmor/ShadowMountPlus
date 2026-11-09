@@ -1709,3 +1709,44 @@ bool shutdown_title_mounts(void) {
   }
   return all_released;
 }
+
+// ampr-emu-ng embeds "ampr-emu-ng <version>" so tools can tell it from
+// upstream ampr_emu builds that share the libSceAmpr.sprx file name.
+// Returns 1 for ampr-emu-ng, 0 otherwise, -1 on read errors.
+int sm_file_is_ampr_ng(const char *path) {
+  static const char marker[] = "ampr-emu-ng ";
+  enum { MARKER_LEN = sizeof(marker) - 1, CHUNK = 64 * 1024 };
+  int fd = open(path, O_RDONLY);
+  if (fd < 0)
+    return -1;
+  char *buffer = malloc(CHUNK + MARKER_LEN);
+  if (!buffer) {
+    (void)close(fd);
+    errno = ENOMEM;
+    return -1;
+  }
+  size_t kept = 0;
+  int found = 0;
+  for (;;) {
+    ssize_t received = read(fd, buffer + kept, CHUNK);
+    if (received < 0 && errno == EINTR)
+      continue;
+    if (received <= 0) {
+      found = received < 0 ? -1 : 0;
+      break;
+    }
+    size_t length = kept + (size_t)received;
+    if (memmem(buffer, length, marker, MARKER_LEN)) {
+      found = 1;
+      break;
+    }
+    // Keep a tail so a marker split across reads is still found.
+    kept = length < MARKER_LEN - 1 ? length : MARKER_LEN - 1;
+    memmove(buffer, buffer + length - kept, kept);
+  }
+  int saved_errno = errno;
+  free(buffer);
+  (void)close(fd);
+  errno = saved_errno;
+  return found;
+}

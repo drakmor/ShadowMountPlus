@@ -160,6 +160,7 @@ typedef struct runtime_config {
   char global_fakelib_path[MAX_PATH];
   char emulators_path[MAX_PATH];
   char ampr_update_url[MAX_PATH];
+  char ampr_ng_update_url[MAX_PATH];
   sm_fakelib_mode_t fakelib_default_mode;
   uint32_t fakelib_rule_count;
   sm_fakelib_rule_t fakelib_rules[MAX_FAKELIB_EXCLUDE_RULES];

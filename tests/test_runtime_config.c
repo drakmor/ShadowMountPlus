@@ -93,8 +93,9 @@ static void write_config(unsigned version) {
           "[config]\nversion=2\n[api]\nport=%u\n"
           "[fakelib]\nglobal_path=/data/version%u\n"
           "[emulators]\npath=/data/version%u\n"
+          "ampr_ng_update_url=https://example.invalid/ng%u\n"
           "[scan]\npath=/data/games%u\n",
-          9100u + version, version, version, version);
+          9100u + version, version, version, version, version);
   assert(fclose(file) == 0);
   assert(rename(next_path, CONFIG_FILE) == 0);
   file = fopen(PROFILES_FILE, "w");
@@ -109,6 +110,7 @@ static void *init_reader(void *unused) {
   (void)pthread_barrier_wait(&reader_barrier);
   runtime_config_t cfg = runtime_config();
   assert(cfg.api_port == SM_API_DEFAULT_PORT);
+  assert(strcmp(cfg.ampr_ng_update_url, DEFAULT_AMPR_NG_UPDATE_URL) == 0);
   char path[MAX_PATH];
   assert(get_scan_path(0, path));
   assert(path[0] == '/');
@@ -126,6 +128,9 @@ static void *reload_reader(void *unused) {
     snprintf(expected, sizeof(expected), "/data/version%u", version);
     assert(strcmp(cfg.global_fakelib_path, expected) == 0);
     assert(strcmp(cfg.emulators_path, expected) == 0);
+    snprintf(expected, sizeof(expected), "https://example.invalid/ng%u", version);
+    assert(strcmp(cfg.ampr_ng_update_url, expected) == 0);
+    assert(strcmp(cfg.ampr_update_url, DEFAULT_AMPR_UPDATE_URL) == 0);
     assert(cfg.global_fakelib_exclude_title_count == 1u);
     assert(strcmp(cfg.global_fakelib_exclude_title_ids[0], "PPSA12345") == 0);
 

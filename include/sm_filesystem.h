@@ -89,4 +89,8 @@ int copy_file(const char *src, const char *dst);
 // Copy a single file and set its mode immediately after creation.
 int copy_file_with_mode(const char *src, const char *dst, mode_t mode);
 
+// 1 when path is an ampr-emu-ng build of libSceAmpr.sprx, 0 when not,
+// -1 on read errors.
+int sm_file_is_ampr_ng(const char *path);
+
 #endif

@@ -36,6 +36,7 @@ const sm_config_key_t sm_config_keys[] = {
   {"emulators", "path", "emulators_path"},
   {"emulators", "auto_update_ampr", "auto_update_ampr"},
   {"emulators", "ampr_update_url", "ampr_update_url"},
+  {"emulators", "ampr_ng_update_url", "ampr_ng_update_url"},
   {"fan", "target_temperature", "fan_target_temperature"},
   {"sectors", "lvd_exfat", "lvd_exfat_sector_size"},
   {"sectors", "lvd_ufs", "lvd_ufs_sector_size"},
