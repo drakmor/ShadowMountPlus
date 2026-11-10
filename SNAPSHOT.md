@@ -22,6 +22,7 @@ and serves a web UI + JSON API. ~46k lines of C in `src/`, headers in `include/`
 | `tools/` | Offset generators, l10n tools, json-c build script |
 | `include/lang/*.inc` | Localization catalogs |
 | `.github/workflows/ps5.yml` | CI build with PS5 SDK |
+| `.trail/`, `.claude/settings.json` | Trail-code learnings + Claude Code SessionStart hook |
 | `graft/` (git-ignored) | Trail-code code map cache, rebuilt with `trail build` |
 | `mkexfat*.sh`, `mkufs2.sh`, `New-OsfExfatImage.ps1`, `make_image.bat` | Image creation helpers |
 
