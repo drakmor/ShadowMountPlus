@@ -1,7 +1,7 @@
 # SNAPSHOT.md
 
 Architecture blueprint of ShadowMountPlus (zstd fork). Read this first instead of scanning
-the repo. Last updated: 2026-11-09 (after ampr-emu-ng merge, commit `53feb3a`).
+the repo. Last updated: 2026-11-10 (Trail-code map added).
 
 ## What it is
 Background payload (`shadowmountplus.elf`) for jailbroken PS5: discovers PS4/PS5 game
@@ -22,6 +22,7 @@ and serves a web UI + JSON API. ~46k lines of C in `src/`, headers in `include/`
 | `tools/` | Offset generators, l10n tools, json-c build script |
 | `include/lang/*.inc` | Localization catalogs |
 | `.github/workflows/ps5.yml` | CI build with PS5 SDK |
+| `graft/` (git-ignored) | Trail-code code map cache, rebuilt with `trail build` |
 | `mkexfat*.sh`, `mkufs2.sh`, `New-OsfExfatImage.ps1`, `make_image.bat` | Image creation helpers |
 
 ## Module map (by area)

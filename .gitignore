@@ -10,3 +10,6 @@ notify.txt
 src/notify_icon_asset.c
 refs/*
 docs/*
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

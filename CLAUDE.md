@@ -7,6 +7,16 @@ Instructions for Claude on every turn in this repo. Keep this file short; tune i
 2. Read `BACKLOG.md`, especially the `> RESUME HERE` block, to pick up unfinished work.
 3. Only open the source files the task actually touches.
 
+## Code map (Trail-code)
+If `trail` is installed (`DO_NOT_TRACK=1 npm install -g @trailhq/trail-code`), run
+`trail build` once per session (builds the git-ignored `graft/` cache), then prefer it over
+blind grep/reading whole files:
+- `trail ask "<question>"`: ranked answer with code inlined.
+- `trail callers <symbol>` (`--direction out` for callees), `trail skeleton <file>`, `trail map`.
+- `trail grep <pattern>`: matches grouped by enclosing function.
+C functions declared in a header and defined in a `.c` count as two definitions, so
+`trail callers` can undercount; confirm with `trail grep`. Always run with `DO_NOT_TRACK=1`.
+
 ## End of every task
 Update all three memory files before the final commit:
 - `SNAPSHOT.md`: architecture/module changes, new config keys, new files.
