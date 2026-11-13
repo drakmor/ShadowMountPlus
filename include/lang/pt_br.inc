@@ -27,7 +27,7 @@ static const char *const g_pt_br[SM_L10N_COUNT] = {
     /* English: Register failed: %s (%s)\nTitleDir bridge unavailable */
     [SM_L10N_REGISTER_BRIDGE_UNAVAILABLE] = "Falha no registro: %s (%s)\nA ponte TitleDir não está disponível",
     /* English: Register failed: %s (%s)\ncode=0x%08X */
-    [SM_L10N_REGISTER_FAILED_CODE] = "Registro falhou: %s (%s)\ncódigo=0x%08X",
+    [SM_L10N_REGISTER_FAILED_CODE] = "Falha no registro: %s (%s)\ncódigo=0x%08X",
     /* English: Installing: %s (%s)... */
     [SM_L10N_INSTALLING] = "Instalando: %s (%s)...",
     /* English: Installed: %s */
@@ -43,13 +43,13 @@ static const char *const g_pt_br[SM_L10N_COUNT] = {
     /* English: Image cache full (%u entries), cannot track mount %s */
     [SM_L10N_IMAGE_CACHE_FULL_TRACK] = "Cache de imagens cheio (%u entradas), não é possível rastrear a montagem %s",
     /* English: Install failed: %s (%s)\nTimed out after 5 minutes */
-    [SM_L10N_INSTALL_FAILED_TIMEOUT] = "A instalação falhou: %s (%s)\nTempo esgotado após 5 minutos",
+    [SM_L10N_INSTALL_FAILED_TIMEOUT] = "Falha na instalação: %s (%s)\nTempo esgotado após 5 minutos",
     /* English: Batch install queued (%d): */
-    [SM_L10N_BATCH_INSTALL_QUEUED] = "Instalação em lote enfileirada (%d):",
+    [SM_L10N_BATCH_INSTALL_QUEUED] = "Instalação em lote na fila (%d):",
     /* English: \n... and %d more */
     [SM_L10N_BATCH_INSTALL_AND_MORE] = "\n... e mais %d",
     /* English: Batch install failed for %d app(s).\ncode=0x%08X */
-    [SM_L10N_BATCH_INSTALL_FAILED] = "A instalação em lote falhou para %d aplicativos.\ncódigo=0x%08X",
+    [SM_L10N_BATCH_INSTALL_FAILED] = "Falha na instalação em lote de %d aplicativo(s).\ncódigo=0x%08X",
     /* English: Missing/invalid param.json/param.sfo:\n%s */
     [SM_L10N_MISSING_PARAM] = "Arquivo param.json/param.sfo ausente ou inválido:\n%s",
     /* English: Found %d new games. Processing... */
@@ -65,7 +65,7 @@ static const char *const g_pt_br[SM_L10N_COUNT] = {
     /* English: ShadowMount+: failed to install ShellCore hooks */
     [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: falha ao instalar hooks do ShellCore",
     /* English: ShadowMount+: kstuff not found; waiting for it to start. */
-    [SM_L10N_KSTUFF_WAITING] = "ShadowMount+: kstuff não encontrado; aguardando sua inicialização",
+    [SM_L10N_KSTUFF_WAITING] = "ShadowMount+: kstuff não encontrado; aguardando o kstuff iniciar.",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Temperatura-alvo %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */
