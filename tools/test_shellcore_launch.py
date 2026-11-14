@@ -34,6 +34,10 @@ def main():
         (build / "launch_types.inc").write_text(types + "\n" + "\n".join(defines), encoding="utf-8")
         (build / "launch_helpers.inc").write_text(
             functions(root, "src/sm_shellcore_service.c", names), encoding="utf-8")
+        (build / "dispatch_helpers.inc").write_text(
+            functions(root, "src/sm_game_lifecycle.c",
+                      ["same_application_identity", "dispatch_game_launch"]),
+            encoding="utf-8")
         binary = build / "launch"
         command = shlex.split(os.environ.get("CC", "cc")) + [
             "-std=gnu11", "-O1", "-g", "-pthread", "-Wall", "-Wextra", "-Werror",

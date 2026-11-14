@@ -59,6 +59,49 @@ static void sm_pkg_backport_on_launch_failed(const char *title) { (void)title; }
 
 #include "launch_helpers.inc"
 
+// Exercise the actual NOTE_EXEC dispatch after a same-title relaunch with a
+// different app_id. The service helpers above retain the exited old owner.
+static _Atomic pid_t g_active_game_pid;
+static char g_active_game_title_id[MAX_TITLE_ID];
+static uint32_t g_active_game_app_id;
+static struct { bool active; } g_pending_game_exit;
+typedef enum { GAME_HANDOFF_NONE, GAME_HANDOFF_COMPLETE,
+               GAME_HANDOFF_DEFERRED } game_handoff_result_t;
+static unsigned ensure_calls, monitor_starts;
+static bool watch_fails;
+static bool register_game_exit_watch(int kq, pid_t pid) {
+  (void)kq; (void)pid; return !watch_fails;
+}
+static game_handoff_result_t try_game_process_handoff(
+    pid_t pid, const char *title, uint32_t app_id) {
+  (void)pid; (void)title; (void)app_id; return GAME_HANDOFF_NONE;
+}
+static void finalize_pending_game_exit(void) {
+  g_pending_game_exit.active = false;
+}
+static bool sm_shellcore_service_title_is_prepared(const char *title) {
+  return find_mount_owner_locked(title) != NULL;
+}
+static bool sm_shellcore_ensure_title_runtime(const char *title) {
+  ++ensure_calls;
+  return mount_managed_title_runtime(title, true, true, NULL) == 0;
+}
+static void publish_active_game(pid_t pid, const char *title, uint32_t app_id) {
+  atomic_store(&g_active_game_pid, pid);
+  strlcpy(g_active_game_title_id, title, sizeof(g_active_game_title_id));
+  g_active_game_app_id = app_id;
+}
+static void sm_mdbg_game_on_exec(pid_t pid, const char *title, uint64_t time) {
+  (void)pid; (void)title; (void)time; ++monitor_starts;
+}
+static void sm_pkg_backport_on_exec(pid_t pid, const char *title) {
+  (void)pid; (void)title;
+}
+static void sm_fakelib_game_on_exec(pid_t pid, const char *title, bool fresh) {
+  (void)pid; (void)title; (void)fresh;
+}
+#include "dispatch_helpers.inc"
+
 static void reset_state(void) {
   clear_mount_owner(&g_service.prepared);
   clear_mount_owner(&g_service.outgoing);
@@ -67,6 +110,12 @@ static void reset_state(void) {
   g_service.pending_launch_title_id[0] = g_service.releasing_title_id[0] = '\0';
   fail_unmount = sleeping = false;
   wakes = unmounts = 0;
+  ensure_calls = monitor_starts = 0;
+  watch_fails = false;
+  atomic_store(&g_active_game_pid, 0);
+  g_active_game_title_id[0] = '\0';
+  g_active_game_app_id = 0;
+  g_pending_game_exit.active = false;
 }
 
 static void start_title(const char *title, uint32_t app_id, pid_t pid) {
@@ -88,6 +137,25 @@ static void abandon_switch(void) {
 }
 
 int main(void) {
+  reset_state();
+  start_title(TITLE_A, 0x18, 173);
+  assert(sm_shellcore_service_note_game_exit(173, 100000000, NULL));
+  shellcore_mount_owner_t old_exit = g_service.prepared;
+  assert(dispatch_game_launch(1, 200, 110000000, TITLE_A, 0x2018));
+  assert(g_service.prepared.pid == 200 && g_service.prepared.app_id == 0x2018);
+  assert(!g_service.prepared.game_exited && !g_service.launch_pending);
+  assert(ensure_calls == 0 && monitor_starts == 1 && unmounts == 0);
+  assert(!release_title_runtime_expected(TITLE_A, false, &old_exit));
+  assert(errno == EBUSY && unmounts == 0); // Old cleanup cannot unmount new app.
+
+  reset_state();
+  assert(dispatch_game_launch(1, 200, 110000000, TITLE_A, 0x2018));
+  assert(ensure_calls == 1 && monitor_starts == 1);
+  assert(g_service.prepared.pid == 200);
+  watch_fails = true;
+  assert(!dispatch_game_launch(1, 201, 110000000, TITLE_A, 0x4018));
+  assert(g_service.prepared.pid == 200 && monitor_starts == 1);
+
   abandon_switch();
   unsigned before = wakes;
   assert(handle_launch_request(TITLE_C) == 0);
