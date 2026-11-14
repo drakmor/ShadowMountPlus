@@ -1,15 +1,15 @@
 static const char *const g_ru_ru[SM_L10N_COUNT] = {
     /* English: Go to Debug Settings */
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Перейти к настройкам отладки",
-    /* English: ShadowMount+ v%s\n© Drakmor and Community */
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor и Сообщество",
-    /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
+    /* English: ShadowKraken v%s\n© Drakmor and Community */
+    [SM_L10N_STARTUP] = "ShadowKraken v%s\n© Drakmor и Сообщество",
+    /* English: ShadowKraken v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
-        "ShadowMount+ v%s\n© Drakmor и Сообщество\nУправление: http://%s:%u",
-    /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
-    [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: параметр recursive_scan=1 устарел; используется scan_depth=2.",
-    /* English: ShadowMount+: scan depth %u enabled. */
-    [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: включена глубина сканирования %u.",
+        "ShadowKraken v%s\n© Drakmor и Сообщество\nУправление: http://%s:%u",
+    /* English: ShadowKraken: recursive_scan=1 is deprecated, using scan_depth=2. */
+    [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowKraken: параметр recursive_scan=1 устарел; используется scan_depth=2.",
+    /* English: ShadowKraken: scan depth %u enabled. */
+    [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowKraken: включена глубина сканирования %u.",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
     [SM_L10N_BACKPORT_OVERLAY_FAILED] = "Не удалось смонтировать оверлей бэкпорта: %s\n%s\n0x%08X",
     /* English: Backport applied: %s */
@@ -56,16 +56,16 @@ static const char *const g_ru_ru[SM_L10N_COUNT] = {
     [SM_L10N_FOUND_NEW_GAMES] = "Найдено %d новых игр.\nВыполняется обновление библиотеки.",
     /* English: Library synchronized.\nFound %d games. */
     [SM_L10N_LIBRARY_SYNCED] = "Библиотека обновлена\nНайдено %d игр(ы)",
-    /* English: ShadowMount+: config reloaded. */
-    [SM_L10N_CONFIG_RELOADED] = "ShadowMount+: конфигурация перезагружена.",
+    /* English: ShadowKraken: config reloaded. */
+    [SM_L10N_CONFIG_RELOADED] = "ShadowKraken: конфигурация перезагружена.",
     /* English: Duplicate %s ignored:\n%s\nexisting: %s */
     [SM_L10N_DUPLICATE_IGNORED] = "Дубликат %s пропущен:\n%s\nуже существует: %s",
     /* English: AMPR emulator updated */
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "Эмулятор AMPR обновлён",
-    /* English: ShadowMount+: failed to install ShellCore hooks */
-    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowMount+: не удалось установить хуки ShellCore",
-    /* English: ShadowMount+: kstuff not found; waiting for it to start. */
-    [SM_L10N_KSTUFF_WAITING] = "ShadowMount+: ожидание запуска Kstuff...",
+    /* English: ShadowKraken: failed to install ShellCore hooks */
+    [SM_L10N_SHELLCORE_HOOKS_FAILED] = "ShadowKraken: не удалось установить хуки ShellCore",
+    /* English: ShadowKraken: kstuff not found; waiting for it to start. */
+    [SM_L10N_KSTUFF_WAITING] = "ShadowKraken: ожидание запуска Kstuff...",
     /* English: Target temperature %u °C → %u °C */
     [SM_L10N_TEMPERATURE_TRANSITION] = "Целевая температура %u °C → %u °C",
     /* English: External drive %s connected\nFree %llu.%llu GB of %llu.%llu (Block size %llu KB)\nGames on drive: %d%s */

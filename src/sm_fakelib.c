@@ -2,10 +2,13 @@
 #include "sm_shellcore_service.h"
 
 #include "sm_fakelib.h"
+#include "sm_ampr_runtime.h"
+#include "sm_fpkg_cache.h"
 #include "sm_config_mount.h"
 #include "sm_filesystem.h"
 #include "sm_gameinfo.h"
 #include "sm_game_lifecycle.h"
+#include "sm_image.h"
 #include "sm_log.h"
 #include "sm_mount_diag.h"
 #include "sm_path_utils.h"
@@ -19,7 +22,7 @@
 #include <sys/time.h>
 #include <time.h>
 
-#define FAKELIB_CACHE_VERSION 4u
+#define FAKELIB_CACHE_VERSION 5u
 #define FAKELIB_CACHE_MAX_AGE_SECONDS (7u * 24u * 60u * 60u)
 #define FAKELIB_CACHE_MAGIC 0x534D4643u
 #define SANDBOX_USB_ROOT_COUNT 8u
@@ -30,10 +33,13 @@
 #define FAKELIB_CACHE_PACKAGE (1u << 3)
 #define FAKELIB_CACHE_EXCLUSIVE (1u << 4)
 #define FAKELIB_CACHE_FILTERED (1u << 5)
+#define FAKELIB_CACHE_FPKG (1u << 6)
+#define FAKELIB_CACHE_FPKG_RUNTIME_ONLY (1u << 7)
 #define FAKELIB_CACHE_FLAG_MASK                                               \
   (FAKELIB_CACHE_HAS_GLOBAL | FAKELIB_CACHE_GLOBAL_PRIORITY | \
    FAKELIB_CACHE_EMULATORS_ONLY | FAKELIB_CACHE_PACKAGE | \
-   FAKELIB_CACHE_EXCLUSIVE | FAKELIB_CACHE_FILTERED)
+   FAKELIB_CACHE_EXCLUSIVE | FAKELIB_CACHE_FILTERED | FAKELIB_CACHE_FPKG | \
+   FAKELIB_CACHE_FPKG_RUNTIME_ONLY)
 
 typedef struct {
   // An empty source records a created parent directory without a mount.
@@ -43,6 +49,7 @@ typedef struct {
   bool created_mount_path;
   bool source_detached;
   bool owned_mount;
+  bool overlay;
   bool mount_identity_valid;
   fsid_t mount_fsid;
   // Identify the source volume, rather than its sandbox nullfs alias.
@@ -54,8 +61,11 @@ typedef struct {
   char title_id[MAX_TITLE_ID];
   char sandbox_app0_path[MAX_PATH];
   char mount_path[MAX_PATH];
-  // fakelib, /data, /mnt/disc, fonts, and up to three created parents.
-  fakelib_layer_t layers[7u + SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT];
+  char fpkg_generation_path[MAX_PATH];
+  char fpkg_source_directory[MAX_PATH];
+  bool fpkg_source_is_removable;
+  // fakelib, /data, /mnt/disc, fonts, FPKG app0/source, and created parents.
+  fakelib_layer_t layers[10u + SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT];
   size_t layer_count;
   sm_l10n_key_t notification;
   char notification_target[MAX_PATH];
@@ -83,6 +93,7 @@ typedef struct {
   char game_path[MAX_PATH];
   char global_path[MAX_PATH];
   char emulators_path[MAX_PATH];
+  char ampr_ng_path[MAX_PATH];
 } fakelib_cache_manifest_t;
 
 typedef struct {
@@ -94,6 +105,7 @@ typedef struct {
   char game_path[MAX_PATH];
   char global_path[MAX_PATH];
   char emulators_path[MAX_PATH];
+  char ampr_ng_path[MAX_PATH];
 } fakelib_cache_context_t;
 
 typedef enum {
@@ -192,7 +204,7 @@ static int sandbox_mount_identity_present(const fakelib_layer_t *layer) {
                  sizeof(layer->mount_fsid)) == 0
         : strcmp(mounts[i].f_mntonname, layer->mount_path) == 0 &&
           strcmp(mounts[i].f_fstypename,
-                 strcmp(layer->label, "directory") == 0 ? "nullfs" : "unionfs") == 0;
+                 layer->overlay ? "unionfs" : "nullfs") == 0;
     if (matches) {
       found = true;
       break;
@@ -222,7 +234,7 @@ static bool unmount_unreachable_sandbox_layer(fakelib_layer_t *layer) {
       ++identity_mounts;
       matches = same_path &&
           sandbox_mount_matches(&mounts[i], layer->source_path,
-                                strcmp(layer->label, "directory") != 0);
+                                layer->overlay);
     }
   }
   free(mounts);
@@ -294,7 +306,7 @@ static bool unmount_sandbox_layer(fakelib_layer_t *layer) {
     } else {
       if (!layer->mount_identity_valid &&
           !sandbox_mount_matches(&fs, layer->source_path,
-                                 strcmp(layer->label, "directory") != 0)) {
+                                 layer->overlay)) {
         errno = EBUSY;
         return false;
       }
@@ -356,6 +368,7 @@ static bool track_sandbox_layer(const char *title_id,
   memset(layer, 0, sizeof(*layer));
   layer->owned_mount = owned;
   layer->label = label;
+  layer->overlay = overlay;
   (void)strlcpy(layer->source_path, source_path, sizeof(layer->source_path));
   (void)strlcpy(layer->mount_path, mount_path, sizeof(layer->mount_path));
   if (owned) {
@@ -375,18 +388,81 @@ static bool track_sandbox_layer(const char *title_id,
   return true;
 }
 
-static bool mount_sandbox_directory(const char *title_id,
-                                   const char *app0_path,
-                                   const char *source_path, int flags) {
+/* Cover the sandbox's existing app0 mount intentionally, recording each
+ * successful layer before identity lookup so rollback cannot lose ownership. */
+static bool mount_fpkg_app0_layer(const char *title_id, const char *source,
+                                  const char *target, bool overlay) {
+  if (g_fakelib_mount.layer_count >=
+      sizeof(g_fakelib_mount.layers) / sizeof(g_fakelib_mount.layers[0])) {
+    errno = ENOSPC;
+    return false;
+  }
+  const char *label = overlay ? "fpkg-app0-upper" : "fpkg-app0-base";
+  if (!mount_sandbox_layer(title_id, source, target, label, overlay, 0))
+    return false;
+  fakelib_layer_t *layer = &g_fakelib_mount.layers[g_fakelib_mount.layer_count++];
+  memset(layer, 0, sizeof(*layer));
+  layer->owned_mount = true;
+  layer->overlay = overlay;
+  layer->label = label;
+  (void)strlcpy(layer->source_path, source, sizeof(layer->source_path));
+  (void)strlcpy(layer->mount_path, target, sizeof(layer->mount_path));
+  struct statfs fs;
+  if (statfs(target, &fs) != 0 || strcmp(fs.f_mntonname, target) != 0 ||
+      strcmp(fs.f_fstypename, overlay ? "unionfs" : "nullfs") != 0 ||
+      (fs.f_flags & MNT_RDONLY)) {
+    errno = EBUSY;
+    return false;
+  }
+  layer->mount_fsid = fs.f_fsid;
+  layer->mount_identity_valid = true;
+  return true;
+}
+
+static bool mount_fpkg_writable_app0(const char *title_id,
+                                     const char *app0_path) {
+  char writable[MAX_PATH];
+  if (sm_fpkg_cache_prepare_writable(SM_FPKG_CACHE_DEFAULT_ROOT, title_id,
+                                     g_fakelib_mount.fpkg_generation_path,
+                                     writable) != SM_FPKG_OK)
+    return false;
+  struct statfs fs;
+  if (statfs(app0_path, &fs) != 0 || strcmp(fs.f_mntonname, app0_path) != 0) {
+    errno = ENOENT;
+    return false;
+  }
+  if (fs.f_flags & MNT_RDONLY) {
+    char source[MAX_PATH];
+    int length = snprintf(source, sizeof(source), "/system_ex/app/%s", title_id);
+    if (length < 0 || (size_t)length >= sizeof(source)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    if (!mount_fpkg_app0_layer(title_id, source, app0_path, false))
+      return false;
+  }
+  return mount_fpkg_app0_layer(title_id, writable, app0_path, true);
+}
+
+static bool mount_sandbox_directory_at(const char *title_id,
+                                       const char *app0_path,
+                                       const char *target_suffix,
+                                       const char *source_path,
+                                       const char *label, int flags) {
   size_t app0_len = strlen(app0_path);
   if (app0_len < 5u || strcmp(app0_path + app0_len - 5u, "/app0") != 0) {
     errno = ENOENT;
     return false;
   }
+  if (!target_suffix || target_suffix[0] != '/' || strchr(target_suffix, '\\') ||
+      strstr(target_suffix, "/../") || strstr(target_suffix, "/./")) {
+    errno = EINVAL;
+    return false;
+  }
 
   char mount_path[MAX_PATH];
   int written = snprintf(mount_path, sizeof(mount_path), "%.*s%s",
-                         (int)(app0_len - 5u), app0_path, source_path);
+                         (int)(app0_len - 5u), app0_path, target_suffix);
   if (written < 0 || (size_t)written >= sizeof(mount_path)) {
     errno = ENAMETOOLONG;
     return false;
@@ -417,7 +493,7 @@ static bool mount_sandbox_directory(const char *title_id,
 
   size_t previous_count = g_fakelib_mount.layer_count;
   bool mounted = track_sandbox_layer(title_id, source_path, mount_path,
-                                     "directory", false, flags);
+                                     label, false, flags);
   if (g_fakelib_mount.layer_count > previous_count)
     g_fakelib_mount.layers[previous_count].created_mount_path = created;
   if (!mounted) {
@@ -428,6 +504,228 @@ static bool mount_sandbox_directory(const char *title_id,
     return false;
   }
   return true;
+}
+
+static bool mount_sandbox_directory(const char *title_id,
+                                    const char *app0_path,
+                                    const char *source_path, int flags) {
+  return mount_sandbox_directory_at(title_id, app0_path, source_path,
+                                    source_path, "directory", flags);
+}
+
+static bool is_fpkg_cache_generation_path(const char *path) {
+  return path && path_matches_root_or_child(path, SM_FPKG_CACHE_DEFAULT_ROOT);
+}
+
+static bool title_uses_fpkg_cache(const char *title_id,
+                                  const char *candidate_path) {
+  if (is_fpkg_cache_generation_path(candidate_path))
+    return true;
+  char managed_path[MAX_PATH];
+  return read_mount_link(title_id, managed_path, sizeof(managed_path)) &&
+         is_fpkg_cache_generation_path(managed_path);
+}
+
+static bool restore_fpkg_source_image_chain(const char *title_id,
+                                            const char *source_path) {
+  if (!is_under_image_mount_base(source_path))
+    return true;
+  char chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH];
+  size_t count = 0;
+  if (!read_mount_image_chain(title_id, chain, &count) || count == 0) {
+    if (errno == 0)
+      errno = ENOENT;
+    return false;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    const char *name = strrchr(chain[i], '/');
+    name = name ? name + 1 : chain[i];
+    bool unstable = false;
+    if (!maybe_mount_image_file(chain[i], name, &unstable))
+      return false;
+  }
+  struct stat source_st;
+  return stat(source_path, &source_st) == 0 && S_ISREG(source_st.st_mode);
+}
+
+bool sm_fakelib_resolve_fpkg_generation_source(
+    const char *title_id, const char *generation_path,
+    char source_path_out[MAX_PATH]) {
+  if (!source_path_out)
+    return false;
+  source_path_out[0] = '\0';
+  if (!sm_config_fpkg_direct_mount_enabled()) {
+    errno = ENOTSUP;
+    return false;
+  }
+  sm_fpkg_cache_generation_info_t info;
+  if (sm_fpkg_cache_read_generation_info(
+          SM_FPKG_CACHE_DEFAULT_ROOT, title_id, generation_path,
+          &info) != SM_FPKG_OK) {
+    errno = ESTALE;
+    return false;
+  }
+  if (!info.source_matches_snapshot) {
+    if (!is_under_image_mount_base(info.source_path)) {
+      errno = ESTALE;
+      return false;
+    }
+    if (!restore_fpkg_source_image_chain(title_id, info.source_path)) {
+      if (errno == 0)
+        errno = ENOENT;
+      return false;
+    }
+    if (sm_fpkg_cache_read_generation_info(
+            SM_FPKG_CACHE_DEFAULT_ROOT, title_id, generation_path,
+            &info) != SM_FPKG_OK ||
+        (!info.source_matches_snapshot &&
+         !sm_fpkg_cache_source_matches_remounted_image(&info))) {
+      errno = ESTALE;
+      return false;
+    }
+  }
+  char backport_path[MAX_PATH] = {0};
+  (void)resolve_backport_path_for_title(title_id, NULL, backport_path);
+  if (!sm_fpkg_cache_backport_matches(
+          &info, backport_path[0] ? backport_path : NULL)) {
+    errno = ESTALE;
+    return false;
+  }
+  (void)strlcpy(source_path_out, info.source_path, MAX_PATH);
+  return true;
+}
+
+static bool resolve_fpkg_source_directory(const char *title_id,
+                                          const char *generation_path,
+                                          char directory_out[MAX_PATH]) {
+  directory_out[0] = '\0';
+  char source_path[MAX_PATH];
+  if (!sm_fakelib_resolve_fpkg_generation_source(
+          title_id, generation_path, source_path))
+    return false;
+  const char *extension = strrchr(source_path, '.');
+  if (!extension || strcasecmp(extension, ".pkg") != 0) {
+    errno = EINVAL;
+    return false;
+  }
+  char parent[MAX_PATH];
+  (void)strlcpy(parent, source_path, sizeof(parent));
+  char *slash = strrchr(parent, '/');
+  if (!slash) {
+    errno = EINVAL;
+    return false;
+  }
+  if (slash == parent)
+    slash[1] = '\0';
+  else
+    *slash = '\0';
+  struct stat st;
+  if (stat(parent, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    errno = ENOENT;
+    return false;
+  }
+  (void)strlcpy(directory_out, parent, MAX_PATH);
+  return true;
+}
+
+static bool mount_fpkg_source_directory(const char *title_id,
+                                        const char *app0_path,
+                                        const char *source_directory) {
+  return mount_sandbox_directory_at(title_id, app0_path, "/app0/kraken",
+                                    source_directory, "fpkg", MNT_RDONLY);
+}
+
+static bool is_sandbox_removable_path(const char *path) {
+  if (!path)
+    return false;
+  for (unsigned i = 0; i < SANDBOX_USB_ROOT_COUNT; ++i) {
+    char root[16];
+    (void)snprintf(root, sizeof(root), "/mnt/usb%u", i);
+    if (path_matches_root_or_child(path, root))
+      return true;
+  }
+  for (unsigned i = 0; i < SANDBOX_EXT_ROOT_COUNT; ++i) {
+    char root[16];
+    (void)snprintf(root, sizeof(root), "/mnt/ext%u", i);
+    if (path_matches_root_or_child(path, root))
+      return true;
+  }
+  return false;
+}
+
+static bool has_fpkg_sandbox_layer(void) {
+  for (size_t i = 0; i < g_fakelib_mount.layer_count; ++i) {
+    if (g_fakelib_mount.layers[i].label &&
+        strcmp(g_fakelib_mount.layers[i].label, "fpkg") == 0)
+      return true;
+  }
+  return false;
+}
+
+static bool mount_fpkg_source_if_needed(void) {
+  if (!g_fakelib_mount.fpkg_source_directory[0])
+    return true;
+  char generation_path[MAX_PATH];
+  char source_directory[MAX_PATH];
+  if (!read_mount_link(g_fakelib_mount.title_id, generation_path,
+                       sizeof(generation_path)))
+    return false;
+  if (strcmp(generation_path, g_fakelib_mount.fpkg_generation_path) != 0) {
+    errno = ESTALE;
+    return false;
+  }
+  if (!resolve_fpkg_source_directory(g_fakelib_mount.title_id,
+                                     generation_path, source_directory))
+    return false;
+  if (strcmp(source_directory, g_fakelib_mount.fpkg_source_directory) != 0) {
+    errno = ESTALE;
+    return false;
+  }
+  if (has_fpkg_sandbox_layer())
+    return true;
+  return mount_fpkg_source_directory(
+      g_fakelib_mount.title_id, g_fakelib_mount.sandbox_app0_path,
+      source_directory);
+}
+
+static bool remove_fpkg_sandbox_layers_for_root(const char *source_root,
+                                                bool removable_only) {
+  bool removed[8u + SANDBOX_USB_ROOT_COUNT + SANDBOX_EXT_ROOT_COUNT] = {0};
+  bool complete = true;
+  for (size_t i = 0; i < g_fakelib_mount.layer_count; ++i) {
+    fakelib_layer_t *layer = &g_fakelib_mount.layers[i];
+    bool is_fpkg = layer->label && strcmp(layer->label, "fpkg") == 0;
+    bool source_matches = source_root
+        ? path_matches_root_or_child(layer->source_path, source_root)
+        : is_sandbox_removable_path(layer->source_path);
+    if (!is_fpkg || !source_matches ||
+        (removable_only && !is_sandbox_removable_path(layer->source_path)))
+      continue;
+    if (!layer->owned_mount) {
+      complete = false;
+      errno = EBUSY;
+      continue;
+    }
+    if (unmount_sandbox_layer(layer)) {
+      removed[i] = true;
+    } else {
+      complete = false;
+    }
+  }
+
+  size_t retained = 0;
+  for (size_t i = 0; i < g_fakelib_mount.layer_count; ++i) {
+    if (removed[i])
+      continue;
+    if (retained != i)
+      g_fakelib_mount.layers[retained] = g_fakelib_mount.layers[i];
+    ++retained;
+  }
+  memset(&g_fakelib_mount.layers[retained], 0,
+         (g_fakelib_mount.layer_count - retained) *
+             sizeof(g_fakelib_mount.layers[0]));
+  g_fakelib_mount.layer_count = retained;
+  return complete;
 }
 
 // Own only directories we create; cleanup removes them after their children.
@@ -967,9 +1265,19 @@ static bool fakelib_emulator_allowed(const char *name, uint32_t flags) {
 
 static bool compute_fakelib_signature(const char *source_path, uint32_t flags,
                                       fakelib_cache_signature_t *signature) {
+  memset(signature, 0, sizeof(*signature));
+  if (flags & FAKELIB_CACHE_FPKG_RUNTIME_ONLY)
+    return true;
+  if (flags & FAKELIB_CACHE_FPKG) {
+    struct stat source_st;
+    if (lstat(source_path, &source_st) != 0) {
+      if (errno == ENOENT)
+        return true;
+      return false;
+    }
+  }
   if (!(flags & FAKELIB_CACHE_EMULATORS_ONLY))
     return compute_source_signature(source_path, signature);
-  memset(signature, 0, sizeof(*signature));
   size_t count = flags & FAKELIB_CACHE_PACKAGE ? 3u : 5u;
   for (size_t i = 0; i < count; ++i) {
     char path[MAX_PATH];
@@ -1215,15 +1523,21 @@ static bool read_cache_manifest(const char *cache_root,
        memchr(manifest->game_path, '\0', sizeof(manifest->game_path)) &&
        memchr(manifest->global_path, '\0', sizeof(manifest->global_path)) &&
        memchr(manifest->emulators_path, '\0',
-               sizeof(manifest->emulators_path));
+               sizeof(manifest->emulators_path)) &&
+       memchr(manifest->ampr_ng_path, '\0', sizeof(manifest->ampr_ng_path));
   if (ok) {
     bool has_global = manifest->flags & FAKELIB_CACHE_HAS_GLOBAL;
+    bool fpkg_runtime = manifest->flags & FAKELIB_CACHE_FPKG;
     ok = (manifest->flags & ~FAKELIB_CACHE_FLAG_MASK) == 0 &&
          (!(manifest->flags & FAKELIB_CACHE_GLOBAL_PRIORITY) || has_global) &&
+         (!(manifest->flags & FAKELIB_CACHE_FPKG_RUNTIME_ONLY) ||
+          fpkg_runtime) &&
          manifest->game_path[0] == '/' &&
          (has_global ? manifest->global_path[0] == '/'
                      : manifest->global_path[0] == '\0') &&
-         (has_global || manifest->emulator_file_count > 0 ||
+         (fpkg_runtime ? manifest->ampr_ng_path[0] == '/'
+                       : manifest->ampr_ng_path[0] == '\0') &&
+         (has_global || fpkg_runtime || manifest->emulator_file_count > 0 ||
           (manifest->flags & FAKELIB_CACHE_FILTERED));
   }
   if (ok && last_used_out)
@@ -1274,7 +1588,8 @@ static bool cache_manifest_matches_context(
   return manifest->flags == context->flags &&
          strcmp(manifest->game_path, context->game_path) == 0 &&
          strcmp(manifest->global_path, context->global_path) == 0 &&
-         strcmp(manifest->emulators_path, context->emulators_path) == 0;
+         strcmp(manifest->emulators_path, context->emulators_path) == 0 &&
+         strcmp(manifest->ampr_ng_path, context->ampr_ng_path) == 0;
 }
 
 static bool cache_manifest_is_current(
@@ -1378,6 +1693,20 @@ static bool copy_emulator_files_to_cache(const char *emulators_path,
   return ok;
 }
 
+static bool copy_fpkg_ng_runtime(const fakelib_cache_context_t *context,
+                                 const char *cache_fakelib_path) {
+  if (!(context->flags & FAKELIB_CACHE_FPKG))
+    return true;
+  char cache_file[MAX_PATH];
+  int written = snprintf(cache_file, sizeof(cache_file), "%s/%s",
+                         cache_fakelib_path, AMPR_EMULATOR_FILE_NAME);
+  if (written <= 0 || (size_t)written >= sizeof(cache_file)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  return copy_file_with_mode(context->ampr_ng_path, cache_file, 0777) == 0;
+}
+
 static bool ensure_fakelib_cache_root(void) {
   if (mkdir("/data/shadowmount", 0777) != 0 && errno != EEXIST)
     return false;
@@ -1478,18 +1807,39 @@ static bool init_cache_context(const char *title_id, const char *game_path,
   memset(context, 0, sizeof(*context));
   (void)strlcpy(context->game_path, game_path, sizeof(context->game_path));
 
+  bool fpkg_runtime =
+      allow_emulator_updates && title_uses_fpkg_cache(title_id, game_path);
+  bool fpkg_runtime_only =
+      fpkg_runtime &&
+      (!cfg->backport_fakelib_enabled ||
+       sm_config_title_fakelib_mode(cfg, title_id) == SM_FAKELIB_DISABLED);
+
   if (!allow_emulator_updates)
     context->flags |= FAKELIB_CACHE_PACKAGE;
   if (exclusive)
     context->flags |= FAKELIB_CACHE_EXCLUSIVE;
-  if (sm_config_title_fakelib_mode(cfg, title_id) == SM_FAKELIB_EMULATORS)
+  if (fpkg_runtime)
+    context->flags |= FAKELIB_CACHE_FPKG;
+  if (fpkg_runtime_only)
+    context->flags |= FAKELIB_CACHE_FPKG_RUNTIME_ONLY;
+  if (!fpkg_runtime_only &&
+      sm_config_title_fakelib_mode(cfg, title_id) == SM_FAKELIB_EMULATORS)
     context->flags |= FAKELIB_CACHE_EMULATORS_ONLY | FAKELIB_CACHE_FILTERED;
-  if (!exclusive && allow_emulator_updates && cfg->update_emulators_enabled) {
+  if (!fpkg_runtime_only && !exclusive && allow_emulator_updates &&
+      cfg->update_emulators_enabled) {
     (void)strlcpy(context->emulators_path, cfg->emulators_path,
                   sizeof(context->emulators_path));
   }
 
-  if (!exclusive && resolve_global_fakelib_source(title_id, context->global_path, cfg) &&
+  if (fpkg_runtime &&
+      sm_ampr_resolve_ng_runtime(cfg->emulators_path,
+                                 SM_FPKG_AMPR_RUNTIME_ROOT,
+                                 context->ampr_ng_path) != 0) {
+    return false;
+  }
+
+  if (!fpkg_runtime_only && !exclusive &&
+      resolve_global_fakelib_source(title_id, context->global_path, cfg) &&
       strcmp(context->global_path, game_path) != 0) {
     context->flags |= FAKELIB_CACHE_HAS_GLOBAL;
     if (!cfg->global_fakelib_game_priority)
@@ -1518,6 +1868,9 @@ static bool compute_cache_context_signatures(
                                 &context->global_signature)) {
     return false;
   }
+  memset(&context->emulator_files_signature, 0,
+         sizeof(context->emulator_files_signature));
+  context->emulator_file_count = 0;
   if (context->emulators_path[0] != '\0' &&
       !compute_emulator_files_signature(
           context->emulators_path, context->game_path,
@@ -1529,12 +1882,36 @@ static bool compute_cache_context_signatures(
           &context->emulator_file_count)) {
     return false;
   }
+  if (context->flags & FAKELIB_CACHE_FPKG) {
+    struct stat runtime_st;
+    if (!context->ampr_ng_path[0]) {
+      errno = ENOENT;
+      return false;
+    }
+    if (stat(context->ampr_ng_path, &runtime_st) != 0)
+      return false;
+    if (!S_ISREG(runtime_st.st_mode)) {
+      errno = EINVAL;
+      return false;
+    }
+    int is_ng = sm_file_is_ampr_ng(context->ampr_ng_path);
+    if (is_ng < 0)
+      return false;
+    if (is_ng == 0) {
+      errno = ENOEXEC;
+      return false;
+    }
+    cache_signature_add(&context->emulator_files_signature,
+                        AMPR_NG_EMULATOR_DIR "/" AMPR_EMULATOR_FILE_NAME,
+                        &runtime_st);
+    context->emulator_file_count++;
+  }
   return true;
 }
 
 static bool cache_context_requires_cache(
     const fakelib_cache_context_t *context) {
-  return (context->flags & FAKELIB_CACHE_HAS_GLOBAL) ||
+  return (context->flags & (FAKELIB_CACHE_HAS_GLOBAL | FAKELIB_CACHE_FPKG)) ||
          context->emulator_file_count > 0 ||
          (context->flags & FAKELIB_CACHE_FILTERED);
 }
@@ -1557,7 +1934,15 @@ static bool remove_fakelib_kernel(const char *source_path) {
 
 static bool copy_fakelib_source(const char *source_path, const char *destination,
                                 uint32_t flags) {
+  if (flags & FAKELIB_CACHE_FPKG_RUNTIME_ONLY) {
+    return mkdir(destination, 0777) == 0 || errno == EEXIST;
+  }
   if (!(flags & FAKELIB_CACHE_EMULATORS_ONLY)) {
+    struct stat source_st;
+    if ((flags & FAKELIB_CACHE_FPKG) &&
+        lstat(source_path, &source_st) != 0 && errno == ENOENT) {
+      return mkdir(destination, 0777) == 0 || errno == EEXIST;
+    }
     if (copy_dir_with_mode(source_path, destination, 0777) != 0)
       return false;
     char kernel_path[MAX_PATH];
@@ -1663,6 +2048,8 @@ static bool rebuild_fakelib_cache(
   }
   size_t copied_emulator_files = 0;
   if (built && context->emulator_file_count > 0) {
+    size_t expected_emulator_files = context->emulator_file_count -
+        ((context->flags & FAKELIB_CACHE_FPKG) ? 1u : 0u);
     built = copy_emulator_files_to_cache(context->emulators_path,
                                          context->game_path,
                                          global_priority
@@ -1670,11 +2057,13 @@ static bool rebuild_fakelib_cache(
                                              : NULL,
                                          temp_fakelib, context->flags,
                                          &copied_emulator_files) &&
-            copied_emulator_files == context->emulator_file_count;
+            copied_emulator_files == expected_emulator_files;
   }
   if (built && has_global && global_priority) {
     built = copy_fakelib_source(context->global_path, temp_fakelib, context->flags);
   }
+  if (built)
+    built = copy_fpkg_ng_runtime(context, temp_fakelib);
 
   fakelib_cache_context_t current = *context;
   if (built) {
@@ -1704,6 +2093,8 @@ static bool rebuild_fakelib_cache(
                   sizeof(manifest.global_path));
     (void)strlcpy(manifest.emulators_path, context->emulators_path,
                   sizeof(manifest.emulators_path));
+    (void)strlcpy(manifest.ampr_ng_path, context->ampr_ng_path,
+                  sizeof(manifest.ampr_ng_path));
     built = write_cache_manifest(temp_root, &manifest);
   }
 
@@ -1738,18 +2129,31 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
                                 const runtime_config_t *cfg) {
   if (!is_supported_game_title_id(title_id))
     return;
-  if (!cfg->backport_fakelib_enabled ||
-      sm_config_title_fakelib_mode(cfg, title_id) == SM_FAKELIB_DISABLED)
+  bool fpkg_runtime =
+      allow_emulator_updates && title_uses_fpkg_cache(title_id, game_path);
+  if ((!cfg->backport_fakelib_enabled ||
+       sm_config_title_fakelib_mode(cfg, title_id) == SM_FAKELIB_DISABLED) &&
+      !fpkg_runtime)
     return;
 
   char game_source_path[MAX_PATH];
   fakelib_source_kind_t source_kind = resolve_game_fakelib_source_for_path(
       title_id, game_path, include_backport, game_source_path, NULL);
   bool exclusive = source_kind == FAKELIB_SOURCE_FAKELIB2;
-  if (source_kind == FAKELIB_SOURCE_NONE &&
-      !resolve_global_fakelib_source(title_id, game_source_path, cfg)) {
-    remove_title_cache(title_id);
-    return;
+  if (source_kind == FAKELIB_SOURCE_NONE) {
+    if (fpkg_runtime) {
+      int written = snprintf(game_source_path, sizeof(game_source_path),
+                             "%s/fakelib", game_path);
+      if (written <= 0 || (size_t)written >= sizeof(game_source_path)) {
+        errno = ENAMETOOLONG;
+        return;
+      }
+      source_kind = FAKELIB_SOURCE_COMPOSABLE;
+    } else if (!resolve_global_fakelib_source(title_id, game_source_path,
+                                              cfg)) {
+      remove_title_cache(title_id);
+      return;
+    }
   }
   if (path_overlaps_fakelib_cache(game_source_path)) {
     log_debug("  [FAKELIB] refusing cache source inside cache tree for %s: %s",
@@ -1757,7 +2161,8 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
     remove_title_cache(title_id);
     return;
   }
-  if (allow_emulator_updates && !is_under_image_mount_base(game_path)) {
+  if (allow_emulator_updates && !is_under_image_mount_base(game_path) &&
+      !title_uses_fpkg_cache(title_id, game_path)) {
     if (!remove_fakelib_kernel(game_source_path))
       return;
     char global_path[MAX_PATH];
@@ -1767,8 +2172,12 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
   }
   fakelib_cache_context_t context;
   if (!init_cache_context(title_id, game_source_path, allow_emulator_updates,
-                          exclusive, &context, cfg))
+                          exclusive, &context, cfg)) {
+    if (fpkg_runtime)
+      log_debug("  [FPKG] required ampr-emu-ng runtime unavailable for %s: %s",
+                title_id, strerror(errno));
     return;
+  }
   if (!compute_cache_context_signatures(&context)) {
     log_debug("  [FAKELIB] cache fingerprint failed for %s", title_id);
     remove_title_cache(title_id);
@@ -1832,7 +2241,9 @@ static bool resolve_cached_fakelib_locked(
   if (!init_cache_context(title_id, game_path, allow_emulator_updates,
                           exclusive, &context, cfg))
     return false;
-  *required_out = (context.flags & FAKELIB_CACHE_FILTERED) != 0;
+  *required_out =
+      (context.flags &
+       (FAKELIB_CACHE_FILTERED | FAKELIB_CACHE_FPKG)) != 0;
 
   char cache_root[MAX_PATH];
   if (!build_cache_path(title_id, "", cache_root))
@@ -2107,12 +2518,27 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
 
   char managed_game_path[MAX_PATH] = {0};
   const runtime_config_t cfg = runtime_config();
-  bool fakelib_enabled = cfg.backport_fakelib_enabled &&
-      sm_config_title_fakelib_mode(&cfg, title_id) != SM_FAKELIB_DISABLED;
   bool managed_title =
       read_mount_link(title_id, managed_game_path, sizeof(managed_game_path));
+  bool fpkg_source = managed_title &&
+                     is_fpkg_cache_generation_path(managed_game_path);
+  bool fpkg_runtime_only =
+      fpkg_source &&
+      (!cfg.backport_fakelib_enabled ||
+       sm_config_title_fakelib_mode(&cfg, title_id) == SM_FAKELIB_DISABLED);
+  bool fakelib_enabled = fpkg_source ||
+      (cfg.backport_fakelib_enabled &&
+       sm_config_title_fakelib_mode(&cfg, title_id) != SM_FAKELIB_DISABLED);
   char sandbox_app0_path[MAX_PATH] = {0};
   char mount_path[MAX_PATH] = {0};
+  char fpkg_source_directory[MAX_PATH] = {0};
+  if (fpkg_source &&
+      !resolve_fpkg_source_directory(title_id, managed_game_path,
+                                     fpkg_source_directory)) {
+    log_debug("  [FPKG] cannot resolve package source for %s (%s): %s",
+              title_id, managed_game_path, strerror(errno));
+    return false;
+  }
   bool sandbox_resolved = false;
 
   if (!managed_title) {
@@ -2131,7 +2557,9 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
     }
     if (sandbox_resolved && sandbox_app0_path[0] != '\0' &&
         strcmp(g_fakelib_mount.sandbox_app0_path, sandbox_app0_path) == 0 &&
-        strcmp(g_fakelib_mount.mount_path, mount_path) == 0) {
+        strcmp(g_fakelib_mount.mount_path, mount_path) == 0 &&
+        strcmp(g_fakelib_mount.fpkg_source_directory,
+               fpkg_source_directory) == 0) {
       if (pid > 0)
         g_fakelib_mount.pid = pid;
       bool notify = pid > 0 && notify_user && g_fakelib_mount.notify_pending;
@@ -2170,9 +2598,19 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
                             title_id, game_path, true, game_source_path,
                             &backport_source)
                       : FAKELIB_SOURCE_NONE;
+  if (fpkg_source && source_kind == FAKELIB_SOURCE_NONE) {
+    int written = snprintf(game_source_path, sizeof(game_source_path),
+                           "%s/fakelib", game_path);
+    if (written <= 0 || (size_t)written >= sizeof(game_source_path)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    source_kind = FAKELIB_SOURCE_COMPOSABLE;
+  }
   bool has_game = source_kind != FAKELIB_SOURCE_NONE;
   bool allows_composition = source_kind != FAKELIB_SOURCE_FAKELIB2;
-  bool has_global = fakelib_enabled && allows_composition &&
+  bool has_global = fakelib_enabled && !fpkg_runtime_only &&
+                    allows_composition &&
                     resolve_global_fakelib_source(title_id,
                                                   global_source_path, &cfg);
 
@@ -2247,19 +2685,30 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
   g_fakelib_mount.pid = pid;
   (void)strlcpy(g_fakelib_mount.title_id, title_id,
                 sizeof(g_fakelib_mount.title_id));
+  if (fpkg_source)
+    (void)strlcpy(g_fakelib_mount.fpkg_generation_path, managed_game_path,
+                  sizeof(g_fakelib_mount.fpkg_generation_path));
   (void)strlcpy(g_fakelib_mount.sandbox_app0_path, sandbox_app0_path,
                 sizeof(g_fakelib_mount.sandbox_app0_path));
   (void)strlcpy(g_fakelib_mount.mount_path, mount_path,
                 sizeof(g_fakelib_mount.mount_path));
+  (void)strlcpy(g_fakelib_mount.fpkg_source_directory,
+                fpkg_source_directory,
+                sizeof(g_fakelib_mount.fpkg_source_directory));
+  g_fakelib_mount.fpkg_source_is_removable =
+      fpkg_source && is_sandbox_removable_path(fpkg_source_directory);
   const char *label = !allows_composition
                           ? "fakelib2"
-                          : (has_game ? "game" : "global");
-  if ((has_source && !track_sandbox_layer(title_id, source_path, mount_path,
+                          : (fpkg_source ? "fpkg-fakelib"
+                                         : (has_game ? "game" : "global"));
+  if ((fpkg_source && !mount_fpkg_writable_app0(title_id, sandbox_app0_path)) ||
+      (has_source && !track_sandbox_layer(title_id, source_path, mount_path,
                                         label, true, 0)) ||
       !ensure_sandbox_parent(sandbox_app0_path, "/mnt") ||
       !mount_sandbox_directory(title_id, sandbox_app0_path, "/data", 0) ||
       !mount_sandbox_storage_roots(title_id, sandbox_app0_path, false) ||
-      !mount_sandbox_fonts(title_id, sandbox_app0_path)) {
+      !mount_sandbox_fonts(title_id, sandbox_app0_path) ||
+      (fpkg_source && !mount_fpkg_source_if_needed())) {
     int mount_errno = errno;
     if (!cleanup_fakelib_mount())
       schedule_fakelib_cleanup();
@@ -2316,6 +2765,10 @@ bool sm_fakelib_game_set_usb_suspended(bool suspended) {
   }
 
   if (suspended) {
+    bool fpkg_layers_removed =
+        remove_fpkg_sandbox_layers_for_root(NULL, true);
+    if (!fpkg_layers_removed)
+      sync_errno = errno != 0 ? errno : EIO;
     // USB aliases are siblings. Unmount and compact in one pass, preserving
     // the order and ownership of all other layers and any failed aliases.
     size_t retained = 0;
@@ -2324,9 +2777,9 @@ bool sm_fakelib_game_set_usb_suspended(bool suspended) {
       bool usb_alias = layer->owned_mount && layer->label &&
           strcmp(layer->label, "directory") == 0 &&
           is_sandbox_usb_root(layer->source_path);
-      if (usb_alias && unmount_sandbox_layer(layer))
+      if (usb_alias && fpkg_layers_removed && unmount_sandbox_layer(layer))
         continue;
-      if (usb_alias) {
+      if (usb_alias && fpkg_layers_removed) {
         // Do not mask a real failure with an earlier transient busy error.
         if (sync_errno == 0 || sync_errno == EBUSY)
           sync_errno = errno != 0 ? errno : EIO;
@@ -2339,11 +2792,14 @@ bool sm_fakelib_game_set_usb_suspended(bool suspended) {
            (g_fakelib_mount.layer_count - retained) *
                sizeof(g_fakelib_mount.layers[0]));
     g_fakelib_mount.layer_count = retained;
-  } else if (g_fakelib_mount.mounts_ready &&
-             !mount_sandbox_storage_roots(g_fakelib_mount.title_id,
-                                          g_fakelib_mount.sandbox_app0_path,
-                                          true)) {
-    sync_errno = errno != 0 ? errno : EIO;
+  } else if (g_fakelib_mount.mounts_ready) {
+    if (!mount_sandbox_storage_roots(g_fakelib_mount.title_id,
+                                     g_fakelib_mount.sandbox_app0_path, true)) {
+      sync_errno = errno != 0 ? errno : EIO;
+    } else if (g_fakelib_mount.fpkg_source_is_removable &&
+               !mount_fpkg_source_if_needed()) {
+      sync_errno = errno != 0 ? errno : EIO;
+    }
   }
   // Exit or rollback can leave a busy core layer after removing every USB
   // alias. Its retained dependencies must still block USB source cleanup.
@@ -2371,10 +2827,24 @@ void sm_fakelib_game_on_usb_mount_change(const char *source_path, bool mounted) 
     return;
   }
 
+  if (!mounted &&
+      !remove_fpkg_sandbox_layers_for_root(source_path, false)) {
+    log_debug("  [FAKELIB] FPKG source unmount deferred for %s (%s): %s",
+              g_fakelib_mount.title_id, source_path, strerror(errno));
+    pthread_mutex_unlock(&g_fakelib_mutex);
+    return;
+  }
+
   if (!sync_sandbox_storage_root(g_fakelib_mount.title_id,
                                   g_fakelib_mount.sandbox_app0_path,
                                   source_path, mounted)) {
     log_debug("  [FAKELIB] USB sandbox update failed for %s (%s): %s",
+              g_fakelib_mount.title_id, source_path, strerror(errno));
+  } else if (mounted && g_fakelib_mount.fpkg_source_directory[0] &&
+             path_matches_root_or_child(g_fakelib_mount.fpkg_source_directory,
+                                        source_path) &&
+             !mount_fpkg_source_if_needed()) {
+    log_debug("  [FAKELIB] FPKG source remount failed for %s (%s): %s",
               g_fakelib_mount.title_id, source_path, strerror(errno));
   }
   pthread_mutex_unlock(&g_fakelib_mutex);

@@ -62,6 +62,11 @@ version = 2
 # Delay: 1..86400 seconds.
 # remove_delay_seconds = 300
 
+[fpkg]
+# Enables scanning and lifecycle integration for supported plaintext debug FPKG.
+# Enabled by default; set off to disable. Platform checks remain in force.
+direct_mount = on
+
 [fakelib]
 # Sandbox fakelib overlays. Disable the standalone BackPork payload when enabled.
 # enabled = on

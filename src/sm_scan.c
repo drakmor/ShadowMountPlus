@@ -20,7 +20,10 @@
 #include "sm_image_index.h"
 #include "sm_image.h"
 #include "sm_install_queue.h"
+#include "sm_fpkg.h"
+#include "sm_fpkg_cache.h"
 #include "sm_manual.h"
+#include "sm_pkg.h"
 #include "sm_self.h"
 #include "sm_shellcore_service.h"
 
@@ -410,6 +413,7 @@ static bool enqueue_directory_candidate(
   candidates[*candidate_count].installed = installed;
   candidates[*candidate_count].in_app_db = in_app_db;
   candidates[*candidate_count].manual = false;
+  candidates[*candidate_count].fpkg = false;
   mark_scan_candidate_manual(&candidates[*candidate_count], manual_source_path);
   (*candidate_count)++;
   return true;
@@ -721,6 +725,175 @@ static bool try_collect_candidate_for_directory(
                                      unstable_found_out);
 }
 
+static bool try_collect_candidate_for_fpkg(
+    const char *full_path, scan_candidate_t *candidates, int max_candidates,
+    int *candidate_count, const scan_app_db_context_t *app_db,
+    const char *manual_source_path, bool *unstable_found_out) {
+  if (!sm_config_fpkg_direct_mount_enabled())
+    return true;
+  if (defer_full_candidate_batch(*candidate_count, max_candidates,
+                                 unstable_found_out))
+    return true;
+
+  const char *filename = get_filename_component(full_path);
+  if (!wait_for_stability_fast(full_path, filename)) {
+    if (unstable_found_out)
+      *unstable_found_out = true;
+    return true;
+  }
+
+  int fd = open(full_path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+  if (fd < 0)
+    return true;
+  sm_pkg_info_t package_info = {0};
+  bool parsed = sm_pkg_parse_fd(full_path, fd, &package_info);
+  if (parsed && (package_info.pkg_kind != PKG_KIND_BASE ||
+                 !package_info.pkg_classification_confident)) {
+    close(fd);
+    return true;
+  }
+  sm_fpkg_t *fpkg = NULL;
+  sm_fpkg_status_t fpkg_status = parsed
+      ? sm_fpkg_open_fd(full_path, fd, &package_info, &fpkg)
+      : SM_FPKG_UNSUPPORTED;
+  if (!parsed || fpkg_status != SM_FPKG_OK) {
+    if (fpkg_status != SM_FPKG_UNSUPPORTED)
+      log_debug("  [FPKG] source rejected during scan: %s status=%d",
+                full_path, (int)fpkg_status);
+    if (fpkg)
+      sm_fpkg_close(fpkg);
+    close(fd);
+    return true;
+  }
+  sm_fpkg_close(fpkg);
+  close(fd);
+
+  note_found_title(package_info.title_id);
+  if (!sm_image_index_record_game(full_path, package_info.title_id) &&
+      unstable_found_out)
+    *unstable_found_out = true;
+  note_game_cache_source_seen(full_path, package_info.title_id,
+                              package_info.title_name);
+  if (sm_shellcore_title_is_protected(package_info.title_id))
+    return true;
+  if (is_blocked_ppsa_title(app_db->blocked_ppsa_titles,
+                            app_db->blocked_ppsa_titles_ready,
+                            package_info.title_id)) {
+    request_blocked_ppsa_uninstall(package_info.title_id, full_path);
+    return true;
+  }
+  if (!app_db->titles_ready) {
+    if (unstable_found_out)
+      *unstable_found_out = true;
+    return true;
+  }
+
+  bool in_app_db = app_db_title_list_contains(app_db->titles,
+                                               package_info.title_id);
+  bool installed = in_app_db && is_installed(package_info.title_id);
+  bool appmeta_present = installed
+      ? get_appmeta_present_for_scan_cycle(package_info.title_id)
+      : false;
+  char tracked_path[MAX_PATH];
+  bool has_tracked_path = read_mount_link(package_info.title_id, tracked_path,
+                                          sizeof(tracked_path));
+  char active_generation[MAX_PATH] = {0};
+  char backport_path[MAX_PATH] = {0};
+  (void)resolve_backport_path_for_title(package_info.title_id, NULL,
+                                        backport_path);
+  sm_fpkg_status_t generation_status =
+      sm_fpkg_cache_find_current_generation_with_backport(
+          SM_FPKG_CACHE_DEFAULT_ROOT, &package_info,
+          backport_path[0] ? backport_path : NULL, active_generation);
+  if (generation_status != SM_FPKG_OK &&
+      generation_status != SM_FPKG_UNSUPPORTED) {
+    if (unstable_found_out)
+      *unstable_found_out = true;
+    return true;
+  }
+  bool same_source_generation = generation_status == SM_FPKG_OK;
+  if (same_source_generation && installed && appmeta_present &&
+      has_tracked_path && strcmp(tracked_path, active_generation) == 0 &&
+      directory_has_game_executable(active_generation)) {
+    cache_game_entry(full_path, package_info.title_id,
+                     package_info.title_name);
+    if (manual_source_path)
+      sm_manual_note_installed(manual_source_path, package_info.title_id,
+                               package_info.title_name);
+    int queued_candidate = find_scan_candidate_index_by_title_id(
+        candidates, *candidate_count, package_info.title_id);
+    if (queued_candidate >= 0)
+      remove_scan_candidate_at(candidates, candidate_count, queued_candidate);
+    return true;
+  }
+
+  sm_fpkg_cache_generation_info_t tracked_generation = {0};
+  bool tracked_same_package = has_tracked_path &&
+      path_matches_root_or_child(tracked_path, SM_FPKG_CACHE_DEFAULT_ROOT) &&
+      sm_fpkg_cache_read_generation_info(
+          SM_FPKG_CACHE_DEFAULT_ROOT, package_info.title_id, tracked_path,
+          &tracked_generation) == SM_FPKG_OK &&
+      !strcmp(tracked_generation.source_path, full_path);
+  if (installed && appmeta_present && has_tracked_path && !tracked_same_package &&
+      strcmp(tracked_path, full_path) != 0 &&
+      (is_data_mounted(package_info.title_id) ||
+       (is_under_image_mount_base(tracked_path) &&
+        read_mount_image_link(package_info.title_id, active_generation,
+                              sizeof(active_generation)) &&
+        sm_image_index_source_has_title(active_generation,
+                                        package_info.title_id)))) {
+    notify_duplicate_scan_candidate(package_info.title_id, full_path,
+                                    tracked_path);
+    cache_game_entry(tracked_path, package_info.title_id,
+                     package_info.title_name);
+    int queued_candidate = find_scan_candidate_index_by_title_id(
+        candidates, *candidate_count, package_info.title_id);
+    if (queued_candidate >= 0)
+      remove_scan_candidate_at(candidates, candidate_count, queued_candidate);
+    return true;
+  }
+
+  int duplicate_candidate_index = find_scan_candidate_index_by_title_id(
+      candidates, *candidate_count, package_info.title_id);
+  if (duplicate_candidate_index >= 0) {
+    const char *existing_path = candidates[duplicate_candidate_index].path;
+    if (strcmp(existing_path, full_path) != 0)
+      notify_duplicate_scan_candidate(package_info.title_id, full_path,
+                                      existing_path);
+    mark_scan_candidate_manual(&candidates[duplicate_candidate_index],
+                               manual_source_path);
+    return true;
+  }
+  if ((!in_app_db && is_title_install_pending(package_info.title_id)) ||
+      (!in_app_db && was_register_attempted(package_info.title_id)))
+    return true;
+  if (get_failed_mount_attempts(package_info.title_id) >=
+      MAX_FAILED_MOUNT_ATTEMPTS)
+    return true;
+  if (defer_full_candidate_batch(*candidate_count, max_candidates,
+                                 unstable_found_out))
+    return true;
+
+  scan_candidate_t *candidate = &candidates[*candidate_count];
+  memset(candidate, 0, sizeof(*candidate));
+  (void)strlcpy(candidate->path, full_path, sizeof(candidate->path));
+  (void)strlcpy(candidate->title_id, package_info.title_id,
+                sizeof(candidate->title_id));
+  (void)strlcpy(candidate->title_name, package_info.title_name,
+                sizeof(candidate->title_name));
+  candidate->installed = installed;
+  candidate->in_app_db = in_app_db;
+  candidate->fpkg = true;
+  mark_scan_candidate_manual(candidate, manual_source_path);
+  ++(*candidate_count);
+  return true;
+}
+
+static bool is_native_fpkg_path(const char *path) {
+  const char *extension = path ? strrchr(path, '.') : NULL;
+  return extension && strcasecmp(extension, ".pkg") == 0;
+}
+
 typedef struct {
   scan_candidate_t *candidates;
   int max_candidates;
@@ -731,6 +904,23 @@ typedef struct {
   const char *manual_source_path;
   bool *unstable_found_out;
 } collect_candidates_walk_ctx_t;
+
+static bool collect_candidate_fpkg_visit(const char *package_path,
+                                         const char *package_name,
+                                         unsigned int depth_from_root,
+                                         void *ctx_ptr) {
+  (void)package_name;
+  (void)depth_from_root;
+  if (!sm_game_lifecycle_background_title(NULL))
+    return false;
+  collect_candidates_walk_ctx_t *ctx = ctx_ptr;
+  if (defer_full_candidate_batch(*ctx->candidate_count, ctx->max_candidates,
+                                 ctx->unstable_found_out))
+    return false;
+  return try_collect_candidate_for_fpkg(
+      package_path, ctx->candidates, ctx->max_candidates, ctx->candidate_count,
+      ctx->app_db, ctx->manual_source_path, ctx->unstable_found_out);
+}
 
 static void collect_scan_candidates_from_manual_root(
     const char *scan_path, const char *manual_source_path,
@@ -858,6 +1048,7 @@ static void collect_scan_candidates_from_manual_root(
       .on_directory = collect_candidate_directory_visit,
       .on_image_file = pfsc_container_root ? collect_candidate_image_visit
                                            : NULL,
+      .on_package_file = collect_candidate_fpkg_visit,
   };
   if (!sm_scan_tree_walk(scan_path, scan_path, 0u, scan_depth, &callbacks, &ctx) &&
       unstable_found_out)
@@ -885,6 +1076,13 @@ static void collect_scan_candidates_from_manual_path(
   clear_manual_missing_source(manual_path);
 
   const char *name = get_filename_component(manual_path);
+  if (S_ISREG(st.st_mode) && sm_config_fpkg_direct_mount_enabled() &&
+      is_native_fpkg_path(name)) {
+    (void)try_collect_candidate_for_fpkg(
+        manual_path, candidates, max_candidates, candidate_count, app_db,
+        manual_path, unstable_found_out);
+    return;
+  }
   if (S_ISREG(st.st_mode) &&
       is_supported_image_file_path(manual_path, name)) {
     bool index_ready = sm_image_index_visit_ready_titles(
@@ -1344,6 +1542,7 @@ static void collect_scan_candidates_from_root(
   sm_scan_tree_callbacks_t callbacks = {
       .on_directory = collect_candidate_directory_visit,
       .on_image_file = collect_candidate_image_visit,
+      .on_package_file = collect_candidate_fpkg_visit,
   };
   if (!sm_scan_tree_walk(scan_path, scan_path, 0u, scan_depth, &callbacks, &ctx) &&
       unstable_found_out)

@@ -1,93 +1,132 @@
-# ShadowMountPlus (PS5)
+<div align="center">
+  <img src="assets/shadowkraken-header.png" alt="ShadowKraken: a luminous kraken surrounding a digital package" width="100%">
+  <h1>ShadowKraken</h1>
+  <p><strong>Your PS5 library, mounted your way.</strong></p>
+  <p>One homebrew payload for game folders, disk images, package management and experimental native FPKG mounting.</p>
+  <p>
+    <a href="https://github.com/MNeroba/ShadowKraken/releases/tag/1.00-Dev.1"><img src="https://img.shields.io/badge/release-1.00%20Dev.1-8257e5?style=for-the-badge" alt="Release 1.00 Dev.1"></a>
+    <a href="https://github.com/MNeroba/ShadowKraken/actions/workflows/ps5.yml"><img src="https://img.shields.io/github/actions/workflow/status/MNeroba/ShadowKraken/ps5.yml?branch=feature%2Fkraken-fpkg&amp;style=for-the-badge&amp;label=PS5%20build" alt="PS5 build status"></a>
+    <img src="https://img.shields.io/badge/platform-PS5-0070d1?style=for-the-badge" alt="Platform PS5">
+    <a href="https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-2b6cb0?style=for-the-badge" alt="License GPL-3.0"></a>
+  </p>
+  <p>
+    <a href="https://github.com/MNeroba/ShadowKraken/releases/tag/1.00-Dev.1"><strong>Download</strong></a> ·
+    <a href="#quick-start">Quick start</a> ·
+    <a href="#formats">Formats</a> ·
+    <a href="#web-interface">Web interface</a> ·
+    <a href="#configuration">Configuration</a> ·
+    <a href="#troubleshooting">Troubleshooting</a>
+  </p>
+</div>
 
-**ShadowMountPlus** is an automated background game mounter and library manager for jailbroken PlayStation 5 consoles. It discovers and registers PS4/PS5 game folders and supported disk images on internal or external storage, then prepares them when launched. A built-in web interface provides library management, installation, file transfers, and configuration.
+---
 
-**[Download releases](https://github.com/drakmor/ShadowMountPlus/releases)** · **[Discord community](https://discord.gg/x2Ppvzwjhm)** · **[Report an issue](https://github.com/drakmor/ShadowMountPlus/issues)**
+**ShadowKraken** brings the library, storage and title-management features of
+ShadowMountPlus together with a native C implementation of key Kraken Mount
+functionality. Discover titles on console storage and external drives, work
+with your library from a browser, and manage supported game formats from one
+payload.
 
-> [!WARNING]
-> Mounting disk images can cause shutdown issues or data corruption, particularly on older firmware. Back up important files and saves before testing. This project requires a jailbroken PS5 and is not intended for an unmodified console.
+| Your library | Your storage | Your tools |
+| --- | --- | --- |
+| Automatic discovery and title registration | Internal, USB and extended storage | Browser-based library and installation manager |
+| Game folders, disk images and experimental FPKG | SMB2/SMB3 shares for browsing and transfers | Backports, fakelib profiles, logs and settings |
 
-## 💜 Support development
+> [!IMPORTANT]
+> **1.00 Dev.1 is a development release.** The PS5 payload builds in CI and
+> targeted host checks pass. The new native FPKG registration, mount and launch
+> path has **not yet been verified on a PS5**. Existing features and individual
+> games may behave differently across firmware and storage configurations.
 
-If ShadowMountPlus is useful to you, you can support continued development:
+> [!CAUTION]
+> A compatible jailbroken PS5 is required. Disk mounting and file operations
+> can affect data; back up important files and saves before testing. The web API
+> has **no authentication**: use it only on a trusted local network and do not
+> expose it to the internet.
 
-| Method | Address / link |
-| --- | --- |
-| **Card / Boosty** | **[Donate via Boosty](https://boosty.to/drkamor/donate)** |
-| USDT (TRC-20) | `TKaUGEwMm9KBXzEoiaaKYBX2yCHAKASW3p` |
-| USDT (ERC-20) | `0x313dD245dBA957A5560618eA882d08e66aaFb430` |
-| USDT (BEP20) | `0x313dD245dBA957A5560618eA882d08e66aaFb430` |
-| USDC (Solana) | `5kv7j2RbUGaSP1kU1cZWj9jHH7d6rfvxmK6YXTYbH4um` |
-| BTC (Bitcoin) | `bc1q58czpsrhz783hs8878tzlt4gatrjall9ulqduu` |
+## At a glance
 
-Please double-check the currency and network before sending a donation.
-
-## Features
-
-- **Automatic game discovery:** scan configured folders, register supported titles, and keep the library up to date.
-- **Folder and image support:** run games stored as extracted folders, UFS2, exFAT, PFS images, and compressed PFS containers.
-- **Internal and external storage:** work with the PS5's internal storage and supported USB/external drives.
-- **Web interface:** search and filter the library, manage games and their files, install PKGs, updates, DLC and backports, and monitor operations.
-- **SMB2/SMB3 file management:** connect NAS or PC shares, browse their contents, transfer files, and install content to the console.
-- **Backports and fakelib:** automatically apply matching backports, install/replace/remove backports through the web interface, and configure per-game fakelib modes.
-- **Emulator libraries:** manage supported emulator-library replacements and optionally check for AMPR updates.
-- **Per-game and per-image profiles:** override selected options without changing global defaults.
-- **Background operation:** continue detecting and managing other titles while a supported game is running, with safeguards for active game files.
-- **Notifications and logs:** view startup, installation, mount, and error messages on the console and review diagnostics from the web interface.
-
-## Requirements
-
-- Jailbroken PlayStation 5 with **[kstuff-lite v1.07 or newer](https://github.com/EchoStretch/kstuff-lite)** (including supported firmware 2.00 configurations).
-- The latest compatible `shadowmountplus.elf` from [Releases](https://github.com/drakmor/ShadowMountPlus/releases).
-- A payload sender or a compatible autoloader.
+- **Automatic library** — scan configured paths, discover supported games and images, and register titles for the console library.
+- **Flexible formats** — use game folders, `.ffpkg` UFS2 images, `.exfat` images, `.ffpfs` PFS images and `.ffpfsc` compressed containers.
+- **Native FPKG path** — experimentally prepare supported plaintext debug `.pkg` base titles for direct mounting without extracting the entire game image.
+- **Browser control** — browse the library, inspect titles, manage compatible sources, track operations and adjust settings from the built-in web interface.
+- **Install and transfer** — install supported packages, updates and DLC; copy or move eligible game sources; browse connected local, USB and SMB storage.
+- **Compatibility tools** — manage matching backports, fakelib and emulator libraries, with global and per-title settings.
+- **Designed around the console** — mount tracking, lifecycle cleanup, notifications, logs, gamepad navigation and storage safeguards are integrated into the payload.
 
 ## Quick start
 
-### Option 1: Manual payload launch
+### 1. Get the payload
+
+Download **[ShadowKraken.elf](https://github.com/MNeroba/ShadowKraken/releases/download/1.00-Dev.1/ShadowKraken.elf)**
+from the [1.00 Dev.1 release](https://github.com/MNeroba/ShadowKraken/releases/tag/1.00-Dev.1).
+The release page also provides an archive with configuration examples, tools
+and documentation. Development builds are available from
+[GitHub Actions](https://github.com/MNeroba/ShadowKraken/actions/workflows/ps5.yml).
+
+**Requirements**
+
+- A compatible jailbroken PS5 with [kstuff-lite v1.07 or newer](https://github.com/EchoStretch/kstuff-lite).
+- A payload loader and sender, or a compatible payload autoloader.
+- A supported game source and enough available storage for any required cache or copy.
+
+The active FPKG integration and release workflow are maintained in the
+[`feature/kraken-fpkg`](https://github.com/MNeroba/ShadowKraken/tree/feature/kraken-fpkg)
+branch. The repository's default `1.7` branch does not contain all features of
+this development release.
+
+### 2. Launch ShadowKraken
 
 1. Start your jailbreak environment and payload loader.
-2. Send `shadowmountplus.elf` to **port 9021** using a payload sender.
-3. Wait for the **ShadowMount+** notification.
-4. Place a compatible game folder or image in a [scan location](#game-locations-and-scanning).
-5. Allow the background scanner to discover and register it.
+2. Send `ShadowKraken.elf` to **port 9021** using your payload sender.
+3. Wait for the **ShadowKraken** notification.
+4. Place a supported game folder, image or eligible debug package in a [scan location](#game-locations).
+5. Allow the background scanner to discover and register the title.
 
-### Option 2: PLK autoloader (recommended)
-
-Add the following to your autoloader's `autoload.txt`, adjusting paths and entries to your existing setup:
+For a compatible autoloader, an example `autoload.txt` is:
 
 ```text
-shadowmountplus.elf
+ShadowKraken.elf
 !3000
 kstuff.elf
 ```
 
-This example starts ShadowMountPlus before kstuff, with a delay between them. Keep other payloads in the order required by your jailbreak environment.
+Adapt the order and delay to your existing setup. If an older ShadowMount+
+launcher is already registered, its cached name and icon may remain visible.
+Removing that launcher with the console's normal library controls and
+restarting the payload may be necessary; refresh behavior has not yet been
+verified on PS5.
 
-### Web interface
+### 3. Open the web interface
 
-Open **ShadowMount+** on the PS5, or use a browser on a device on the same local network:
+Open the **ShadowKraken** launcher on the console, or visit from a device on
+the same trusted network:
 
 ```text
 http://<PS5_IP>:10101
 ```
 
-`10101` is the default port; it can be changed under `[api]` in `config.ini`. See [Web interface: library and installation](#web-interface-library-and-installation) for the available actions. **The web API has no authentication:** use a trusted LAN only, and never expose it directly to the internet.
+Port `10101` is the default. The API can be restricted to the console or
+configured under `[api]` in `config.ini`. Disabling the API also skips launcher
+installation at startup.
 
-## Supported game formats
+## Formats
 
-| Extension | Filesystem / content | Recommendation |
+| Source | Format | How ShadowKraken handles it |
 | --- | --- | --- |
-| **`.ffpkg`** | UFS2 disk image | **Preferred for most games** |
-| `.exfat` | exFAT disk image | For games requiring external-drive-style compatibility |
-| `.ffpfs` | PFS disk image | Supported |
-| `.ffpfsc` | Compressed PFS container holding another supported image | Supported; compression can affect loading performance |
-| Game folder | Extracted game files | Supported in scanned or manually specified paths |
+| **Game folder** | Extracted game files | Discovers supported PS4/PS5 title directories in scan paths or `manual.lst`. |
+| **`.ffpkg`** | UFS2 disk image | General-purpose image format; a good starting point for most games. |
+| **`.exfat`** | exFAT disk image | Useful for external-drive-style compatibility; use 64 KiB clusters. |
+| **`.ffpfs`** | PFS disk image | Supported image format. |
+| **`.ffpfsc`** | Compressed PFS container | Holds a supported **nested image**. Compression may affect streaming performance. |
+| **`.pkg`** | PS5 plaintext debug package | Experimental native FPKG path for supported base-title layouts; see [Native FPKG](#native-fpkg-experimental). |
 
-**Choose `.ffpkg` for general use.** Use `.exfat` when a game needs external-drive compatibility; create it with a **64 KB allocation unit**. Compressed `.ffpfsc` containers are best reserved for games without demanding continuous data streaming.
+An `.ffpkg` disk image and a `.pkg` package are different formats. Package
+installation through the **Installation** tab is a separate workflow from
+experimental direct FPKG mounting.
 
-### Correct directory layout
-
-For an extracted game folder or a normal `.ffpkg`, `.exfat`, or `.ffpfs` image, the game files must be at the root:
+For folders and regular `.ffpkg`, `.exfat` or `.ffpfs` images, place the game
+files at the root:
 
 ```text
 PPSA12345/
@@ -97,35 +136,79 @@ PPSA12345/
 └── ...
 ```
 
-Do **not** add another enclosing game directory inside the image. A `.ffpfsc` file is different: it contains a supported **nested image**, not loose game files at the container root.
+Avoid adding another enclosing game folder inside the image. A `.ffpfsc`
+container instead holds a supported nested image, not loose game files.
 
-## Game locations and scanning
+## Native FPKG <sub>experimental</sub>
 
-ShadowMountPlus checks several built-in locations, including:
+ShadowKraken integrates Kraken Mount's package-reading, Kraken decompression
+and AMPR index concepts with the existing library lifecycle:
+
+```text
+scan → parse → prepare/cache → register → mount → launch → cleanup
+```
+
+The backend is intended for **self-created and explicitly authorized plaintext
+debug FPKG base titles**. It does not decrypt content or bypass platform
+signature, license or registration checks. Protected or unsupported layouts
+are rejected; updates and DLC are not registered through this direct-mount
+path. Their package-installation workflow remains separate.
+
+- The original package must remain available at its scan path.
+- A transactional cache under `/data/shadowmount/fpkg-cache/` holds required
+  runtime files and indexes; the complete game image is not extracted.
+- The package parent is exposed read-only at `/app0/kraken` for AMPR NG. A
+  compatible user-provided runtime can be used, or the pinned fallback bundled
+  with the payload is staged.
+- Matching backport files are incorporated into the prepared indexes. Changes
+  to the backport can trigger a new cache generation.
+- A separate writable layer preserves game-created `/app0` files across cache
+  generations. Previous layers and conflicting files are retained and use
+  additional storage; unsupported special filesystem entries can stop a
+  migration while preserving the previous layer.
+
+The feature is **enabled by default**. Disable it in **Settings → Library** or
+in `/data/shadowmount/config.ini`:
+
+```ini
+[fpkg]
+direct_mount = off
+```
+
+> [!NOTE]
+> Host tests exercise parsing, indexes, cache recovery and mocked lifecycle
+> integration. Actual PS5 registration, mount behavior, AMPR loading, writable
+> layer migration, launch and cleanup still need console testing. The format
+> reader supports a subset of possible package layouts; see the
+> [architecture notes](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/docs/fpkg-native-architecture.md)
+> and [validation record](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/docs/fpkg-test-results.md).
+
+## Game locations
+
+Default scan roots include internal storage, USB drives and extended storage:
 
 ```text
 /data/homebrew/
 /data/etaHEN/games/
-/mnt/usb0/homebrew/          # through usb7
-/mnt/usb0/etaHEN/games/      # through usb7
+/mnt/usb0/homebrew/          # usb0 through usb7
+/mnt/usb0/etaHEN/games/      # usb0 through usb7
 /mnt/ext0/homebrew/          # ext0 and ext1
 /mnt/ext0/etaHEN/games/      # ext0 and ext1
 ```
 
-USB and external-drive roots are also scanned. Image mount locations are managed automatically.
-
-A typical library looks like this:
+USB and extended-storage roots are also scanned. A library might look like:
 
 ```text
 /data/homebrew/
-├── PPSA12345/
-├── CUSA12345/
-├── PPSA67890.ffpkg
+├── PPSA12345/                 # game folder
+├── CUSA12345/                 # game folder
+├── PPSA67890.ffpkg            # UFS2 image
+├── PPSA24680.pkg              # eligible plaintext debug FPKG
 └── backports/
     └── PPSA12345/
 ```
 
-To scan different directories, add repeatable `[scan] path` entries in `/data/shadowmount/config.ini`:
+Add custom locations in **Settings** or `/data/shadowmount/config.ini`:
 
 ```ini
 [config]
@@ -139,16 +222,15 @@ interval_seconds = 15
 stability_wait_seconds = 10
 ```
 
-**Important scanning rules:**
+Custom `path` entries replace the built-in scan roots; managed image-mount
+paths remain available. `depth = 1` scans the first level, and `depth = 2`
+allows one additional level. Recently copied sources are deferred until they
+are considered stable. Avoid multiple scanned copies with the same title ID.
 
-- Setting one or more custom `path` values replaces the normal built-in scan roots (managed mounted-image paths remain available).
-- `depth = 1` checks immediate subfolders; `depth = 2` checks one additional nested level.
-- `interval_seconds` controls periodic rescans. New or recently copied content is deferred until it is considered stable.
-- Avoid two copies of the same title ID within the scanned library to prevent duplicate registration conflicts.
+### Add a source outside the scan roots
 
-### Add a game outside scan locations
-
-Create or edit `/data/shadowmount/manual.lst` with **one absolute path per line**:
+Add supported game folders or image paths to `/data/shadowmount/manual.lst`,
+one absolute path per line:
 
 ```text
 /mnt/usb0/MyGames/PPSA12345
@@ -156,105 +238,91 @@ Create or edit `/data/shadowmount/manual.lst` with **one absolute path per line*
 # Lines beginning with # are ignored
 ```
 
-This works for supported game folders and image files. Updates to the list are detected automatically. If you delete a manually registered game from the console library, ShadowMountPlus may remove its entry to avoid installing it again; add the path back when you want to register it again.
+Changes are detected automatically. A manually registered source removed from
+the console library may also be removed from this list to prevent unwanted
+re-registration; add its path again when needed.
 
-## Web interface: library and installation
+## Web interface
 
-The built-in web interface is a game library and installation manager, not just a configuration page. It is available through the **ShadowMount+** launcher on the PS5 or at `http://<PS5_IP>:10101` on a trusted local network. The main tabs are **Library**, **Installation**, and **Settings**. The interface also supports TV screens and gamepad navigation.
+The interface is organized around **Library**, **Installation** and **Settings**.
+It works in a browser and includes TV/gamepad navigation.
 
-### Library: browse and manage games
+### Library
 
-The **Library** combines discovered PS4/PS5 game folders and images with installed PKG titles. You can:
+Search and filter discovered games and installed titles, inspect metadata and
+source details, check operation progress, and trigger a rescan. Depending on
+the source and current state, actions include mounting, unmounting, copying,
+moving or unpacking a game source, and managing fakelib settings. Installed
+PKG titles can expose patch and DLC information and supported removal actions.
 
-- **Find games:** search and filter titles; switch between compact and detailed game cards with covers, names, title IDs, versions, platforms, and source information.
-- **Inspect a game:** open details for its source path, file size, version, installation state, and available backport. Installed PKGs also show available update/patch and DLC information, including individual DLC entries; supported data-size information includes saved data and installed content.
-- **Manage folder/image games:** mount or unmount supported sources, copy or move a game to another permitted location, unpack an image into a game folder, or permanently delete the source when the operation is allowed.
-- **Manage installed PKGs:** uninstall a game, or remove an installed patch or an individual DLC without uninstalling the entire base game. Installed PKGs cannot be copied, moved or unpacked through the managed-source actions.
-- **Control compatibility settings:** choose **Default**, **Full**, **Emulators only**, or **Disabled** fakelib mode for a PS5 title, and optionally ignore the global fakelib. These changes take effect the next time the game starts.
-- **Maintain the library:** initiate a rescan, add or remove individually registered manual sources, and inspect operation progress, errors, and logs.
+**Uninstall** and **Delete source** are different: uninstalling a registration
+does not necessarily delete its source; deleting a source permanently removes
+the selected physical folder or image. A source that remains in a scan path
+may be discovered again.
 
-**Uninstall and Delete source are different operations.** Uninstalling a registered game does not necessarily remove its folder or image. If the source remains in a scanned location, it may be discovered again. **Delete source** permanently removes the selected managed game's physical folder or image, subject to confirmation and safety checks. Back up important files before using destructive actions.
+### Installation
 
-### Installation: games, updates and DLC
+Browse supported console, external and configured SMB locations to:
 
-Open **Installation** to browse available PS5 storage, USB/external drives, and configured SMB shares. The browser shows compatible game folders, images, and PKG files, and storage destinations show available and total capacity.
+- Copy supported game folders or images to a local destination and register them.
+- Install compatible base packages, updates or DLC through the package installer.
+- Stream selected PKGs from a PC browser; keep the page open until streaming finishes.
+- Queue up to 32 packages and follow progress. PC batches can be ordered base game → update → DLC.
+- Install, replace or remove recognized backports and manage eligible files and destinations.
 
-- **Install from a folder or image:** select a supported PS4/PS5 game folder or `.ffpkg`, `.exfat`, `.ffpfs`, or `.ffpfsc` image, choose a local console destination, and start the installation. ShadowMountPlus copies the source and registers the copied game; the original source is retained.
-- **Install PKG files:** install base games, game updates (patches), or DLC packages from console storage, external drives, or an SMB share. The required base game must be present or included in the installation workflow.
-- **Install directly from a PC browser:** select PKG files on your computer and send them to the PS5 installer without first manually copying the complete packages to console storage. **Keep the browser page open until streaming completes.**
-- **Use the installation queue:** collect up to 32 PKGs from supported sources and follow installation progress. PC batches can be ordered automatically as **base game → update → DLC**, so dependent content is installed in the correct sequence. Queued files are not removed from their source storage merely because they have been installed.
-- **Manage files and destinations:** copy or move supported game sources, choose a writable destination, create a folder where permitted, and delete eligible files from the Installation browser with confirmation.
-- **Monitor operations:** view transfer or installation progress and cancel an active operation while it remains cancellable. Some final installation or deletion steps cannot be safely interrupted.
-
-For installed games, use the **Library** details to review updates and DLC and remove them individually. Deleting an installer `.pkg` file in **Installation** removes that file, **not** the already installed game. Conversely, uninstalling a game from **Library** does not automatically delete the original PKG installer.
-
-### Backports: install, replace and remove
-
-Backports can be managed from **Installation** without FTP or manual directory copying:
-
-1. Browse to a backport folder on local, USB/external or configured SMB storage. Supported backport directories start with a PS4/PS5 title ID such as `PPSA12345` or `CUSA12345` and contain a `fakelib` directory.
-2. Choose **Install backport**. The backport is copied to `/data/homebrew/backports/` using its existing folder name; the source folder is retained.
-3. If a backport with that destination name is already installed, choose **Replace backport** to update it. A failed or cancelled copy preserves the previous installed version.
-4. Use the backport's **Delete** action to remove the selected backport directory. Confirm the full path carefully: this is separate from uninstalling or deleting the game itself.
-
-The Installation browser identifies supported backport folders and, where metadata is available, displays their associated game information. ShadowMountPlus automatically applies a matching backport when the game starts; there is no need to merge backport files into the base game. See [Backports, fakelib, and emulator libraries](#backports-fakelib-and-emulator-libraries) for the manual directory layout and fakelib settings.
+The installer retains the source when copying or installing. Deleting an
+installer file is separate from uninstalling an installed title. Some final
+installation or deletion steps cannot be safely cancelled.
 
 ### Settings and storage
 
-**Settings** provides commonly used options without editing INI files, including scan paths, notifications, web access, emulator updates, fakelib defaults, and SMB connections. The interface also provides storage usage and diagnostic logs. Available USB drives can be safely ejected when they are not in use by a game or operation.
+Configure scan paths, notifications, mount and library options, fakelib,
+emulator updates, network access and SMB connections. Storage information and
+logs are available in the interface; idle USB drives can be ejected when they
+are not in use by a game or operation.
 
-### Connect a NAS or Windows share
+### SMB shares
 
-1. Open **Settings → SMB** in the web interface.
-2. Create a connection with a recognizable name, such as `NAS`.
-3. Enter the share path, for example `\\nas\games`, and any required username/password.
-4. Use **Check connection** to verify access.
-5. Open **Installation** or the file destination picker and select `smb://NAS`.
+1. Open **Settings → SMB** and create a named connection, such as `NAS`.
+2. Enter a share such as `\\nas\games` and any required credentials.
+3. Use **Check connection**, then browse `smb://NAS` in Installation or a destination picker.
 
-You can browse shares, copy or move game folders/images between the console and the share, and install compatible content from SMB to local console storage. PKG installation from a share is supported through the installer workflow.
-
-**SMB limitations and safety:**
-
-- **SMB2/SMB3 only**; SMB1 is unsupported.
-- SMB shares are **not** used for automatic background game scanning or direct game launches. Games/images must be copied to compatible console storage first.
-- Up to **16 SMB connections** can be configured.
-- Guest access and `DOMAIN\user` usernames are supported where permitted by the server.
-- Connections can be disabled or configured read-only.
-- Saved SMB credentials are stored in `config.ini` in plaintext; protect that file and its backups.
-- File deletion is available only for permitted locations and requires confirmation. Check the selected source and destination before moving or deleting files.
+SMB2 and SMB3 are supported, with up to 16 configured connections. Guest,
+`DOMAIN\user`, read-only and disabled connections are available where the
+server permits them. SMB sources are for browsing, transfers and installation;
+they are not background scan roots or direct-launch sources. Copy games and
+images to compatible console storage first. SMB credentials are stored in
+plaintext in `config.ini`; protect that file and its backups.
 
 ## Configuration
 
-Settings live under `/data/shadowmount/`:
+ShadowKraken retains the existing `/data/shadowmount/` paths for compatibility.
+Most common options can be changed in the web interface.
 
-| File | Purpose |
+| Path | Purpose |
 | --- | --- |
-| `config.ini` | Global settings, scan paths, SMB, web service, mounting, and library options |
-| `profiles.ini` | Per-title fakelib preferences and per-image mount overrides |
-| `manual.lst` | Manually added game folders or images |
-| `debug.log` | Debug information and errors |
+| `config.ini` | Global settings, scan paths, network shares and mount options. |
+| `profiles.ini` | Per-title fakelib and per-image mount overrides. |
+| `manual.lst` | Individually added game folders and images. |
+| `debug.log` | Diagnostics and error messages. |
+| `fpkg-cache/` | Experimental native FPKG cache generations. |
 
-Most common options are available through the web interface. For complete accepted values, use [`config.ini.example`](config.ini.example) and [`profiles.ini.example`](profiles.ini.example).
+Use the [configuration template](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/config.ini.example)
+and [profile template](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/profiles.ini.example)
+for accepted values and defaults. Keep the `[config] version = 2` marker.
 
-### Useful global options
+| Section | Controls |
+| --- | --- |
+| `[general]` | Debug logging, notifications and language. |
+| `[api]` | Web/API availability, bind address and port. |
+| `[scan]` | Scan roots, depth, interval and source stability. |
+| `[mount]` | Image mount mode, persistence and filesystem backends. |
+| `[library]` | Registration and missing-source behavior. |
+| `[fpkg]` | Experimental direct FPKG path; enabled by default. |
+| `[fakelib]`, `[emulators]` | Compatibility overlays and emulator libraries. |
+| `[fan]`, `[smb:NAME]` | Optional fan target and named network shares. |
 
-| Section | Examples | What they control |
-| --- | --- | --- |
-| `[general]` | `debug`, `quiet_mode`, `language` | Logs, notifications, localization |
-| `[api]` | `enabled`, `bind_address`, `port` | Web interface/API access |
-| `[scan]` | `path`, `depth`, `interval_seconds` | Library discovery |
-| `[mount]` | `mode`, `persistent_images`, `exfat_backend`, `ufs_backend` | Default image-mount behavior |
-| `[library]` | `install_all`, `remove_missing`, `remove_delay_seconds` | Registration and missing-title cleanup |
-| `[fakelib]` | `enabled`, `default_mode`, `global_enabled`, `global_path` | Fakelib overlays |
-| `[emulators]` | `update_enabled`, `path`, `auto_update_ampr` | Optional emulator-library updates |
-| `[fan]` | `target_temperature` | Optional fan target adjustment |
-| `[smb:NAME]` | `path`, `username`, `password`, `active` | Named network shares |
-
-New configurations use `[config]` with `version = 2`. If a setting is omitted, its default applies. **Do not remove the version marker.** Profile changes take effect on the next game launch or image mount, rather than interrupting a running game.
-
-### Per-game and per-image overrides
-
-Use `profiles.ini` when one title needs different settings from the global defaults:
+### Per-game and per-image profiles
 
 ```ini
 [config]
@@ -269,130 +337,114 @@ mount_mode = ro
 sector_size = 512
 ```
 
-Game fakelib modes include `default`, `full`, `emulators`, and `disabled`. Image mount modes include `default`, `ro` (read-only), and `rw` (read-write). Image rules match **filenames**, not full paths, so images with the same filename on different drives share a profile.
+Fakelib modes are `default`, `full`, `emulators` and `disabled`; image modes
+are `default`, `ro` and `rw`. Image profiles match filenames rather than full
+paths. Changes take effect at the next launch or mount, not on an active one.
 
-### Upgrading from older configurations
+### Existing configurations
 
-**Configuration v2** automatically migrates older `config.ini`, `autotune.ini`, and `smb.json` settings on first launch. The originals are backed up to:
+Older `config.ini`, `autotune.ini` and `smb.json` settings are migrated to
+configuration v2 on first launch. Originals are backed up under
+`/data/shadowmount/config-v1-backup/`. Preserve the backup before downgrading;
+it may contain plaintext SMB credentials.
 
-```text
-/data/shadowmount/config-v1-backup/
-```
+## Backports and fakelib
 
-Global settings and SMB shares move into `config.ini`, while individual game and image overrides move into `profiles.ini`. **Do not overwrite converted files with an old configuration.** Preserve the backup before downgrading; it may contain plaintext SMB credentials. For migration problems, review the error log and the [configuration templates](config.ini.example).
-
-## Backports, fakelib, and emulator libraries
-
-ShadowMountPlus can apply matching backport files to a game without requiring you to combine all files into the game folder. You can **install, replace, or remove** recognized backport folders directly from **Web interface → Installation**, as described [above](#backports-install-replace-and-remove). For manual installation, place a backport for title `PPSA12345` in:
+Place a title's backport under `/data/homebrew/backports/`, or use a
+`backports/` directory beneath a configured scan root:
 
 ```text
 /data/homebrew/backports/PPSA12345/
 ```
 
-You can also use a `backports/` directory under a configured scan root. Backport folder names may begin with the complete title ID followed by a descriptive suffix (for example `PPSA12345 Game Name`). The backport folder is not registered as a separate game. The web installer recognizes backport folders containing `fakelib` and places them under `/data/homebrew/backports/`.
+Folder names may include a descriptive suffix after the title ID. The web
+installer recognizes backport folders containing `fakelib` and can install,
+replace or remove them. For supported titles, per-game fakelib modes can be set
+in the library or `profiles.ini`. The default global fakelib location is
+`/data/shadowmount/fakelib`; emulator libraries default to
+`/data/shadowmount/emus`.
 
-For compatible titles, fakelib can be controlled globally or per game. In the web interface, select **Default**, **Full**, **Emulators only**, or **Disabled** from the game's fakelib settings. Global fakelib defaults to `/data/shadowmount/fakelib`; the emulator library directory defaults to `/data/shadowmount/emus`.
+Optional AMPR update checks are controlled by `[emulators] auto_update_ampr`
+and are off by default. Disable the standalone BackPork payload when using
+ShadowKraken's fakelib integration to avoid conflicts.
 
-Optional AMPR auto-update is controlled by `[emulators] auto_update_ampr` and is **off by default**. You may enable it when you want automatic update checks rather than managing the library manually.
+## Creating images
 
-> [!IMPORTANT]
-> If ShadowMountPlus fakelib integration is enabled, **disable the standalone BackPork payload**. Running both can cause conflicts. Not every game needs a backport or fakelib override; start with defaults and change only what is needed.
+Supply the **game root directory** as the source when creating an image.
 
-## Creating game images
-
-The repository includes scripts for the recommended image formats. Supply the **game root directory** as the source, not its parent folder.
-
-| Platform | Recommended tool | Format |
+| Platform | Tool | Output |
 | --- | --- | --- |
-| FreeBSD | [`mkufs2.sh`](mkufs2.sh) | `.ffpkg` / UFS2 |
-| Windows | [UFS2Tool](https://github.com/SvenGDK/UFS2Tool) | `.ffpkg` / UFS2 |
-| Linux | [`mkexfat.sh`](mkexfat.sh) | `.exfat` |
-| macOS | [`mkexfat_macos.sh`](mkexfat_macos.sh) | `.exfat` |
-| Windows | [`make_image.bat`](make_image.bat) with [OSFMount](https://www.osforensics.com/tools/mount-disk-images.html) | `.exfat` |
+| FreeBSD | [`mkufs2.sh`](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/mkufs2.sh) | UFS2 `.ffpkg` |
+| Windows | [UFS2Tool](https://github.com/SvenGDK/UFS2Tool) | UFS2 `.ffpkg` |
+| Linux | [`mkexfat.sh`](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/mkexfat.sh) | `.exfat` |
+| macOS | [`mkexfat_macos.sh`](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/mkexfat_macos.sh) | `.exfat` |
+| Windows | [`make_image.bat`](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/make_image.bat) with [OSFMount](https://www.osforensics.com/tools/mount-disk-images.html) | `.exfat` |
 
-### UFS2 (`.ffpkg`)
-
-FreeBSD:
+Examples:
 
 ```bash
-chmod +x mkufs2.sh
+# FreeBSD: UFS2
 ./mkufs2.sh ./PPSA12345-app ./PPSA12345.ffpkg
-```
 
-Windows users can use [UFS2Tool](https://github.com/SvenGDK/UFS2Tool). In most cases, **UFS2 is the best first choice**.
-
-### exFAT (`.exfat`)
-
-Linux (requires `exfatprogs`, `exfat-fuse`, `fuse3`, and `rsync`):
-
-```bash
-chmod +x mkexfat.sh
+# Linux or macOS: exFAT
 ./mkexfat.sh ./PPSA12345-app ./PPSA12345.exfat
-```
-
-macOS:
-
-```bash
-chmod +x mkexfat_macos.sh
 ./mkexfat_macos.sh ./PPSA12345-app ./PPSA12345.exfat
 ```
 
-Windows (install OSFMount and run Command Prompt as Administrator; keep `make_image.bat` and `New-OsfExfatImage.ps1` together):
+The Linux script requires `exfatprogs`, `exfat-fuse`, `fuse3` and `rsync`.
+On Windows, keep `make_image.bat` and `New-OsfExfatImage.ps1` together, install
+OSFMount and run Command Prompt as Administrator:
 
 ```bat
 make_image.bat "C:\images\PPSA12345.exfat" "C:\games\PPSA12345-app"
 ```
 
-These builders use the recommended **64 KB exFAT allocation unit**. If creating images manually, use the same allocation unit and place game files at the image root.
-
-### Compressed PFS (`.ffpfsc`)
-
-A `.ffpfsc` file is a compressed container for a nested image, created with [PSBrew/MkPFS](https://github.com/PSBrew/MkPFS). For example, once you have a normal `.exfat` image:
+The exFAT builders use a 64 KiB allocation unit. A compressed `.ffpfsc`
+container can be created with [MkPFS](https://github.com/PSBrew/MkPFS):
 
 ```bash
 mkpfs pack file --verify --version PS5 --inode-bits 32 \
   ./PPSA12345.exfat ./PPSA12345.ffpfsc
 ```
 
-An uncompressed PFS image can also be nested. This format can save space, but decompression adds overhead and may cause stuttering in streaming-heavy games. Verify the container before deleting the source image.
+Verify the new container before deleting its source image.
 
 ## Troubleshooting
 
-| Problem | What to check |
+| Symptom | Start here |
 | --- | --- |
-| Game does not appear | Confirm the scan path, scan depth, source stability, supported title ID, and directory layout. |
-| Image cannot mount | Verify its format and integrity, and check that `sce_sys/` is at the image root. |
-| `.ffpfsc` does not detect a game | The container must hold a supported nested image, not loose game files. |
-| Duplicate title notification | Remove duplicate registrations/sources with the same title ID. |
-| Backport or fakelib causes errors | Check the matching title ID and file layout; disable standalone BackPork if ShadowMountPlus fakelib is active. |
-| NAS connection fails | Verify the share name, credentials, SMB2/3 support, permissions, and that the NAS is reachable. |
-| Game is registered but will not start | Check PS5 notifications and log messages; remove stale library entries before retrying. |
-| Configuration changes do not apply | Check for invalid INI values and restart the affected game/image; existing active mounts are not changed immediately. |
+| A game does not appear | Check the scan root, depth, source stability, title ID and folder/image layout. |
+| An image does not mount | Verify the image format and integrity; check `sce_sys/` is at the image root. |
+| A `.ffpfsc` contains no detected game | Confirm the container holds a supported nested image. |
+| A debug FPKG is rejected | Check that it is a supported plaintext base-title layout, remains at its scan path and has enough cache space. Console integration is experimental. |
+| Duplicate title | Check for multiple scanned sources with the same title ID. |
+| Backport or fakelib issue | Check the title ID and directory layout; disable standalone BackPork when integrated fakelib is active. |
+| SMB connection fails | Check reachability, share name, credentials, SMB2/3 and server permissions. |
+| Settings do not apply | Check INI values and restart the affected game or remount the image. |
+| Registered game does not launch | Review notifications and `/data/shadowmount/debug.log`; platform behavior varies by firmware and title. |
 
-To inspect the log, open:
+Debug logging is enabled by default and can be changed with `[general] debug`
+in `config.ini`. When reporting a problem, include your firmware, release or
+commit SHA, source format, relevant configuration and sanitized log excerpts.
+Do not share private credentials or copyrighted game files.
 
-```text
-/data/shadowmount/debug.log
-```
+## Documentation and community
 
-Debug logging is enabled by default. You can change it with `[general] debug = on` or `off` in `config.ini`. For more detailed diagnostics, see [GitHub Issues](https://github.com/drakmor/ShadowMountPlus/issues) or the [Discord community](https://discord.gg/x2Ppvzwjhm).
-
-> [!CAUTION]
-> Removing a game's data from the PS5's system settings may also delete related saves. Back up your data before using destructive troubleshooting steps.
-
-## Additional documentation
-
-- [Configuration example](config.ini.example) — global settings and defaults.
-- [Profile example](profiles.ini.example) — per-game and per-image options.
-- [API documentation](docs/api.md) — web/API endpoints and integration reference.
-- [Releases](https://github.com/drakmor/ShadowMountPlus/releases) — downloads and release notes.
+- [Release downloads](https://github.com/MNeroba/ShadowKraken/releases/tag/1.00-Dev.1) · [PS5 build workflow](https://github.com/MNeroba/ShadowKraken/actions/workflows/ps5.yml) · [Issue tracker](https://github.com/MNeroba/ShadowKraken/issues)
+- [Configuration example](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/config.ini.example) · [Profile example](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/profiles.ini.example) · [API documentation](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/docs/api.md)
+- [FPKG architecture](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/docs/fpkg-native-architecture.md) · [Cache design](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/docs/fpkg-cache-transaction.md) · [Test record](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/docs/fpkg-test-results.md)
 
 ## Credits
 
-**Drakmor** — development and evolution of ShadowMount into ShadowMountPlus.
+ShadowKraken stands on the work of both original projects and their authors:
 
-Special thanks to **VoidWhisper** (original ShadowMount), **BestPig** (BackPort), **EchoStretch**, **Gezine**, **earthonion**, **LightningMods**, **RenanGBarreto** ([MkPFS](https://github.com/PSBrew/MkPFS)), **john-tornblom** (SDK), and the **PS5 R&D community**.
+- **[Drakmor](https://github.com/drakmor)** — [ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus), the foundation for library management, mounting and the web interface. ShadowMountPlus builds on the original ShadowMount by **VoidWhisper**.
+- **[quer3q](https://github.com/quer3q)** — [Kraken Mount](https://github.com/quer3q/kraken-mount), the reference for native FPKG reading, Kraken decompression and AMPR index generation.
 
-## License
+Thanks to **BestPig**, **EchoStretch**, **Gezine**, **earthonion**,
+**LightningMods**, **RenanGBarreto**, **john-tornblom** and the PS5 research
+and homebrew community for their work.
 
-[GPL-3.0](LICENSE)
+See [third-party notices](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/THIRD_PARTY_NOTICES)
+and the [AMPR NG notice](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/licenses/AMPR-NG-NOTICE.md)
+for component attribution and licensing. Distributed under [GPL-3.0](https://github.com/MNeroba/ShadowKraken/blob/feature/kraken-fpkg/LICENSE).

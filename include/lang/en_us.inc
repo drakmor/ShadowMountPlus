@@ -1,11 +1,11 @@
 static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_ACTION_DEBUG_SETTINGS] = "Go to Debug Settings",
-    [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor and Community",
+    [SM_L10N_STARTUP] = "ShadowKraken v%s\n© Drakmor and Community",
     [SM_L10N_STARTUP_WEB] =
-        "ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u",
+        "ShadowKraken v%s\n© Drakmor and Community\nControl: http://%s:%u",
     [SM_L10N_RECURSIVE_SCAN_DEPRECATED] =
-        "ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2.",
-    [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: scan depth %u enabled.",
+        "ShadowKraken: recursive_scan=1 is deprecated, using scan_depth=2.",
+    [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowKraken: scan depth %u enabled.",
     [SM_L10N_BACKPORT_OVERLAY_FAILED] =
         "Backport overlay failed: %s\n%s\n0x%08X",
     [SM_L10N_GAME_BACKPORTED] = "Backport applied: %s",
@@ -43,14 +43,14 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_MISSING_PARAM] = "Missing/invalid param.json/param.sfo:\n%s",
     [SM_L10N_FOUND_NEW_GAMES] = "Found %d new games. Processing...",
     [SM_L10N_LIBRARY_SYNCED] = "Library synchronized.\nFound %d games.",
-    [SM_L10N_CONFIG_RELOADED] = "ShadowMount+: config reloaded.",
+    [SM_L10N_CONFIG_RELOADED] = "ShadowKraken: config reloaded.",
     [SM_L10N_DUPLICATE_IGNORED] =
         "Duplicate %s ignored:\n%s\nexisting: %s",
     [SM_L10N_AMPR_EMULATOR_UPDATED] = "AMPR emulator updated",
     [SM_L10N_SHELLCORE_HOOKS_FAILED] =
-        "ShadowMount+: failed to install ShellCore hooks",
+        "ShadowKraken: failed to install ShellCore hooks",
     [SM_L10N_KSTUFF_WAITING] =
-        "ShadowMount+: kstuff not found; waiting for it to start.",
+        "ShadowKraken: kstuff not found; waiting for it to start.",
     [SM_L10N_TEMPERATURE_TRANSITION] =
         "Target temperature %u °C → %u °C",
     [SM_L10N_USB_CONNECTED_SCANNING] =

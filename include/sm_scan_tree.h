@@ -16,10 +16,15 @@ typedef bool (*sm_scan_tree_image_fn)(const char *image_path,
                                       const char *image_name,
                                       unsigned int depth_from_root,
                                       void *ctx);
+typedef bool (*sm_scan_tree_package_fn)(const char *package_path,
+                                        const char *package_name,
+                                        unsigned int depth_from_root,
+                                        void *ctx);
 
 typedef struct {
   sm_scan_tree_dir_fn on_directory;
   sm_scan_tree_image_fn on_image_file;
+  sm_scan_tree_package_fn on_package_file;
   // Watch discovery may skip inaccessible paths; content scans stay strict.
   bool skip_permission_errors;
 } sm_scan_tree_callbacks_t;

@@ -1,7 +1,7 @@
 # Files included in the release archive.
 # One path per line, relative to the repository root.
 
-shadowmountplus.elf
+ShadowKraken.elf
 config.ini.example
 LICENSE
 make_image.bat
@@ -20,3 +20,7 @@ licenses/json-c-COPYING.txt
 licenses/SMB-NOTICES.txt
 licenses/libsmb2-COPYING.txt
 licenses/libsmb2-LGPL-2.1.txt
+licenses/AMPR-NG-NOTICE.md
+vendor/ampr-emu-ng-v0.4.0/LICENSE
+vendor/ampr-emu-ng-v0.4.0/VERSION
+vendor/ampr-emu-ng-v0.4.0/SHA256SUMS

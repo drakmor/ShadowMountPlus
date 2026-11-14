@@ -8,5 +8,6 @@ daemon.lock
 debug.log
 notify.txt
 src/notify_icon_asset.c
+src/ampr_emu_ng_runtime_asset.c
 refs/*
 docs/*

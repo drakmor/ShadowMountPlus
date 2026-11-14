@@ -9,6 +9,8 @@
 #include "sm_paths.h"
 #include "sm_runtime.h"
 
+#include <strings.h>
+
 static bool classify_scan_tree_entry(const char *full_path, unsigned char d_type,
                                      bool *is_dir_out, bool *is_regular_out) {
   bool is_dir = false;
@@ -31,6 +33,11 @@ static bool classify_scan_tree_entry(const char *full_path, unsigned char d_type
   *is_dir_out = is_dir;
   *is_regular_out = is_regular;
   return true;
+}
+
+static bool is_package_file_name(const char *name) {
+  const char *extension = name ? strrchr(name, '.') : NULL;
+  return extension && strcasecmp(extension, ".pkg") == 0;
 }
 
 static bool is_distinct_configured_scan_root(const char *current_scan_root,
@@ -147,6 +154,16 @@ bool sm_scan_tree_walk(const char *scan_root, const char *dir_path,
         is_supported_image_file_path(full_path, entry->d_name)) {
       if (!callbacks->on_image_file(full_path, entry->d_name, depth_from_root + 1u,
                                     ctx)) {
+        closedir(d);
+        return false;
+      }
+    }
+
+    if (callbacks->on_package_file && is_regular &&
+        is_package_file_name(entry->d_name) &&
+        sm_config_fpkg_direct_mount_enabled()) {
+      if (!callbacks->on_package_file(full_path, entry->d_name,
+                                      depth_from_root + 1u, ctx)) {
         closedir(d);
         return false;
       }

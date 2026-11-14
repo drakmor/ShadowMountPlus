@@ -9,9 +9,14 @@
 #define INSTALLED_BACKPORTS_PATH DEFAULT_BACKPORT_SCAN_PATH "/" DEFAULT_BACKPORTS_DIR_NAME
 #define DEFAULT_GLOBAL_FAKELIB_PATH "/data/shadowmount/fakelib"
 #define DEFAULT_EMULATORS_PATH "/data/shadowmount/emus"
+#define FPKG_CACHE_PATH "/data/shadowmount/fpkg-cache"
 #define DEFAULT_AMPR_UPDATE_URL                                             \
   "https://github.com/drakmor/ampr_emu/releases/latest/download/"         \
   "libSceAmpr.sprx"
+#define AMPR_EMULATOR_FILE_NAME "libSceAmpr.sprx"
+/* PR #200 keeps the distinct ampr-emu-ng runtime below emulators_path. */
+#define AMPR_NG_EMULATOR_DIR "ampr-emu-ng"
+#define SM_FPKG_AMPR_RUNTIME_ROOT "/data/shadowmount/fpkg-runtime"
 #define FAKELIB_CACHE_PATH "/data/shadowmount/cache"
 #define ICON_CACHE_DIR "/data/shadowmount/icon-cache"
 #define LOG_DIR "/data/shadowmount"
@@ -32,7 +37,7 @@
 #define KILL_FILE "/data/shadowmount/STOP"
 #define TOAST_FILE "/data/shadowmount/notify.txt"
 #define NOTIFY_ICON_DIR "/user/data/shadowmount"
-#define NOTIFY_ICON_FILE "/user/data/shadowmount/smp_icon.png"
+#define NOTIFY_ICON_FILE "/user/data/shadowmount/shadowkraken_icon.png"
 #define APP_DB_PATH "/system_data/priv/mms/app.db"
 
 /* Compile-time default scan roots (used when config has no scanpath entries). */

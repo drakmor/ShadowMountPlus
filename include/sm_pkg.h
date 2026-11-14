@@ -26,6 +26,10 @@ bool sm_pkg_parse_stream(const char *name, uint64_t size, sm_pkg_read_fn read,
                           void *ctx, sm_pkg_info_t *candidate);
 bool sm_pkg_is_installed_content_path(const char *path);
 bool sm_pkg_parse_file(const char *path, const struct stat *st, sm_pkg_info_t *candidate);
+// Parse metadata from a caller-owned read-only regular-file descriptor. The
+// descriptor remains open, allowing the caller to retain the same source
+// snapshot for subsequent FPKG validation and reads.
+bool sm_pkg_parse_fd(const char *path, int fd, sm_pkg_info_t *candidate);
 // Match a local source snapshot, including replacement and in-place changes.
 bool sm_pkg_source_matches(const sm_pkg_info_t *info, const struct stat *st);
 int sm_pkg_read_icon(const char *path, unsigned char **data, size_t *size);

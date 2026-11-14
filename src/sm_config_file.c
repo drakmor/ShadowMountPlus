@@ -24,6 +24,7 @@ const sm_config_key_t sm_config_keys[] = {
   {"mount", "exfat_backend", "exfat_backend"}, {"mount", "ufs_backend", "ufs_backend"},
   {"mount", "nested_pfs_index_cache", "nested_pfs_index_cache"},
   {"library", "install_all", "app_install_all"},
+  {"fpkg", "direct_mount", "fpkg_direct_mount"},
   {"library", "remove_missing", "auto_remove_missing_games"},
   {"library", "remove_with_dlc", "auto_remove_games_with_dlc"},
   {"library", "remove_delay_seconds", "auto_remove_missing_delay_seconds"},

@@ -25,6 +25,7 @@ bool reload_runtime_config_if_changed(bool *reloaded_out);
 bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   bool update_emulators_enabled,
                                   bool auto_update_ampr_enabled,
+                                  bool fpkg_direct_mount_enabled,
                                   bool auto_remove_missing_games,
                                   uint32_t auto_remove_missing_delay_seconds,
                                   bool allow_lan_access,
@@ -38,6 +39,7 @@ runtime_config_t runtime_config(void);
 bool sm_config_debug_enabled(void);
 bool sm_config_quiet_mode(void);
 bool sm_config_library_sync_notification(void);
+bool sm_config_fpkg_direct_mount_enabled(void);
 // Return the number of configured scan roots.
 int get_scan_path_count(void);
 // Copy a scan root; return false and an empty path if the index is invalid.

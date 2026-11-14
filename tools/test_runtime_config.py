@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 
 
@@ -27,11 +28,14 @@ def main():
         end = smb.index('size_t sm_smb_snapshot(', start)
         (build / 'smb_validation.inc').write_text(smb[start:end], encoding='utf-8')
         binary = build / 'config'
+        gc_sections_flag = '-Wl,-dead_strip' if sys.platform == 'darwin' else '-Wl,--gc-sections'
         command = shlex.split(os.environ.get('CC', 'cc')) + [
             '-std=gnu11', '-O1', '-g', '-pthread', '-Wall', '-Wextra', '-Werror',
-            '-ffunction-sections', '-Wl,--gc-sections',
+            '-ffunction-sections', gc_sections_flag,
             '-I' + str(root / 'include'), '-I' + str(build),
             str(root / 'tests/test_runtime_config.c'), '-o', str(binary)]
+        if sys.platform == 'darwin':
+            command += ['-Dst_mtim=st_mtimespec', '-Dst_ctim=st_ctimespec']
         command += shlex.split(os.environ.get('JSON_C_CFLAGS') or
             subprocess.check_output(['pkg-config', '--cflags', 'json-c'], text=True))
         command += shlex.split(os.environ.get('JSON_C_LIBS') or

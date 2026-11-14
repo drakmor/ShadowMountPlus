@@ -1,0 +1,8 @@
+[package]
+name = "fpkg-ampr-oracle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ampr-format = { path = "../../ampr-emu-ng-reference/crates/ampr-format" }
+ampr-pkg = { path = "../../ampr-emu-ng-reference/crates/ampr-pkg", features = ["alloc"] }

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include "sm_limits.h"
 
 // Return true when fakelib backport automation is enabled.
 // Sandbox directory mounting is always enabled for supported game titles.
@@ -14,6 +15,11 @@ bool sm_fakelib_source_is_in_use(const char *path);
 // Prepare or refresh the combined fakelib cache before title runtime mounting.
 void sm_fakelib_prepare_title_cache(const char *title_id,
                                     const char *game_path);
+// Reattach the recorded image chain if needed and validate the cache source
+// snapshot, allowing mount-local device/inode changes only after remount.
+bool sm_fakelib_resolve_fpkg_generation_source(
+    const char *title_id, const char *generation_path,
+    char source_path_out[MAX_PATH]);
 // Remove invalid and unused fakelib caches during the scanner's rare cycle.
 void sm_fakelib_cleanup_caches(void);
 // Mount sandbox directories and an optional prepared fakelib overlay after ShellCore

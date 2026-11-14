@@ -1,0 +1,21 @@
+Third-party source attributions for ShadowMountPlus
+
+The native FPKG readers and Kraken block decoder in src/sm_fpkg.c,
+src/sm_fpkg_layout.c and src/sm_fpkg_decoder.c follow format handling in
+quer3q/kraken-mount, revision 4b420d579bd381796d773875e36d14c9acaabf39,
+licensed GPL-3.0-or-later, and format descriptions attributed there to
+quer3q/ps5-dump-forge (revision 8a3c7d3e4bfeac3b4ddf8e9ff020e819ae8ff1cd),
+also GPL-3.0-or-later. This file records provenance;
+the implementation is a C port and is distributed under the repository's
+GPL-3.0 license. No game package, game asset, Kraken binary, or Rust runtime is
+included. The release ELF embeds the unmodified `libSceAmpr.sprx` runtime; see
+licenses/AMPR-NG-NOTICE.md.
+
+The AMPRIDX3/AMPRPAK4 writer in src/sm_fpkg_index.c follows the GPL-3.0-or-later
+writer in Kraken Mount at the revision above and validates its output against
+ampr-emu-ng v0.4.0 source revision
+920e9172b6bf99bd9210361b545e2953659d1e9b, also GPL-3.0-or-later. The AMPR
+runtime embedded in the release is unmodified; see licenses/AMPR-NG-NOTICE.md.
+
+Kraken Mount's separate THIRD_PARTY_NOTICES file identifies its own bundled
+third-party components. Those components are not included by this FPKG reader.

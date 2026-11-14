@@ -2556,6 +2556,8 @@ static void handle_settings(struct MHD_Connection *connection) {
       !add_json_bool(response, "quiet_mode", cfg.quiet_mode) ||
       !add_json_bool(response, "update_emulators",
                      cfg.update_emulators_enabled) ||
+      !add_json_bool(response, "fpkg_direct_mount",
+                     cfg.fpkg_direct_mount_enabled) ||
       !add_json_string(response, "fakelib_default_mode",
                        sm_config_fakelib_mode_name(cfg.fakelib_default_mode)) ||
       !add_json_bool(response, "auto_update_ampr",
@@ -2582,6 +2584,7 @@ static void handle_settings_update(struct MHD_Connection *connection,
   bool quiet_mode = false;
   bool update_emulators = false;
   bool auto_update_ampr = current_cfg.auto_update_ampr_enabled;
+  bool fpkg_direct_mount = current_cfg.fpkg_direct_mount_enabled;
   bool auto_remove_missing_games = current_cfg.auto_remove_missing_games;
   bool allow_lan_access = false;
   sm_fakelib_mode_t fakelib_default_mode = current_cfg.fakelib_default_mode;
@@ -2595,6 +2598,9 @@ static void handle_settings_update(struct MHD_Connection *connection,
       !get_optional_bool(request, "auto_update_ampr",
                          current_cfg.auto_update_ampr_enabled,
                          &auto_update_ampr) ||
+      !get_optional_bool(request, "fpkg_direct_mount",
+                         current_cfg.fpkg_direct_mount_enabled,
+                         &fpkg_direct_mount) ||
       !get_optional_bool(request, "auto_remove_missing_games",
                          current_cfg.auto_remove_missing_games,
                          &auto_remove_missing_games) ||
@@ -2670,7 +2676,8 @@ static void handle_settings_update(struct MHD_Connection *connection,
   }
   if (!valid || !sm_config_write_web_settings(
                     debug_enabled, quiet_mode, update_emulators,
-                    auto_update_ampr, auto_remove_missing_games,
+                    auto_update_ampr, fpkg_direct_mount,
+                    auto_remove_missing_games,
                     (uint32_t)remove_delay_int,
                     allow_lan_access,
                     (uint32_t)fan_value_int, paths, path_count,

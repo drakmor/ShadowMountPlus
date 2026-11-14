@@ -39,6 +39,13 @@ jobs:
           repository: ps5-payload-dev/sdk
           path: ps5-sdk
 
+      - name: Checkout pinned AMPR format reader for host oracle
+        uses: actions/checkout@v4
+        with:
+          repository: quer3q/ampr-emu-ng
+          ref: 920e9172b6bf99bd9210361b545e2953659d1e9b
+          path: ampr-emu-ng-reference
+
       - name: Setup build environment
         run: |
           sudo apt update
@@ -46,6 +53,7 @@ jobs:
             autoconf \
             automake \
             build-essential \
+            cargo \
             clang-18 \
             cmake \
             curl \
@@ -61,8 +69,121 @@ jobs:
             pkg-config \
             python3 \
             python3-yaml \
+            rustc \
             xxd \
             zip
+
+      - name: Run native FPKG host safety test
+        run: |
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude -Isrc \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_fpkg_header.c src/sm_fpkg.c src/sm_fpkg_layout.c \
+            src/sm_fpkg_image.c src/sm_fpkg_decoder.c src/sm_fpkg_tree.c \
+            src/sm_fpkg_index.c \
+            -o /tmp/sm-fpkg-header-test
+          /tmp/sm-fpkg-header-test
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude -Isrc \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_fpkg_index.c src/sm_fpkg_index.c src/sm_fpkg.c \
+            src/sm_fpkg_layout.c src/sm_fpkg_image.c src/sm_fpkg_decoder.c \
+            src/sm_fpkg_tree.c -o /tmp/sm-fpkg-index-test
+          /tmp/sm-fpkg-index-test
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude -Isrc \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_fpkg_layout.c src/sm_fpkg_layout.c -o /tmp/sm-fpkg-layout-test
+          /tmp/sm-fpkg-layout-test
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_fpkg_decoder.c src/sm_fpkg_decoder.c \
+            -o /tmp/sm-fpkg-decoder-test
+          /tmp/sm-fpkg-decoder-test
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude -Isrc \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_fpkg_tree.c src/sm_fpkg_tree.c \
+            -o /tmp/sm-fpkg-tree-test
+          /tmp/sm-fpkg-tree-test
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/quer3q/kraken-mount.git \
+            kraken-mount-reference
+          git -C kraken-mount-reference fetch --depth=1 origin \
+            4b420d579bd381796d773875e36d14c9acaabf39
+          git -C kraken-mount-reference checkout --detach FETCH_HEAD
+          python3 tools/test_fpkg_decoder_reference.py \
+            kraken-mount-reference
+          python3 tools/test_fpkg_decoder_differential.py \
+            kraken-mount-reference
+          mkdir -p /tmp/fpkg-ampr-oracle
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude -Isrc \
+            tests/fpkg_ampr_oracle/generate.c src/sm_fpkg_index.c \
+            src/sm_fpkg.c src/sm_fpkg_layout.c src/sm_fpkg_image.c \
+            src/sm_fpkg_decoder.c src/sm_fpkg_tree.c \
+            -o /tmp/fpkg-ampr-generate
+          /tmp/fpkg-ampr-generate /tmp/fpkg-ampr-oracle
+          CARGO_TARGET_DIR=/tmp/fpkg-ampr-cargo cargo run --locked \
+            --manifest-path tests/fpkg_ampr_oracle/Cargo.toml -- \
+            /tmp/fpkg-ampr-oracle/ampr_emu.index \
+            /tmp/fpkg-ampr-oracle/ampr_assets.index \
+            /tmp/fpkg-ampr-oracle/kraken.pkg
+
+      - name: Run FPKG cache and lifecycle host checks
+        run: |
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude -Isrc -Itests \
+            -include tests/host_platform.h -fsanitize=address,undefined \
+            -fno-omit-frame-pointer tests/test_fpkg_backport.c \
+            src/sm_fpkg_backport.c -o /tmp/sm-fpkg-backport-test
+          /tmp/sm-fpkg-backport-test
+          (cd vendor/ampr-emu-ng-v0.4.0 && \
+            sha256sum --check --ignore-missing --strict SHA256SUMS)
+          xxd -i -n sm_ampr_ng_runtime \
+            vendor/ampr-emu-ng-v0.4.0/libSceAmpr.sprx \
+            src/ampr_emu_ng_runtime_asset.c
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude -Isrc \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_ampr_runtime.c src/sm_ampr_runtime.c \
+            src/ampr_emu_ng_runtime_asset.c \
+            -o /tmp/sm-ampr-runtime-test
+          /tmp/sm-ampr-runtime-test
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror -Iinclude -Isrc -Itests \
+            -include tests/host_platform.h \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_fpkg_cache.c src/sm_fpkg_backport.c src/sm_fpkg_cache.c src/sm_fpkg_index.c \
+            -o /tmp/sm-fpkg-cache-test
+          /tmp/sm-fpkg-cache-test
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror \
+            -Wno-macro-redefined -Iinclude -Isrc -Itests \
+            -include tests/host_platform.h \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_fpkg_cache_build.c src/sm_fpkg_backport.c src/sm_fpkg_cache.c src/sm_fpkg.c \
+            src/sm_fpkg_layout.c src/sm_fpkg_image.c src/sm_fpkg_decoder.c \
+            src/sm_fpkg_tree.c src/sm_fpkg_index.c \
+            -o /tmp/sm-fpkg-cache-build-test
+          /tmp/sm-fpkg-cache-build-test
+          # Exercise the PS5-compatible path even on Linux with renameat2.
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror \
+            -DSM_FPKG_FORCE_PORTABLE_RENAME -DSM_FPKG_TEST_RENAME \
+            -Iinclude -Isrc -Itests -include tests/host_platform.h \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_fpkg_cache.c src/sm_fpkg_backport.c src/sm_fpkg_cache.c \
+            src/sm_fpkg_index.c -o /tmp/sm-fpkg-cache-portable-test
+          /tmp/sm-fpkg-cache-portable-test
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror \
+            -DSM_FPKG_FORCE_PORTABLE_RENAME -Iinclude -Isrc -Itests \
+            -include tests/host_platform.h -fsanitize=address,undefined \
+            -fno-omit-frame-pointer tests/test_fpkg_cache_build.c \
+            src/sm_fpkg_backport.c src/sm_fpkg_cache.c src/sm_fpkg.c \
+            src/sm_fpkg_layout.c src/sm_fpkg_image.c src/sm_fpkg_decoder.c \
+            src/sm_fpkg_tree.c src/sm_fpkg_index.c -o /tmp/sm-fpkg-build-portable-test
+          /tmp/sm-fpkg-build-portable-test
+          clang -std=gnu11 -O1 -g -Wall -Wextra -Werror \
+            -Wno-macro-redefined -Iinclude -Isrc -Itests \
+            -include tests/host_platform.h -ffunction-sections -fdata-sections \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            tests/test_install_queue_fpkg.c src/sm_install_queue.c \
+            -Wl,--gc-sections -o /tmp/sm-install-queue-fpkg-test
+          /tmp/sm-install-queue-fpkg-test
+          python3 tools/test_fpkg_install_lifecycle.py
+          python3 tools/test_scan_permissions.py
+          python3 tools/test_sandbox_cleanup.py
 
       - name: Configure pacman for locally built packages
         run: |
@@ -146,6 +267,7 @@ jobs:
         run: |
           make clean
           make -j4 all PS5_SCE_STUBS_DIR="$GITHUB_WORKSPACE/ps5-sdk/sce_stubs"
+          cp shadowmountplus.elf ShadowKraken.elf
 
       - name: Create release archive
         id: package
@@ -181,6 +303,14 @@ jobs:
           path: ${{ steps.package.outputs.archive_name }}
           if-no-files-found: error
 
+      - name: Upload PS5 ELF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShadowKraken_PS5_${{ github.sha }}
+          path: ShadowKraken.elf
+          if-no-files-found: error
+          retention-days: 30
+
   release:
     needs: build
     permissions:
@@ -194,9 +324,18 @@ jobs:
           name: ${{ needs.build.outputs.archive_name }}
           path: dist
 
+      - name: Download PS5 ELF artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ShadowKraken_PS5_${{ github.sha }}
+          path: dist
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, 'Dev') }}
           generate_release_notes: true
-          files: dist/${{ needs.build.outputs.archive_name }}
+          files: |
+            dist/${{ needs.build.outputs.archive_name }}
+            dist/ShadowKraken.elf

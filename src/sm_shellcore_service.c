@@ -7,12 +7,15 @@
 
 #include "sm_filesystem.h"
 #include "sm_fakelib.h"
+#include "sm_fpkg_cache.h"
+#include "sm_config_mount.h"
 #include "sm_game_lifecycle.h"
 #include "sm_gameinfo.h"
 #include "sm_image.h"
 #include "sm_limits.h"
 #include "sm_log.h"
 #include "sm_path_utils.h"
+#include "sm_paths.h"
 #include "sm_pkg_backport.h"
 #include "sm_runtime.h"
 #include "sm_scan.h"
@@ -395,6 +398,13 @@ static bool prepare_image_source(const char *title_id,
   return false;
 }
 
+static bool restore_cached_fpkg_source(const char *title_id,
+                                       const char *generation_path) {
+  char source_path[MAX_PATH];
+  return sm_fakelib_resolve_fpkg_generation_source(
+      title_id, generation_path, source_path);
+}
+
 static bool resumed_runtime_source_ready(const char *title_id,
                                          char runtime_source[MAX_PATH]) {
   char refreshed_source[MAX_PATH];
@@ -405,6 +415,11 @@ static bool resumed_runtime_source_ready(const char *title_id,
               runtime_source);
   }
 
+  if (path_matches_root_or_child(runtime_source,
+                                 SM_FPKG_CACHE_DEFAULT_ROOT)) {
+    return restore_cached_fpkg_source(title_id, runtime_source) &&
+           directory_has_game_executable(runtime_source);
+  }
   if (is_usb_storage_path(runtime_source))
     return directory_has_game_executable(runtime_source);
   if (!is_under_image_mount_base(runtime_source))
@@ -446,6 +461,24 @@ static bool wait_for_resumed_runtime_source(const char *title_id,
 static bool prepare_title_runtime(const char *title_id,
                                   const char *source_path,
                                   const bool *mount_read_only_override) {
+  if (path_matches_root_or_child(source_path,
+                                 SM_FPKG_CACHE_DEFAULT_ROOT)) {
+    if (!sm_config_fpkg_direct_mount_enabled()) {
+      errno = ENOTSUP;
+      return false;
+    }
+    sm_fpkg_cache_generation_info_t generation_info;
+    if (sm_fpkg_cache_read_generation_info(
+            SM_FPKG_CACHE_DEFAULT_ROOT, title_id, source_path,
+            &generation_info) != SM_FPKG_OK) {
+      errno = ESTALE;
+      return false;
+    }
+    if (!restore_cached_fpkg_source(title_id, source_path)) {
+      errno = ESTALE;
+      return false;
+    }
+  }
   if (!prepare_image_source(title_id, source_path,
                             mount_read_only_override))
     return false;
@@ -1042,6 +1075,15 @@ bool sm_shellcore_source_is_protected(const char *path) {
     }
     if (paths_overlap(path, runtime_path))
       return true;
+    if (path_matches_root_or_child(runtime_path,
+                                   SM_FPKG_CACHE_DEFAULT_ROOT)) {
+      sm_fpkg_cache_generation_info_t generation_info;
+      if (sm_fpkg_cache_read_generation_info(
+              SM_FPKG_CACHE_DEFAULT_ROOT, titles[i], runtime_path,
+              &generation_info) == SM_FPKG_OK &&
+          paths_overlap(path, generation_info.source_path))
+        return true;
+    }
     char chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH];
     size_t layers = 0;
     if (!read_mount_image_chain(titles[i], chain, &layers) || layers == 0) {

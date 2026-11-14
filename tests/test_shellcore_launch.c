@@ -17,7 +17,7 @@ static uint64_t monotonic_time_us(void) { return 100000000; }
 static bool shellcore_service_stopping(void) { return false; }
 static void runtime_mount_state_lock(void) {}
 static void runtime_mount_state_unlock(void) {}
-static int sceKernelUsleep(unsigned us) { (void)us; return 0; }
+int sceKernelUsleep(unsigned int us) { (void)us; return 0; }
 static bool is_supported_game_title_id(const char *title) {
   return title && strncmp(title, "PPSA", 4) == 0;
 }

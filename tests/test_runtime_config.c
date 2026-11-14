@@ -17,6 +17,58 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+typedef struct {
+  pthread_mutex_t mutex;
+  pthread_cond_t condition;
+  unsigned int count;
+  unsigned int threshold;
+  unsigned int generation;
+} pthread_barrier_t;
+
+static int pthread_barrier_init(pthread_barrier_t *barrier,
+                                const void *attributes,
+                                unsigned int count) {
+  (void)attributes;
+  if (!barrier || count == 0)
+    return EINVAL;
+  int result = pthread_mutex_init(&barrier->mutex, NULL);
+  if (result != 0)
+    return result;
+  result = pthread_cond_init(&barrier->condition, NULL);
+  if (result != 0) {
+    pthread_mutex_destroy(&barrier->mutex);
+    return result;
+  }
+  barrier->count = 0;
+  barrier->threshold = count;
+  barrier->generation = 0;
+  return 0;
+}
+
+static int pthread_barrier_wait(pthread_barrier_t *barrier) {
+  pthread_mutex_lock(&barrier->mutex);
+  unsigned int generation = barrier->generation;
+  if (++barrier->count == barrier->threshold) {
+    barrier->count = 0;
+    ++barrier->generation;
+    pthread_cond_broadcast(&barrier->condition);
+    pthread_mutex_unlock(&barrier->mutex);
+    return 0;
+  }
+  while (generation == barrier->generation)
+    pthread_cond_wait(&barrier->condition, &barrier->mutex);
+  pthread_mutex_unlock(&barrier->mutex);
+  return 0;
+}
+
+static int pthread_barrier_destroy(pthread_barrier_t *barrier) {
+  int result = pthread_cond_destroy(&barrier->condition);
+  int mutex_result = pthread_mutex_destroy(&barrier->mutex);
+  return result != 0 ? result : mutex_result;
+}
+#endif
+
 #include "sm_paths.h"
 #undef CONFIG_FILE
 #undef PROFILES_FILE
@@ -178,6 +230,39 @@ static void put_file(const char *path, const char *text) {
   assert(f && fputs(text, f) >= 0 && fclose(f) == 0);
 }
 
+static void test_fpkg_direct_mount_config(void) {
+  put_file(CONFIG_FILE, "[config]\nversion=2\n");
+  assert(load_runtime_config());
+  assert(sm_config_fpkg_direct_mount_enabled());
+
+  assert(sm_config_write_web_settings(false, false, false, false, true,
+                                      false, 300, false, 0, NULL, 0,
+                                      SM_FAKELIB_FULL));
+  assert(load_runtime_config());
+  assert(sm_config_fpkg_direct_mount_enabled());
+
+  assert(sm_config_write_web_settings(false, false, false, false, false,
+                                      false, 300, false, 0, NULL, 0,
+                                      SM_FAKELIB_FULL));
+  assert(load_runtime_config());
+  assert(!sm_config_fpkg_direct_mount_enabled());
+
+  put_file(CONFIG_FILE,
+           "[config]\nversion=2\n[fpkg]\ndirect_mount=on\n");
+  assert(load_runtime_config());
+  assert(sm_config_fpkg_direct_mount_enabled());
+
+  put_file(CONFIG_FILE,
+           "[config]\nversion=2\n[fpkg]\ndirect_mount=invalid\n");
+  assert(!load_runtime_config());
+  assert(sm_config_fpkg_direct_mount_enabled());
+
+  put_file(CONFIG_FILE,
+           "[config]\nversion=2\n[fpkg]\ndirect_mount=off\n");
+  assert(load_runtime_config());
+  assert(!sm_config_fpkg_direct_mount_enabled());
+}
+
 static char *get_file(const char *path) {
   char *data = NULL;
   size_t size = 0;
@@ -280,8 +365,8 @@ static void test_editing(void) {
   assert(sm_config_set_title_global_fakelib_excluded("PPSA13197", false));
   assert(get_fakelib_mode_for_title("PPSA13197") == SM_FAKELIB_FULL);
   assert(!is_global_fakelib_excluded_for_title("PPSA13197"));
-  assert(sm_config_write_web_settings(false, true, true, false, false, 300,
-      true, 0, NULL, 0, SM_FAKELIB_FULL));
+  assert(sm_config_write_web_settings(false, true, true, false, false, false,
+      300, true, 0, NULL, 0, SM_FAKELIB_FULL));
   data = get_file(CONFIG_FILE);
   assert(strstr(data, "# keep main comment") && strstr(data, "# debug comment") &&
       strstr(data, "untouched = value # custom comment") && strstr(data, "# keep [header comment]")); free(data);
@@ -330,8 +415,8 @@ static void *settings_writer(void *arg) {
   sm_smb_connection_t connection = {.name="NAS", .path="smb://server/games", .active=true};
   for (unsigned i = 0; i < 8; ++i) {
     if (kind == 0)
-      assert(sm_config_write_web_settings(i & 1, false, true, false, false, 300,
-          true, 0, NULL, 0, SM_FAKELIB_FULL));
+      assert(sm_config_write_web_settings(i & 1, false, true, false, i & 1,
+          false, 300, true, 0, NULL, 0, SM_FAKELIB_FULL));
     else if (kind == 1)
       assert(sm_config_set_title_fakelib_mode("PPSA13197", SM_FAKELIB_EMULATORS));
     else if (kind == 2)
@@ -380,6 +465,7 @@ int main(void) {
   test_editing();
   test_concurrent_writers();
   test_logging_flags();
+  test_fpkg_direct_mount_config();
   write_config(1);
   assert(load_runtime_config());
   runtime_config_t retained = runtime_config();

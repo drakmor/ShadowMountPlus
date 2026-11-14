@@ -17,6 +17,11 @@
 #include "sm_paths.h"
 #include "sm_manual.h"
 #include "sm_shellcore_hooks.h"
+#include "sm_fpkg.h"
+#include "sm_fpkg_cache.h"
+#include "sm_pkg.h"
+#include "sm_fakelib.h"
+#include "sm_scan.h"
 
 #include <dlfcn.h>
 
@@ -260,7 +265,181 @@ static void update_registered_title_snd0info(const char *title_id) {
     log_debug("  [DB] snd0info updated rows=%d", snd0_updates);
 }
 
+typedef struct {
+  const char *title_id;
+} fpkg_cache_cancel_context_t;
+
+static bool fpkg_cache_build_cancelled(void *ctx) {
+  const fpkg_cache_cancel_context_t *cancel = ctx;
+  return should_stop_requested() || runtime_sleep_mode_active() ||
+         (cancel && sm_shellcore_title_is_protected(cancel->title_id));
+}
+
+static bool prepare_fpkg_candidate(scan_candidate_t *candidate,
+                                   char previous_generation[MAX_PATH]) {
+  previous_generation[0] = '\0';
+  if (!candidate || !candidate->fpkg ||
+      !sm_config_fpkg_direct_mount_enabled()) {
+    errno = ENOTSUP;
+    return false;
+  }
+  if (!sm_shellcore_try_begin_external_mutation()) {
+    errno = EBUSY;
+    return false;
+  }
+
+  bool prepared = false;
+  int source_fd = -1;
+  sm_fpkg_t *fpkg = NULL;
+  do {
+    if (should_stop_requested() || runtime_sleep_mode_active() ||
+        sm_shellcore_title_is_protected(candidate->title_id)) {
+      errno = EBUSY;
+      break;
+    }
+    source_fd = open(candidate->path,
+                     O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (source_fd < 0)
+      break;
+
+    sm_pkg_info_t metadata = {0};
+    if (!sm_pkg_parse_fd(candidate->path, source_fd, &metadata) ||
+        strcmp(metadata.title_id, candidate->title_id) != 0 ||
+        metadata.pkg_kind != PKG_KIND_BASE ||
+        !metadata.pkg_classification_confident) {
+      errno = EINVAL;
+      break;
+    }
+    sm_fpkg_status_t fpkg_status = sm_fpkg_open_fd(
+        candidate->path, source_fd, &metadata, &fpkg);
+    if (fpkg_status != SM_FPKG_OK) {
+      errno = fpkg_status == SM_FPKG_IO ? EIO : EINVAL;
+      break;
+    }
+
+    sm_fpkg_cache_recovery_report_t recovery = {0};
+    sm_fpkg_status_t recovery_status = sm_fpkg_cache_recover_title(
+        SM_FPKG_CACHE_DEFAULT_ROOT, candidate->title_id, &recovery);
+    if (recovery_status != SM_FPKG_OK) {
+      errno = EIO;
+      break;
+    }
+    if (recovery.active_generation[0])
+      (void)strlcpy(previous_generation, recovery.active_generation,
+                    MAX_PATH);
+
+    fpkg_cache_cancel_context_t cancel = {.title_id = candidate->title_id};
+    char backport_path[MAX_PATH] = {0};
+    (void)resolve_backport_path_for_title(candidate->title_id, NULL,
+                                          backport_path);
+    sm_fpkg_cache_options_t options = {
+        .max_extract_bytes = SM_FPKG_CACHE_DEFAULT_EXTRACT_LIMIT,
+        .is_cancelled = fpkg_cache_build_cancelled,
+        .cancel_ctx = &cancel,
+        .backport_path = backport_path[0] ? backport_path : NULL,
+    };
+    char generation_path[MAX_PATH];
+    fpkg_status = sm_fpkg_cache_build_generation(
+        SM_FPKG_CACHE_DEFAULT_ROOT, candidate->path, source_fd, &metadata,
+        fpkg, NULL, NULL, &options, generation_path);
+    if (fpkg_status != SM_FPKG_OK) {
+      errno = fpkg_status == SM_FPKG_CANCELLED ? ECANCELED : EIO;
+      log_debug("  [FPKG] cache build failed: title=%s source=%s status=%d",
+                candidate->title_id, candidate->path, (int)fpkg_status);
+      break;
+    }
+
+    sm_fpkg_cache_generation_info_t generation_info;
+    if (sm_fpkg_cache_read_generation_info(
+            SM_FPKG_CACHE_DEFAULT_ROOT, candidate->title_id, generation_path,
+            &generation_info) != SM_FPKG_OK ||
+        !generation_info.source_matches_snapshot ||
+        strcmp(generation_info.source_path, candidate->path) != 0) {
+      errno = ESTALE;
+      break;
+    }
+    (void)strlcpy(candidate->path, generation_path,
+                  sizeof(candidate->path));
+    candidate->fpkg = false;
+    prepared = true;
+  } while (0);
+
+  if (fpkg)
+    sm_fpkg_close(fpkg);
+  if (source_fd >= 0)
+    close(source_fd);
+  sm_shellcore_end_external_mutation();
+  return prepared;
+}
+
+static bool begin_fpkg_cache_cleanup(const char *title_id,
+                                     const char *generation_path, void *ctx) {
+  (void)ctx;
+  if (!sm_shellcore_try_begin_external_mutation())
+    return false;
+  char current_source[MAX_PATH];
+  bool in_use = sm_shellcore_title_is_protected(title_id) ||
+                (read_mount_link(title_id, current_source,
+                                 sizeof(current_source)) &&
+                 paths_overlap(generation_path, current_source));
+  if (in_use) {
+    sm_shellcore_end_external_mutation();
+    return false;
+  }
+  return true;
+}
+
+static void end_fpkg_cache_cleanup(void *ctx) {
+  (void)ctx;
+  sm_shellcore_end_external_mutation();
+}
+
+bool sm_install_release_replaced_fpkg_generation(
+    const char *title_id, const char *previous_generation_name,
+    const char *current_path) {
+  if (!title_id || !previous_generation_name ||
+      !previous_generation_name[0] || !current_path || !current_path[0])
+    return true;
+  char previous_path[MAX_PATH];
+  int path_length = snprintf(previous_path, sizeof(previous_path), "%s/%s/%s",
+                             SM_FPKG_CACHE_DEFAULT_ROOT, title_id,
+                             previous_generation_name);
+  if (path_length < 0 || (size_t)path_length >= sizeof(previous_path))
+    return false;
+  if (strcmp(previous_path, current_path) == 0)
+    return true;
+  sm_fpkg_status_t status = sm_fpkg_cache_remove_generation(
+      SM_FPKG_CACHE_DEFAULT_ROOT, title_id, previous_generation_name,
+      begin_fpkg_cache_cleanup, end_fpkg_cache_cleanup, NULL);
+  if (status != SM_FPKG_OK && status != SM_FPKG_CANCELLED)
+    log_debug("  [FPKG] old cache retained: title=%s path=%s status=%d",
+              title_id, previous_path, (int)status);
+  return status == SM_FPKG_OK;
+}
+
 // --- Install/Remount Action ---
+static bool append_install_path_component(char out[MAX_PATH],
+                                          const char *base,
+                                          const char *component) {
+  if (!out || !base || !component)
+    return false;
+  size_t base_len = strnlen(base, MAX_PATH);
+  size_t component_len = strnlen(component, MAX_PATH);
+  if (base_len == MAX_PATH || component_len == MAX_PATH)
+    return false;
+  bool add_separator = base_len > 0 && base[base_len - 1] != '/';
+  size_t separator_len = add_separator ? 1u : 0u;
+  if (base_len > MAX_PATH - 1u - separator_len ||
+      component_len > MAX_PATH - 1u - base_len - separator_len)
+    return false;
+
+  memcpy(out, base, base_len);
+  if (add_separator)
+    out[base_len] = '/';
+  memcpy(out + base_len + separator_len, component, component_len + 1u);
+  return true;
+}
+
 static bool mount_and_install(const char *src_path, const char *title_id,
                               const char *title_name, bool is_remount,
                               bool should_register,
@@ -269,6 +448,10 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   char user_appmeta_dir[MAX_PATH];
   char user_app_dir[MAX_PATH];
   char user_sce_sys[MAX_PATH];
+  char icon_src[MAX_PATH];
+  char icon_dst[MAX_PATH];
+  char lnk_path[MAX_PATH];
+  char img_lnk_path[MAX_PATH];
   char src_sce_sys[MAX_PATH];
   char src_snd0[MAX_PATH];
   char image_source_chain[MAX_IMAGE_CHAIN_DEPTH][MAX_PATH];
@@ -280,13 +463,33 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   bool restage_appmeta = false;
   bool has_src_snd0 = false;
 
-  snprintf(user_appmeta_dir, sizeof(user_appmeta_dir), "%s/%s", APPMETA_BASE,
-           title_id);
-  snprintf(user_app_dir, sizeof(user_app_dir), "%s/%s", APP_BASE, title_id);
+  if (!append_install_path_component(user_appmeta_dir, APPMETA_BASE,
+                                     title_id) ||
+      !append_install_path_component(user_app_dir, APP_BASE, title_id) ||
+      !append_install_path_component(user_sce_sys, user_app_dir, "sce_sys") ||
+      !append_install_path_component(icon_src, user_sce_sys, "icon0.png") ||
+      !append_install_path_component(icon_dst, user_app_dir, "icon0.png") ||
+      !append_install_path_component(lnk_path, user_app_dir, "mount.lnk") ||
+      !append_install_path_component(img_lnk_path, user_app_dir,
+                                     "mount_img.lnk")) {
+    log_debug("  [LINK] title path is too long: %s", title_id);
+    return false;
+  }
 
-  if (is_under_image_mount_base(src_path)) {
+  const char *image_chain_source = src_path;
+  char fpkg_source_path[MAX_PATH];
+  if (path_matches_root_or_child(src_path,
+                                 SM_FPKG_CACHE_DEFAULT_ROOT)) {
+    if (!sm_fakelib_resolve_fpkg_generation_source(
+            title_id, src_path, fpkg_source_path)) {
+      errno = ESTALE;
+      return false;
+    }
+    image_chain_source = fpkg_source_path;
+  }
+  if (is_under_image_mount_base(image_chain_source)) {
     image_source_count = resolve_image_source_chain_from_mount_cache(
-        src_path, image_source_chain);
+        image_chain_source, image_source_chain);
     has_image_source = image_source_count > 0;
     if (!has_image_source) {
       log_debug("  [LINK] image source lookup failed for %s: %s", title_id,
@@ -316,7 +519,6 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   if (restage_staging) {
     mkdir(APP_BASE, 0777);
     mkdir(user_app_dir, 0777);
-    snprintf(user_sce_sys, sizeof(user_sce_sys), "%s/sce_sys", user_app_dir);
     mkdir(user_sce_sys, 0777);
     if (copy_sce_sys_dir(src_sce_sys, user_sce_sys) != 0) {
       log_debug("  [COPY] Failed to copy sce_sys staging: %s -> %s", src_sce_sys,
@@ -324,10 +526,6 @@ static bool mount_and_install(const char *src_path, const char *title_id,
       return false;
     }
 
-    char icon_src[MAX_PATH];
-    char icon_dst[MAX_PATH];
-    snprintf(icon_src, sizeof(icon_src), "%s/icon0.png", user_sce_sys);
-    snprintf(icon_dst, sizeof(icon_dst), "%s/icon0.png", user_app_dir);
     if (copy_file(icon_src, icon_dst) != 0) {
       log_debug("  [COPY] Failed to copy staged icon: %s -> %s", icon_src,
                 icon_dst);
@@ -359,7 +557,6 @@ static bool mount_and_install(const char *src_path, const char *title_id,
   }
 
   // WRITE TRACKER
-  char lnk_path[MAX_PATH];
   runtime_mount_state_lock();
   if (runtime_sleep_mode_active()) {
     (void)rollback_title_nullfs_mount(title_id, src_path);
@@ -369,7 +566,6 @@ static bool mount_and_install(const char *src_path, const char *title_id,
 
   mkdir(APP_BASE, 0777);
   mkdir(user_app_dir, 0777);
-  snprintf(lnk_path, sizeof(lnk_path), "%s/mount.lnk", user_app_dir);
   if (!write_mount_link(title_id, src_path)) {
     log_debug("  [LINK] write failed for %s: %s", lnk_path, strerror(errno));
     (void)rollback_title_nullfs_mount(title_id, src_path);
@@ -379,9 +575,6 @@ static bool mount_and_install(const char *src_path, const char *title_id,
 
   log_debug("  [LINK] mount.lnk created: %s -> %s", lnk_path, src_path);
 
-  char img_lnk_path[MAX_PATH];
-  snprintf(img_lnk_path, sizeof(img_lnk_path), "%s/mount_img.lnk",
-           user_app_dir);
   if (has_image_source) {
     if (!write_mount_image_chain(title_id, image_source_chain,
                                  image_source_count)) {
@@ -470,19 +663,40 @@ void process_scan_candidates(const scan_candidate_t *candidates,
   if (runtime_sleep_mode_active())
     return;
 
-  sm_install_poll_pending();
+  sm_install_poll_pending_for_scan();
 
   for (int i = 0; i < candidate_count; i++) {
     if (should_stop_requested() || runtime_sleep_mode_active() ||
         !sm_game_lifecycle_background_title(NULL))
       return;
 
-    const scan_candidate_t *c = &candidates[i];
+    scan_candidate_t prepared_candidate = candidates[i];
+    const scan_candidate_t *c = &prepared_candidate;
     if (sm_shellcore_title_is_protected(c->title_id))
       continue;
+    char previous_fpkg_generation[MAX_PATH] = {0};
+    if (c->fpkg && !prepare_fpkg_candidate(&prepared_candidate,
+                                           previous_fpkg_generation)) {
+      if (errno == EBUSY || errno == ECANCELED)
+        continue;
+      uint8_t failed_attempts = bump_failed_mount_attempts(c->title_id);
+      log_debug("  [FPKG] candidate preparation failed: %s (%s): %s",
+                c->title_name, c->title_id, strerror(errno));
+      if (failed_attempts == MAX_FAILED_MOUNT_ATTEMPTS)
+        log_debug("  [RETRY] limit reached (%u/%u): %s (%s)",
+                  (unsigned)failed_attempts,
+                  (unsigned)MAX_FAILED_MOUNT_ATTEMPTS, c->title_name,
+                  c->title_id);
+      continue;
+    }
     bool has_src_snd0 = false;
     bool use_app_install_all =
         runtime_config().app_install_all_enabled && !c->in_app_db;
+    const char *previous_generation_name = NULL;
+    if (candidates[i].fpkg && previous_fpkg_generation[0]) {
+      const char *slash = strrchr(previous_fpkg_generation, '/');
+      previous_generation_name = slash ? slash + 1 : previous_fpkg_generation;
+    }
     if (c->installed) {
       log_debug("  [ACTION] Remounting: %s", c->title_name);
     } else {
@@ -505,7 +719,11 @@ void process_scan_candidates(const scan_candidate_t *candidates,
                                  c->title_name);
       }
       if (use_app_install_all) {
-        if (!sm_install_queue_candidate(c, has_src_snd0)) {
+        const char *previous_generation = candidates[i].fpkg
+            ? previous_generation_name
+            : NULL;
+        if (!sm_install_queue_candidate(c, has_src_snd0,
+                                        previous_generation)) {
           log_debug("  [REG] Failed to queue staged install: %s (%s)",
                     c->title_name, c->title_id);
           if (should_stop_requested() || runtime_sleep_mode_active())
@@ -523,8 +741,16 @@ void process_scan_candidates(const scan_candidate_t *candidates,
         clear_failed_mount_attempts(c->title_id);
       } else {
         clear_failed_mount_attempts(c->title_id);
-        cache_game_entry(c->path, c->title_id, c->title_name);
+        cache_game_entry(candidates[i].fpkg ? candidates[i].path : c->path,
+                         c->title_id, c->title_name);
       }
+      if (candidates[i].fpkg && !use_app_install_all)
+        if (!sm_install_release_replaced_fpkg_generation(
+                c->title_id, previous_generation_name, c->path) &&
+            !sm_install_defer_fpkg_generation_cleanup(
+                c->title_id, previous_generation_name, c->path))
+          log_debug("  [FPKG] unable to queue old cache cleanup: %s (%s)",
+                    c->title_name, c->title_id);
     } else {
       if (should_stop_requested() || runtime_sleep_mode_active())
         return;

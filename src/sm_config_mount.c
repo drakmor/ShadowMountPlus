@@ -174,6 +174,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.force_mount = false;
   state->cfg.persistent_image_mounts = false;
   state->cfg.app_install_all_enabled = false;
+  state->cfg.fpkg_direct_mount_enabled = true;
   state->cfg.auto_remove_missing_games = false;
   state->cfg.auto_remove_games_with_dlc = false;
   state->cfg.backport_fakelib_enabled = true;
@@ -279,6 +280,14 @@ bool sm_config_library_sync_notification(void) {
   ensure_runtime_config_ready();
   pthread_mutex_lock(&g_runtime_state_mutex);
   bool enabled = g_runtime_state.cfg.library_sync_notification;
+  pthread_mutex_unlock(&g_runtime_state_mutex);
+  return enabled;
+}
+
+bool sm_config_fpkg_direct_mount_enabled(void) {
+  ensure_runtime_config_ready();
+  pthread_mutex_lock(&g_runtime_state_mutex);
+  bool enabled = g_runtime_state.cfg.fpkg_direct_mount_enabled;
   pthread_mutex_unlock(&g_runtime_state_mutex);
   return enabled;
 }
@@ -1041,6 +1050,16 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
       continue;
     }
 
+    if (strcasecmp(key, "fpkg_direct_mount") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.fpkg_direct_mount_enabled = bval;
+      continue;
+    }
+
     if (strcasecmp(key, "auto_remove_missing_games") == 0) {
       if (!parse_bool_ini(value, &bval)) {
         invalid = true;
@@ -1393,7 +1412,7 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
   log_debug("  [CFG] loaded: api_enabled=%d debug=%d quiet=%d "
             "library_sync_notification=%d language=%s "
             "ro=%d force=%d "
-            "persistent_image_mounts=%d app_install_all=%d "
+            "persistent_image_mounts=%d app_install_all=%d fpkg_direct_mount=%d "
             "auto_remove_missing_games=%d "
             "auto_remove_games_with_dlc=%d auto_remove_missing_delay_s=%u "
             "api=%s:%u scan_depth=%u "
@@ -1416,6 +1435,7 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
             state->cfg.force_mount ? 1 : 0,
             state->cfg.persistent_image_mounts ? 1 : 0,
             state->cfg.app_install_all_enabled ? 1 : 0,
+            state->cfg.fpkg_direct_mount_enabled ? 1 : 0,
             state->cfg.auto_remove_missing_games ? 1 : 0,
             state->cfg.auto_remove_games_with_dlc ? 1 : 0,
             state->cfg.auto_remove_missing_delay_seconds,
@@ -1657,6 +1677,7 @@ bool sm_config_set_title_fakelib_enabled(const char *title_id, bool enabled) {
 bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   bool update_emulators_enabled,
                                   bool auto_update_ampr_enabled,
+                                  bool fpkg_direct_mount_enabled,
                                   bool auto_remove_missing_games,
                                   uint32_t auto_remove_missing_delay_seconds,
                                   bool allow_lan_access,
@@ -1720,6 +1741,7 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
       sm_ini_set(&main, "general", "quiet_mode", quiet_mode ? "on" : "off") &&
       sm_ini_set(&main, "emulators", "update_enabled", update_emulators_enabled ? "on" : "off") &&
       sm_ini_set(&main, "emulators", "auto_update_ampr", auto_update_ampr_enabled ? "on" : "off") &&
+      sm_ini_set(&main, "fpkg", "direct_mount", fpkg_direct_mount_enabled ? "on" : "off") &&
       sm_ini_set(&main, "fakelib", "default_mode", sm_config_fakelib_mode_name(fakelib_default_mode)) &&
       sm_ini_set(&main, "library", "remove_missing", auto_remove_missing_games ? "on" : "off") &&
       sm_ini_set(&main, "library", "remove_delay_seconds", delay) &&

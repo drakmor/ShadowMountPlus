@@ -12,14 +12,21 @@ bool is_title_install_pending(const char *title_id);
 void sm_install_forget_pending_title(const char *title_id);
 // Return the next pending-install wake deadline in monotonic microseconds.
 uint64_t sm_install_next_wake_us(uint64_t now_us);
-// Poll async batch installs for success/timeout completion only.
+// Poll async batch installs and release scan mounts when no install remains.
 void sm_install_poll_pending(void);
+// Poll before processing candidates without releasing discovery mounts.
+void sm_install_poll_pending_for_scan(void);
 // Poll async batch installs for success/timeout completion and auto-submit
 // queued installs when possible.
 void sm_install_service_pending(void);
 // Queue a staged title for the next batch install request.
 bool sm_install_queue_candidate(const scan_candidate_t *candidate,
-                                bool has_src_snd0);
+                                bool has_src_snd0,
+                                const char *previous_fpkg_generation_name);
+// Retain an already-registered title's superseded cache for guarded retry.
+bool sm_install_defer_fpkg_generation_cleanup(
+    const char *title_id, const char *previous_fpkg_generation_name,
+    const char *current_path);
 // Submit all queued titles when no batch install is currently pending.
 bool sm_install_submit_queued(void);
 // Record retry state for every queued title after a batch submit failure.

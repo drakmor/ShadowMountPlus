@@ -20,6 +20,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#ifdef __APPLE__
+#include <sys/mount.h>
+#endif
 #include <time.h>
 #include <unistd.h>
 
@@ -32,6 +35,21 @@ static inline size_t test_strlcpy(char *dst, const char *src, size_t size) {
   }
   return length;
 }
+#ifdef strlcpy
+#undef strlcpy
+#endif
 #define strlcpy test_strlcpy
+#define IOVEC_ENTRY(x)                                                        \
+  {(void *)(x),                                                               \
+   ((const char *)(x) == NULL ? 0u : (size_t)(strlen((const char *)(x)) + 1u))}
+#define IOVEC_SIZE(x) (sizeof(x) / sizeof(struct iovec))
+#ifndef MNT_BYFSID
+#define MNT_BYFSID 0x08000000
+#endif
+int sceAppInstUtilAppUnInstall(const char *title_id);
+int sceAppInstUtilAppInstallAll(void *reserved);
+int sceKernelUsleep(unsigned int microseconds);
+uint32_t sm_firmware_major_version(void);
+int nmount(struct iovec *iov, unsigned int iov_count, int flags);
 #include "sm_smb.h"
 #endif

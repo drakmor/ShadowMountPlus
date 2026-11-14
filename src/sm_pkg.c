@@ -589,15 +589,33 @@ bool sm_pkg_source_matches(const sm_pkg_info_t *info, const struct stat *st) {
     (uint32_t)st->st_ctim.tv_nsec == info->source_ctime_ns;
 }
 
-bool sm_pkg_parse_file(const char *path, const struct stat *st, sm_pkg_info_t *candidate) {
+bool sm_pkg_parse_fd(const char *path, int fd, sm_pkg_info_t *candidate) {
+  if (!path || fd < 0 || !candidate ||
+      !pkg_extension(pkg_filename(path)) || strlen(path) >= MAX_PATH)
+    return false;
+  int flags = fcntl(fd, F_GETFL);
+  if (flags < 0 || (flags & O_ACCMODE) != O_RDONLY)
+    return false;
+  struct stat opened;
+  if (fstat(fd, &opened) != 0)
+    return false;
+  if (!S_ISREG(opened.st_mode) || opened.st_size <= 0) {
+    errno = EINVAL;
+    return false;
+  }
+  pkg_reader_t reader = {.read = file_read_at, .ctx = &fd};
+  return parse_package(path, &opened, &reader, candidate);
+}
+
+bool sm_pkg_parse_file(const char *path, const struct stat *st,
+                       sm_pkg_info_t *candidate) {
   (void)st;
-  if (!path || !candidate || !pkg_extension(pkg_filename(path)) || strlen(path) >= MAX_PATH) return false;
+  if (!path || !candidate || !pkg_extension(pkg_filename(path)) ||
+      strlen(path) >= MAX_PATH)
+    return false;
   int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   if (fd < 0) return false;
-  struct stat opened;
-  bool ok = fstat(fd, &opened) == 0 && S_ISREG(opened.st_mode) && opened.st_size > 0;
-  pkg_reader_t reader = {.read = file_read_at, .ctx = &fd};
-  if (ok) ok = parse_package(path, &opened, &reader, candidate);
+  bool ok = sm_pkg_parse_fd(path, fd, candidate);
   close(fd);
   return ok;
 }
