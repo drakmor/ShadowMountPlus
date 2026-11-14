@@ -253,6 +253,18 @@ static bool update_trophy_metadata(const char *title_id,
          copy_optional_trophy_metadata_file(src_sce_sys, dst_base, "param.json");
 }
 
+bool sm_install_ensure_private_trophy_metadata(const char *title_id,
+                                              const char *source_path) {
+  if (!title_id || !source_path) {
+    errno = EINVAL;
+    return false;
+  }
+  char src_sce_sys[MAX_PATH];
+  if (!resolve_sce_sys_file(source_path, "sce_sys", src_sce_sys))
+    return false;
+  return update_trophy_metadata(title_id, src_sce_sys);
+}
+
 static void update_registered_title_snd0info(const char *title_id) {
   sceKernelUsleep(200000);
   int snd0_updates = update_snd0info(title_id);

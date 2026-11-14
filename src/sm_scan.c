@@ -20,6 +20,7 @@
 #include "sm_image_index.h"
 #include "sm_image.h"
 #include "sm_install_queue.h"
+#include "sm_install.h"
 #include "sm_manual.h"
 #include "sm_self.h"
 #include "sm_shellcore_service.h"
@@ -330,8 +331,14 @@ static existing_directory_result_t handle_existing_directory_candidate(
     source_valid = directory_has_game_executable(full_path);
 
   if (source_valid && appmeta_present) {
-    cache_game_entry(full_path, info->title_id, info->title_name);
-    return EXISTING_DIRECTORY_PREFER_CURRENT;
+    // Registrations made before private PS4 metadata staging can already have
+    // valid public appmeta. Repair missing private files before the cache hit.
+    if (sm_install_ensure_private_trophy_metadata(info->title_id, full_path)) {
+      cache_game_entry(full_path, info->title_id, info->title_name);
+      return EXISTING_DIRECTORY_PREFER_CURRENT;
+    }
+    log_debug("  [SCAN] private trophy metadata needs install retry: %s",
+              info->title_id);
   }
 
   if (installed && appmeta_present && has_tracked_path &&
