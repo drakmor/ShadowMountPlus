@@ -436,7 +436,10 @@ static uint64_t module_case_file_fingerprint(const module_case_file_t *file) {
   uint64_t hash = 14695981039346656037ull;
   for (const unsigned char *p = (const unsigned char *)file->path; *p; ++p)
     hash = (hash ^ *p) * 1099511628211ull;
+  // st_mode is included because chmod on /data (nullfs over BFS) does not
+  // change the ctime seen here, and execute-bit repair must still rerun.
   const uint64_t fields[] = {
+      (uint64_t)file->st.st_mode,
       (uint64_t)file->st.st_dev, (uint64_t)file->st.st_ino,
       (uint64_t)file->st.st_size, (uint64_t)file->st.st_mtim.tv_sec,
       (uint64_t)file->st.st_mtim.tv_nsec, (uint64_t)file->st.st_ctim.tv_sec,
