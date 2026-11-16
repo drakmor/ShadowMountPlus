@@ -595,6 +595,13 @@ static void repair_game_executables_for_source(const char *path) {
   if (lstat(path, &st) != 0 || !S_ISDIR(st.st_mode) ||
       !is_local_ufs_or_bfs(path, &read_only) || read_only)
     return;
+  // eboot.bin is outside the module fingerprint and must not depend on a
+  // complete module walk, so check it first on every pass.
+  exec_permission_repair_t exec_repair = {0};
+  char eboot_path[MAX_PATH];
+  int written = snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", path);
+  if (written > 0 && (size_t)written < sizeof(eboot_path))
+    repair_exec_permission(eboot_path, &exec_repair);
   module_case_snapshot_t snapshot = {.device = st.st_dev};
   if (!collect_module_case_files(path, 0, &snapshot))
     goto cleanup;
@@ -610,18 +617,13 @@ static void repair_game_executables_for_source(const char *path) {
       goto cleanup;
     fingerprint += module_case_file_fingerprint(file);
   }
-  // eboot.bin is outside the module fingerprint, so check it on every pass.
-  exec_permission_repair_t exec_repair = {0};
-  char eboot_path[MAX_PATH];
-  int written = snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", path);
-  if (written > 0 && (size_t)written < sizeof(eboot_path))
-    repair_exec_permission(eboot_path, &exec_repair);
-  bool modules_changed = !module_case_fingerprint_matches(path, fingerprint);
-  bool modules_refreshed =
-      !modules_changed || repair_module_exec_permissions(&snapshot, &exec_repair);
-  log_exec_permission_repair(path, &exec_repair);
-  if (!modules_changed || !modules_refreshed)
+  if (module_case_fingerprint_matches(path, fingerprint))
     goto cleanup;
+  size_t exec_failures_before = exec_repair.failures;
+  if (!repair_module_exec_permissions(&snapshot, &exec_repair))
+    goto cleanup;
+  // A failed chmod leaves ctime unchanged; keep the source uncached to retry.
+  bool module_exec_incomplete = exec_repair.failures != exec_failures_before;
   size_t fixed = 0, conflicts = 0, failures = 0;
   int first_error = 0;
   const char *failed_path = NULL;
@@ -699,7 +701,8 @@ static void repair_game_executables_for_source(const char *path) {
       goto cleanup;
     fingerprint += module_case_file_fingerprint(&current);
   }
-  store_module_case_fingerprint(path, fingerprint);
+  if (!module_exec_incomplete)
+    store_module_case_fingerprint(path, fingerprint);
   if (fixed || conflicts || failures)
     log_debug("  [SELF] filename case: root=%s fixed=%zu conflicts=%zu failures=%zu",
               path, fixed, conflicts, failures);
@@ -707,6 +710,7 @@ static void repair_game_executables_for_source(const char *path) {
     log_debug("  [SELF] filename case failed: %s (%s)", failed_path,
               strerror(first_error));
 cleanup:
+  log_exec_permission_repair(path, &exec_repair);
   free(snapshot.files);
 }
 
