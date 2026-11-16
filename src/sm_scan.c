@@ -554,6 +554,32 @@ static void log_exec_permission_repair(const char *root,
               repair->first_failed_path, strerror(repair->first_error));
 }
 
+// True when path is on UFS/BFS, directly or through a nullfs mount such as
+// /data over /user. When read_only is set, it reports whether either layer
+// is mounted read-only.
+static bool is_local_ufs_or_bfs(const char *path, bool *read_only) {
+  struct statfs filesystem;
+  if (statfs(path, &filesystem) != 0)
+    return false;
+  bool any_read_only = (filesystem.f_flags & MNT_RDONLY) != 0;
+
+  if (strcmp(filesystem.f_fstypename, "nullfs") == 0) {
+    char source_path[MAX_PATH];
+    if (filesystem.f_mntfromname[0] != '/' ||
+        strlcpy(source_path, filesystem.f_mntfromname,
+                sizeof(source_path)) >= sizeof(source_path) ||
+        statfs(source_path, &filesystem) != 0) {
+      return false;
+    }
+    any_read_only = any_read_only || (filesystem.f_flags & MNT_RDONLY) != 0;
+  }
+
+  if (read_only)
+    *read_only = any_read_only;
+  return strcmp(filesystem.f_fstypename, "ufs") == 0 ||
+         strcmp(filesystem.f_fstypename, "bfs") == 0;
+}
+
 // Repairs executable permissions and module filename case for one source.
 // Normal scanner passes also catch in-place writes without new vnode watches.
 // Parse metadata only when this directory's library snapshot changes.
@@ -565,10 +591,9 @@ static void repair_game_executables_for_source(const char *path) {
       sm_game_lifecycle_has_active_game())
     return;
   struct stat st;
-  struct statfs fs;
-  if (lstat(path, &st) != 0 || !S_ISDIR(st.st_mode) || statfs(path, &fs) != 0 ||
-      (fs.f_flags & MNT_RDONLY) ||
-      (strcmp(fs.f_fstypename, "ufs") && strcmp(fs.f_fstypename, "bfs")))
+  bool read_only = true;
+  if (lstat(path, &st) != 0 || !S_ISDIR(st.st_mode) ||
+      !is_local_ufs_or_bfs(path, &read_only) || read_only)
     return;
   module_case_snapshot_t snapshot = {.device = st.st_dev};
   if (!collect_module_case_files(path, 0, &snapshot))
@@ -1238,25 +1263,6 @@ typedef struct {
   char first_failed_path[MAX_PATH];
 } backport_permission_repair_t;
 
-static bool backport_filesystem_needs_permission_repair(const char *path) {
-  struct statfs filesystem;
-  if (statfs(path, &filesystem) != 0)
-    return false;
-
-  if (strcmp(filesystem.f_fstypename, "nullfs") == 0) {
-    char source_path[MAX_PATH];
-    if (filesystem.f_mntfromname[0] != '/' ||
-        strlcpy(source_path, filesystem.f_mntfromname,
-                sizeof(source_path)) >= sizeof(source_path) ||
-        statfs(source_path, &filesystem) != 0) {
-      return false;
-    }
-  }
-
-  return strcmp(filesystem.f_fstypename, "ufs") == 0 ||
-         strcmp(filesystem.f_fstypename, "bfs") == 0;
-}
-
 static void note_backport_permission_failure(
     backport_permission_repair_t *repair, const char *path, int error) {
   repair->failures++;
@@ -1345,7 +1351,7 @@ static void repair_backport_permissions_for_scan_root(const char *scan_path) {
   struct stat root_st;
   if (lstat(backports_root, &root_st) != 0 || !S_ISDIR(root_st.st_mode))
     return;
-  if (!backport_filesystem_needs_permission_repair(backports_root)) {
+  if (!is_local_ufs_or_bfs(backports_root, NULL)) {
     clear_backport_permissions_incomplete(backports_root);
     return;
   }
