@@ -21,6 +21,7 @@
 #include "sm_image.h"
 #include "sm_install_queue.h"
 #include "sm_manual.h"
+#include "sm_exec_permissions.h"
 #include "sm_self.h"
 #include "sm_shellcore_service.h"
 
@@ -435,7 +436,10 @@ static uint64_t module_case_file_fingerprint(const module_case_file_t *file) {
   uint64_t hash = 14695981039346656037ull;
   for (const unsigned char *p = (const unsigned char *)file->path; *p; ++p)
     hash = (hash ^ *p) * 1099511628211ull;
+  // st_mode is included because chmod on /data (nullfs over BFS) does not
+  // change the ctime seen here, and execute-bit repair must still rerun.
   const uint64_t fields[] = {
+      (uint64_t)file->st.st_mode,
       (uint64_t)file->st.st_dev, (uint64_t)file->st.st_ino,
       (uint64_t)file->st.st_size, (uint64_t)file->st.st_mtim.tv_sec,
       (uint64_t)file->st.st_mtim.tv_nsec, (uint64_t)file->st.st_ctim.tv_sec,
@@ -512,9 +516,77 @@ static bool collect_module_case_files(const char *path, unsigned depth,
   return complete;
 }
 
+typedef struct {
+  size_t fixed, failures;
+  int first_error;
+  char first_failed_path[MAX_PATH];
+} exec_permission_repair_t;
+
+static void repair_exec_permission(const char *path,
+                                   exec_permission_repair_t *repair) {
+  int result = sm_add_exec_permission(path);
+  if (result > 0)
+    ++repair->fixed;
+  if (result >= 0 || repair->failures++ != 0)
+    return;
+  repair->first_error = errno;
+  (void)strlcpy(repair->first_failed_path, path,
+                sizeof(repair->first_failed_path));
+}
+
+// Re-reads each repaired module so later race checks see the new ctime.
+static bool repair_module_exec_permissions(module_case_snapshot_t *snapshot,
+                                           exec_permission_repair_t *repair) {
+  for (size_t i = 0; i < snapshot->count; ++i) {
+    module_case_file_t *file = &snapshot->files[i];
+    size_t fixed_before = repair->fixed;
+    repair_exec_permission(file->path, repair);
+    if (repair->fixed != fixed_before && lstat(file->path, &file->st) != 0)
+      return false;
+  }
+  return true;
+}
+
+static void log_exec_permission_repair(const char *root,
+                                       const exec_permission_repair_t *repair) {
+  if (repair->fixed || repair->failures)
+    log_debug("  [SELF] execute permission: root=%s fixed=%zu failures=%zu",
+              root, repair->fixed, repair->failures);
+  if (repair->failures)
+    log_debug("  [SELF] execute permission failed: %s (%s)",
+              repair->first_failed_path, strerror(repair->first_error));
+}
+
+// True when path is on UFS/BFS, directly or through a nullfs mount such as
+// /data over /user. When read_only is set, it reports whether either layer
+// is mounted read-only.
+static bool is_local_ufs_or_bfs(const char *path, bool *read_only) {
+  struct statfs filesystem;
+  if (statfs(path, &filesystem) != 0)
+    return false;
+  bool any_read_only = (filesystem.f_flags & MNT_RDONLY) != 0;
+
+  if (strcmp(filesystem.f_fstypename, "nullfs") == 0) {
+    char source_path[MAX_PATH];
+    if (filesystem.f_mntfromname[0] != '/' ||
+        strlcpy(source_path, filesystem.f_mntfromname,
+                sizeof(source_path)) >= sizeof(source_path) ||
+        statfs(source_path, &filesystem) != 0) {
+      return false;
+    }
+    any_read_only = any_read_only || (filesystem.f_flags & MNT_RDONLY) != 0;
+  }
+
+  if (read_only)
+    *read_only = any_read_only;
+  return strcmp(filesystem.f_fstypename, "ufs") == 0 ||
+         strcmp(filesystem.f_fstypename, "bfs") == 0;
+}
+
+// Repairs executable permissions and module filename case for one source.
 // Normal scanner passes also catch in-place writes without new vnode watches.
 // Parse metadata only when this directory's library snapshot changes.
-static void repair_module_case_for_source(const char *path) {
+static void repair_game_executables_for_source(const char *path) {
   if ((!path_matches_root_or_child(path, "/data") &&
        !path_matches_root_or_child(path, "/mnt/ext0/homebrew") &&
        !path_matches_root_or_child(path, "/mnt/ext1/homebrew")) ||
@@ -522,11 +594,17 @@ static void repair_module_case_for_source(const char *path) {
       sm_game_lifecycle_has_active_game())
     return;
   struct stat st;
-  struct statfs fs;
-  if (lstat(path, &st) != 0 || !S_ISDIR(st.st_mode) || statfs(path, &fs) != 0 ||
-      (fs.f_flags & MNT_RDONLY) ||
-      (strcmp(fs.f_fstypename, "ufs") && strcmp(fs.f_fstypename, "bfs")))
+  bool read_only = true;
+  if (lstat(path, &st) != 0 || !S_ISDIR(st.st_mode) ||
+      !is_local_ufs_or_bfs(path, &read_only) || read_only)
     return;
+  // eboot.bin is outside the module fingerprint and must not depend on a
+  // complete module walk, so check it first on every pass.
+  exec_permission_repair_t exec_repair = {0};
+  char eboot_path[MAX_PATH];
+  int written = snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", path);
+  if (written > 0 && (size_t)written < sizeof(eboot_path))
+    repair_exec_permission(eboot_path, &exec_repair);
   module_case_snapshot_t snapshot = {.device = st.st_dev};
   if (!collect_module_case_files(path, 0, &snapshot))
     goto cleanup;
@@ -544,6 +622,11 @@ static void repair_module_case_for_source(const char *path) {
   }
   if (module_case_fingerprint_matches(path, fingerprint))
     goto cleanup;
+  size_t exec_failures_before = exec_repair.failures;
+  if (!repair_module_exec_permissions(&snapshot, &exec_repair))
+    goto cleanup;
+  // A failed chmod leaves ctime unchanged; keep the source uncached to retry.
+  bool module_exec_incomplete = exec_repair.failures != exec_failures_before;
   size_t fixed = 0, conflicts = 0, failures = 0;
   int first_error = 0;
   const char *failed_path = NULL;
@@ -621,7 +704,8 @@ static void repair_module_case_for_source(const char *path) {
       goto cleanup;
     fingerprint += module_case_file_fingerprint(&current);
   }
-  store_module_case_fingerprint(path, fingerprint);
+  if (!module_exec_incomplete)
+    store_module_case_fingerprint(path, fingerprint);
   if (fixed || conflicts || failures)
     log_debug("  [SELF] filename case: root=%s fixed=%zu conflicts=%zu failures=%zu",
               path, fixed, conflicts, failures);
@@ -629,6 +713,7 @@ static void repair_module_case_for_source(const char *path) {
     log_debug("  [SELF] filename case failed: %s (%s)", failed_path,
               strerror(first_error));
 cleanup:
+  log_exec_permission_repair(path, &exec_repair);
   free(snapshot.files);
 }
 
@@ -658,7 +743,7 @@ static bool try_collect_candidate_for_directory(
   if (sm_shellcore_title_is_protected(info.title_id))
     return true;
 
-  repair_module_case_for_source(full_path);
+  repair_game_executables_for_source(full_path);
   note_game_cache_source_seen(full_path, info.title_id, info.title_name);
 
   int duplicate_candidate_index = find_scan_candidate_index_by_title_id(
@@ -1185,25 +1270,6 @@ typedef struct {
   char first_failed_path[MAX_PATH];
 } backport_permission_repair_t;
 
-static bool backport_filesystem_needs_permission_repair(const char *path) {
-  struct statfs filesystem;
-  if (statfs(path, &filesystem) != 0)
-    return false;
-
-  if (strcmp(filesystem.f_fstypename, "nullfs") == 0) {
-    char source_path[MAX_PATH];
-    if (filesystem.f_mntfromname[0] != '/' ||
-        strlcpy(source_path, filesystem.f_mntfromname,
-                sizeof(source_path)) >= sizeof(source_path) ||
-        statfs(source_path, &filesystem) != 0) {
-      return false;
-    }
-  }
-
-  return strcmp(filesystem.f_fstypename, "ufs") == 0 ||
-         strcmp(filesystem.f_fstypename, "bfs") == 0;
-}
-
 static void note_backport_permission_failure(
     backport_permission_repair_t *repair, const char *path, int error) {
   repair->failures++;
@@ -1292,7 +1358,7 @@ static void repair_backport_permissions_for_scan_root(const char *scan_path) {
   struct stat root_st;
   if (lstat(backports_root, &root_st) != 0 || !S_ISDIR(root_st.st_mode))
     return;
-  if (!backport_filesystem_needs_permission_repair(backports_root)) {
+  if (!is_local_ufs_or_bfs(backports_root, NULL)) {
     clear_backport_permissions_incomplete(backports_root);
     return;
   }
@@ -1312,7 +1378,7 @@ static void repair_backport_permissions_for_scan_root(const char *scan_path) {
               backports_root, repair.failures, repair.first_failed_path,
               strerror(repair.first_error));
   }
-  repair_module_case_for_source(backports_root);
+  repair_game_executables_for_source(backports_root);
 }
 
 static void collect_scan_candidates_from_root(
