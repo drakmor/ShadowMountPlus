@@ -21,6 +21,7 @@
 #include "sm_image.h"
 #include "sm_install_queue.h"
 #include "sm_manual.h"
+#include "sm_exec_permissions.h"
 #include "sm_self.h"
 #include "sm_shellcore_service.h"
 
@@ -512,9 +513,51 @@ static bool collect_module_case_files(const char *path, unsigned depth,
   return complete;
 }
 
+typedef struct {
+  size_t fixed, failures;
+  int first_error;
+  char first_failed_path[MAX_PATH];
+} exec_permission_repair_t;
+
+static void repair_exec_permission(const char *path,
+                                   exec_permission_repair_t *repair) {
+  int result = sm_add_exec_permission(path);
+  if (result > 0)
+    ++repair->fixed;
+  if (result >= 0 || repair->failures++ != 0)
+    return;
+  repair->first_error = errno;
+  (void)strlcpy(repair->first_failed_path, path,
+                sizeof(repair->first_failed_path));
+}
+
+// Re-reads each repaired module so later race checks see the new ctime.
+static bool repair_module_exec_permissions(module_case_snapshot_t *snapshot,
+                                           exec_permission_repair_t *repair) {
+  for (size_t i = 0; i < snapshot->count; ++i) {
+    module_case_file_t *file = &snapshot->files[i];
+    size_t fixed_before = repair->fixed;
+    repair_exec_permission(file->path, repair);
+    if (repair->fixed != fixed_before && lstat(file->path, &file->st) != 0)
+      return false;
+  }
+  return true;
+}
+
+static void log_exec_permission_repair(const char *root,
+                                       const exec_permission_repair_t *repair) {
+  if (repair->fixed || repair->failures)
+    log_debug("  [SELF] execute permission: root=%s fixed=%zu failures=%zu",
+              root, repair->fixed, repair->failures);
+  if (repair->failures)
+    log_debug("  [SELF] execute permission failed: %s (%s)",
+              repair->first_failed_path, strerror(repair->first_error));
+}
+
+// Repairs executable permissions and module filename case for one source.
 // Normal scanner passes also catch in-place writes without new vnode watches.
 // Parse metadata only when this directory's library snapshot changes.
-static void repair_module_case_for_source(const char *path) {
+static void repair_game_executables_for_source(const char *path) {
   if ((!path_matches_root_or_child(path, "/data") &&
        !path_matches_root_or_child(path, "/mnt/ext0/homebrew") &&
        !path_matches_root_or_child(path, "/mnt/ext1/homebrew")) ||
@@ -542,7 +585,17 @@ static void repair_module_case_for_source(const char *path) {
       goto cleanup;
     fingerprint += module_case_file_fingerprint(file);
   }
-  if (module_case_fingerprint_matches(path, fingerprint))
+  // eboot.bin is outside the module fingerprint, so check it on every pass.
+  exec_permission_repair_t exec_repair = {0};
+  char eboot_path[MAX_PATH];
+  int written = snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", path);
+  if (written > 0 && (size_t)written < sizeof(eboot_path))
+    repair_exec_permission(eboot_path, &exec_repair);
+  bool modules_changed = !module_case_fingerprint_matches(path, fingerprint);
+  bool modules_refreshed =
+      !modules_changed || repair_module_exec_permissions(&snapshot, &exec_repair);
+  log_exec_permission_repair(path, &exec_repair);
+  if (!modules_changed || !modules_refreshed)
     goto cleanup;
   size_t fixed = 0, conflicts = 0, failures = 0;
   int first_error = 0;
@@ -658,7 +711,7 @@ static bool try_collect_candidate_for_directory(
   if (sm_shellcore_title_is_protected(info.title_id))
     return true;
 
-  repair_module_case_for_source(full_path);
+  repair_game_executables_for_source(full_path);
   note_game_cache_source_seen(full_path, info.title_id, info.title_name);
 
   int duplicate_candidate_index = find_scan_candidate_index_by_title_id(
@@ -1312,7 +1365,7 @@ static void repair_backport_permissions_for_scan_root(const char *scan_path) {
               backports_root, repair.failures, repair.first_failed_path,
               strerror(repair.first_error));
   }
-  repair_module_case_for_source(backports_root);
+  repair_game_executables_for_source(backports_root);
 }
 
 static void collect_scan_candidates_from_root(

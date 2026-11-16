@@ -99,6 +99,8 @@ PPSA12345/
 
 Do **not** add another enclosing game directory inside the image. A `.ffpfsc` file is different: it contains a supported **nested image**, not loose game files at the container root.
 
+For extracted game folders on writable internal or extended storage, ShadowMountPlus adds any missing execute bits (`chmod +x`, for example `0644` → `0755`) to `eboot.bin` and every `.prx`/`.sprx` module during scanning. Files copied over FTP or from archives often lose these bits, and the PS5 loader then refuses the module with `mount flag / attribute error`. No other permission bits or files are changed, and images and read-only sources are left untouched.
+
 ## Game locations and scanning
 
 ShadowMountPlus checks several built-in locations, including:
@@ -367,6 +369,7 @@ An uncompressed PFS image can also be nested. This format can save space, but de
 | Backport or fakelib causes errors | Check the matching title ID and file layout; disable standalone BackPork if ShadowMountPlus fakelib is active. |
 | NAS connection fails | Verify the share name, credentials, SMB2/3 support, permissions, and that the NAS is reachable. |
 | Game is registered but will not start | Check PS5 notifications and log messages; remove stale library entries before retrying. |
+| `mount flag / attribute error` or spawn error `0x80aa001a` | `eboot.bin` or a module is not executable. Folder games on writable storage are repaired on the next scan; check the log for `[SELF] execute permission` failures, or run `chmod 755` on the files manually. |
 | Configuration changes do not apply | Check for invalid INI values and restart the affected game/image; existing active mounts are not changed immediately. |
 
 To inspect the log, open:

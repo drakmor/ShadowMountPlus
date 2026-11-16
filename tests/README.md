@@ -4,6 +4,7 @@ Host regression tests (Linux/WSL; no console connection):
 python3 tools/test_runtime_config.py --sanitize
 python3 tools/test_shellcore.py --sanitize
 python3 tools/test_scan_permissions.py
+python3 tools/test_exec_permissions.py
 python3 tools/test_shellcore_launch.py --sanitize
 python3 tools/test_sandbox_cleanup.py
 ```
@@ -19,3 +20,6 @@ If ASan cannot initialize under WSL, prefix either Python command with
 
 The scan permission test checks inaccessible roots and descendants in watcher
 discovery while keeping content scans and real I/O failures strict.
+
+The exec permission test checks that game executables gain only their missing
+execute bits, and that directories and symlink targets are left unchanged.
