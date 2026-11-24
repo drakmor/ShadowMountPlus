@@ -6,8 +6,6 @@ static const char *const g_uk_ua[SM_L10N_COUNT] = {
     /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor і спільнота\nКерування: http://%s:%u",
-    /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
-    [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: параметр recursive_scan=1 застарів; використовується scan_depth=2.",
     /* English: ShadowMount+: scan depth %u enabled. */
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: увімкнено глибину сканування %u.",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */

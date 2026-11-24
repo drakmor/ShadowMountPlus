@@ -70,7 +70,8 @@ int main(void) {
   }
 
   for (int slot = 0; slot <= 8; ++slot) {
-    char root[sizeof("/mnt/usb0")], child[MAX_PATH];
+    /* Sized for any int so GCC's -Wformat-truncation stays quiet under sanitizers. */
+    char root[sizeof("/mnt/usb-2147483648")], child[MAX_PATH];
     if (slot == 8)
       strlcpy(root, "/mnt/ext0", sizeof(root));
     else

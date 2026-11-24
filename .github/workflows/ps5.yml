@@ -17,6 +17,38 @@ permissions:
   contents: read
 
 jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Payload
+        uses: actions/checkout@v4
+
+      - name: Install host test dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libjson-c-dev pkg-config python3
+
+      - name: Verify localization catalogs
+        run: python3 tools/verify_l10n.py
+
+      - name: Runtime config and config watch tests
+        run: python3 tools/test_runtime_config.py --sanitize
+
+      - name: ShellCore ptrace and hook tests
+        run: python3 tools/test_shellcore.py --sanitize
+
+      - name: ShellCore launch ownership tests
+        run: python3 tools/test_shellcore_launch.py --sanitize
+
+      - name: Storage path classification tests
+        run: python3 tools/test_storage_paths.py --sanitize
+
+      - name: Scan permission tests
+        run: python3 tools/test_scan_permissions.py
+
+      - name: Sandbox cleanup tests
+        run: python3 tools/test_sandbox_cleanup.py
+
   build:
     outputs:
       archive_name: ${{ steps.package.outputs.archive_name }}
@@ -182,7 +214,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [host-tests, build]
     permissions:
       contents: write
     if: startsWith(github.ref, 'refs/tags/')

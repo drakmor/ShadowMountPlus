@@ -6,8 +6,6 @@ static const char *const g_ko_kr[SM_L10N_COUNT] = {
     /* English: ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u */
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor 및 커뮤니티\n관리: http://%s:%u",
-    /* English: ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2. */
-    [SM_L10N_RECURSIVE_SCAN_DEPRECATED] = "ShadowMount+: recursive_scan=1은 더 이상 권장되지 않으며 scan_depth=2를 사용합니다.",
     /* English: ShadowMount+: scan depth %u enabled. */
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: 스캔 깊이 %u 활성화됨.",
     /* English: Backport overlay failed: %s\n%s\n0x%08X */
