@@ -3,8 +3,6 @@ static const char *const g_en_us[SM_L10N_COUNT] = {
     [SM_L10N_STARTUP] = "ShadowMount+ v%s\n© Drakmor and Community",
     [SM_L10N_STARTUP_WEB] =
         "ShadowMount+ v%s\n© Drakmor and Community\nControl: http://%s:%u",
-    [SM_L10N_RECURSIVE_SCAN_DEPRECATED] =
-        "ShadowMount+: recursive_scan=1 is deprecated, using scan_depth=2.",
     [SM_L10N_SCAN_DEPTH_ENABLED] = "ShadowMount+: scan depth %u enabled.",
     [SM_L10N_BACKPORT_OVERLAY_FAILED] =
         "Backport overlay failed: %s\n%s\n0x%08X",
