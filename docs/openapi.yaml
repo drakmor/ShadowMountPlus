@@ -1887,6 +1887,9 @@ components:
         auto_update_ampr:
           type: boolean
           description: Download libSceAmpr.sprx updates from the configured GitHub release URL. Omission preserves the current value for compatibility with older web clients.
+        auto_update_dlc_emu:
+          type: boolean
+          description: Download the dlc_emu files from the latest GitHub release into emulators_path. Omission preserves the current value for compatibility with older web clients.
         auto_remove_missing_games:
           type: boolean
           description: Remove app registrations whose source remains unavailable. Omission preserves the current value for compatibility with older web clients.

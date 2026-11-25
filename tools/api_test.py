@@ -374,6 +374,7 @@ def test_settings_and_log(client: ApiClient) -> None:
         "quiet_mode",
         "update_emulators",
         "auto_update_ampr",
+        "auto_update_dlc_emu",
         "auto_remove_missing_games",
     ):
         require(type(settings.get(key)) is bool, f"settings {key} must be boolean")

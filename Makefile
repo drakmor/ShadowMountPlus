@@ -8,7 +8,7 @@ BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 HOMEBREW_ROOT := $(PS5_PAYLOAD_SDK)/target/user/homebrew
 JSON_C_PREFIX := $(CURDIR)/.deps/json-c
 JSON_C_LIB := $(JSON_C_PREFIX)/lib/libjson-c.a
-JSON_C_OBJS := src/sm_api_service.o src/sm_appdb.o src/sm_gameinfo.o src/sm_pkg.o src/sm_config_file.o
+JSON_C_OBJS := src/sm_api_service.o src/sm_appdb.o src/sm_gameinfo.o src/sm_pkg.o src/sm_config_file.o src/sm_ampr_updater.o
 HOMEBREW_CFLAGS := -I$(JSON_C_PREFIX)/include -I$(HOMEBREW_ROOT)/include
 MHD_LIB := $(HOMEBREW_ROOT)/lib/libmicrohttpd.a
 PNG_LIB := $(HOMEBREW_ROOT)/lib/libpng16.a
@@ -75,7 +75,7 @@ src/shell_icon_param_asset.c: assets/shell_icon_param.json
 	xxd -i $< > $@
 
 src/sm_api_service.o src/sm_icon_thumb.o src/sm_gameinfo.o src/sm_pkg.o: CFLAGS += $(HOMEBREW_CFLAGS)
-src/sm_smb.o src/sm_vfs.o: CFLAGS += $(HOMEBREW_CFLAGS)
+src/sm_smb.o src/sm_vfs.o src/sm_ampr_updater.o: CFLAGS += $(HOMEBREW_CFLAGS)
 src/main.o src/sm_image_index.o: CFLAGS += -DSHADOWMOUNT_BUILD_TIME=\"$(BUILD_TIME)\"
 src/main.o src/sm_image_index.o: FORCE
 

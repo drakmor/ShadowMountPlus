@@ -57,7 +57,7 @@ device.
 | `/api/v1/smb` | `{"action":"list"}` | List, save, remove or check named SMB2/SMB3 connections |
 | `/api/v1/sources/delete` | `{"path":"smb://NAS/Game.pkg","confirm":true}` | Start asynchronous deletion of a permitted folder, image or PKG |
 | `/api/v1/files/mkdir` | `{"path":"smb://NAS","name":"New folder"}` | Create one directory beneath an existing local or SMB parent; return its full path |
-| `/api/v1/settings/update` | `{"debug":true,"quiet_mode":false,"update_emulators":true,"fakelib_default_mode":"full","auto_update_ampr":false,"auto_remove_missing_games":false,"auto_remove_missing_delay_seconds":300,"allow_lan_access":true,"fan_target_temperature":0,"scan_paths":["/mnt/usb0/games"]}` | Update the API-managed part of `config.ini` |
+| `/api/v1/settings/update` | `{"debug":true,"quiet_mode":false,"update_emulators":true,"fakelib_default_mode":"full","auto_update_ampr":false,"auto_update_dlc_emu":false,"auto_remove_missing_games":false,"auto_remove_missing_delay_seconds":300,"allow_lan_access":true,"fan_target_temperature":0,"scan_paths":["/mnt/usb0/games"]}` | Update the API-managed part of `config.ini` |
 | `/api/v1/debug-log` | `{"max_bytes":131072}` | Read a bounded tail of `debug.log` |
 | `/api/v1/kernel-log` | `{"max_bytes":131072}` | Read a bounded tail of the kernel log |
 | `/api/v1/games` | `{"include_size":false}` | Detailed game snapshot; optional physical source-size calculation |
@@ -442,7 +442,8 @@ trailing-slash normalization as the scanner; comments and empty lines are not
 included. A missing `manual.lst` is reported as an empty list.
 
 The settings update owns only `debug`, `quiet_mode`, `update_emulators`,
-`fakelib_default_mode`, `auto_update_ampr`, `auto_remove_missing_games`,
+`fakelib_default_mode`, `auto_update_ampr`, `auto_update_dlc_emu`,
+`auto_remove_missing_games`,
 `auto_remove_missing_delay_seconds`,
 `api_bind_address`, `fan_target_temperature`, and repeated `scanpath` keys. The
 `allow_lan_access` field maps to `0.0.0.0` when enabled and `127.0.0.1` when

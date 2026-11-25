@@ -280,7 +280,7 @@ static void test_editing(void) {
   assert(sm_config_set_title_global_fakelib_excluded("PPSA13197", false));
   assert(get_fakelib_mode_for_title("PPSA13197") == SM_FAKELIB_FULL);
   assert(!is_global_fakelib_excluded_for_title("PPSA13197"));
-  assert(sm_config_write_web_settings(false, true, true, false, false, 300,
+  assert(sm_config_write_web_settings(false, true, true, false, false, false, 300,
       true, 0, NULL, 0, SM_FAKELIB_FULL));
   data = get_file(CONFIG_FILE);
   assert(strstr(data, "# keep main comment") && strstr(data, "# debug comment") &&
@@ -330,7 +330,7 @@ static void *settings_writer(void *arg) {
   sm_smb_connection_t connection = {.name="NAS", .path="smb://server/games", .active=true};
   for (unsigned i = 0; i < 8; ++i) {
     if (kind == 0)
-      assert(sm_config_write_web_settings(i & 1, false, true, false, false, 300,
+      assert(sm_config_write_web_settings(i & 1, false, true, false, false, false, 300,
           true, 0, NULL, 0, SM_FAKELIB_FULL));
     else if (kind == 1)
       assert(sm_config_set_title_fakelib_mode("PPSA13197", SM_FAKELIB_EMULATORS));

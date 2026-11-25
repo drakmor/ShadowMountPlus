@@ -74,11 +74,17 @@ version = 2
 
 [emulators]
 # Replace matching cached game fakelib files from path; excludes fakelib2 and PKGs.
+# With dlc_emu.ini at the game or backport root, also add the dlc_emu files from
+# path when the game's fakelib has none of them (PKGs included, not fakelib2).
 # update_enabled = on
 # path = /data/shadowmount/emus
 # Check for AMPR 30 seconds after startup, then every four hours; defer during games.
 # auto_update_ampr = off
 # ampr_update_url = https://github.com/drakmor/ampr_emu/releases/latest/download/libSceAmpr.sprx
+# Download the dlc_emu files (nolog build) from the latest GitHub release into path,
+# on the same schedule as AMPR.
+# auto_update_dlc_emu = off
+# dlc_emu_update_url = https://api.github.com/repos/drakmor/dlc_emu/releases/latest
 
 [fan]
 # system: keep the system target; 50..91: apply a temperature target at game launch.

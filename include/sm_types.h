@@ -155,11 +155,13 @@ typedef struct runtime_config {
   bool global_fakelib_game_priority;
   bool update_emulators_enabled;
   bool auto_update_ampr_enabled;
+  bool auto_update_dlc_emu_enabled;
   char api_bind_address[MAX_API_BIND_ADDRESS];
   uint32_t api_port;
   char global_fakelib_path[MAX_PATH];
   char emulators_path[MAX_PATH];
   char ampr_update_url[MAX_PATH];
+  char dlc_emu_update_url[MAX_PATH];
   sm_fakelib_mode_t fakelib_default_mode;
   uint32_t fakelib_rule_count;
   sm_fakelib_rule_t fakelib_rules[MAX_FAKELIB_EXCLUDE_RULES];

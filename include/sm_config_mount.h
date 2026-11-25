@@ -25,6 +25,7 @@ bool reload_runtime_config_if_changed(bool *reloaded_out);
 bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   bool update_emulators_enabled,
                                   bool auto_update_ampr_enabled,
+                                  bool auto_update_dlc_emu_enabled,
                                   bool auto_remove_missing_games,
                                   uint32_t auto_remove_missing_delay_seconds,
                                   bool allow_lan_access,
