@@ -30,10 +30,13 @@
 #define FAKELIB_CACHE_PACKAGE (1u << 3)
 #define FAKELIB_CACHE_EXCLUSIVE (1u << 4)
 #define FAKELIB_CACHE_FILTERED (1u << 5)
+#define FAKELIB_CACHE_DLC_EMU (1u << 6)
 #define FAKELIB_CACHE_FLAG_MASK                                               \
   (FAKELIB_CACHE_HAS_GLOBAL | FAKELIB_CACHE_GLOBAL_PRIORITY | \
    FAKELIB_CACHE_EMULATORS_ONLY | FAKELIB_CACHE_PACKAGE | \
-   FAKELIB_CACHE_EXCLUSIVE | FAKELIB_CACHE_FILTERED)
+   FAKELIB_CACHE_EXCLUSIVE | FAKELIB_CACHE_FILTERED | FAKELIB_CACHE_DLC_EMU)
+// dlc_emu's files lead fakelib_emulator_names.
+#define DLC_EMU_FILE_COUNT 3u
 
 typedef struct {
   // An empty source records a created parent directory without a mount.
@@ -1075,6 +1078,110 @@ static bool compute_emulator_files_signature(
   return ok;
 }
 
+// dlc_emu reads /app0/dlc_emu.ini; a backport root may supply it as well.
+static bool title_requests_dlc_emu(const char *title_id, const char *game_root,
+                                   bool include_backport) {
+  char backport_path[MAX_PATH] = {0};
+  if (include_backport)
+    (void)resolve_backport_path_for_title(title_id, NULL, backport_path);
+  const char *roots[] = {game_root, backport_path};
+  for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); ++i) {
+    if (!roots[i] || roots[i][0] == '\0')
+      continue;
+    char path[MAX_PATH];
+    int written = snprintf(path, sizeof(path), "%s/dlc_emu.ini", roots[i]);
+    struct stat st;
+    if (written > 0 && (size_t)written < sizeof(path) &&
+        stat(path, &st) == 0 && S_ISREG(st.st_mode))
+      return true;
+  }
+  return false;
+}
+
+// All or nothing: a fakelib with any dlc_emu file keeps its own set.
+static int dlc_emu_needed(const char *title_id,
+                          const fakelib_cache_context_t *context,
+                          const char *emulators_path) {
+  for (size_t i = 0; i < DLC_EMU_FILE_COUNT; ++i) {
+    int game = directory_entry_exists(
+        context->game_path[0] ? context->game_path : NULL,
+        fakelib_emulator_names[i]);
+    int global = directory_entry_exists(
+        context->flags & FAKELIB_CACHE_HAS_GLOBAL ? context->global_path : NULL,
+        fakelib_emulator_names[i]);
+    if (game < 0 || global < 0)
+      return -1;
+    if (game || global) {
+      log_debug("  [FAKELIB] dlc_emu.ini for %s: fakelib has its own %s",
+                title_id, fakelib_emulator_names[i]);
+      return 0;
+    }
+  }
+  for (size_t i = 0; i < DLC_EMU_FILE_COUNT; ++i) {
+    char path[MAX_PATH];
+    int written = snprintf(path, sizeof(path), "%s/%s", emulators_path,
+                           fakelib_emulator_names[i]);
+    struct stat st;
+    if (written <= 0 || (size_t)written >= sizeof(path) ||
+        stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+      log_debug("  [FAKELIB] dlc_emu.ini for %s: missing %s", title_id,
+                path);
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static bool add_dlc_emu_signature(fakelib_cache_context_t *context) {
+  for (size_t i = 0; i < DLC_EMU_FILE_COUNT; ++i) {
+    char path[MAX_PATH];
+    int written = snprintf(path, sizeof(path), "%s/%s",
+                           context->emulators_path, fakelib_emulator_names[i]);
+    if (written <= 0 || (size_t)written >= sizeof(path)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    struct stat st;
+    if (stat(path, &st) != 0)
+      return false;
+    if (!S_ISREG(st.st_mode)) {
+      errno = ENOENT;
+      return false;
+    }
+    cache_signature_add(&context->emulator_files_signature,
+                        fakelib_emulator_names[i], &st);
+    context->emulator_file_count++;
+  }
+  return true;
+}
+
+static bool copy_dlc_emu_files_to_cache(const char *emulators_path,
+                                        const char *cache_fakelib_path) {
+  for (size_t i = 0; i < DLC_EMU_FILE_COUNT; ++i) {
+    char source[MAX_PATH];
+    char target[MAX_PATH];
+    int source_len = snprintf(source, sizeof(source), "%s/%s", emulators_path,
+                              fakelib_emulator_names[i]);
+    int target_len = snprintf(target, sizeof(target), "%s/%s",
+                              cache_fakelib_path, fakelib_emulator_names[i]);
+    if (source_len <= 0 || (size_t)source_len >= sizeof(source) ||
+        target_len <= 0 || (size_t)target_len >= sizeof(target)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    if (copy_file_with_mode(source, target, 0777) != 0)
+      return false;
+  }
+  return true;
+}
+
+// The replace pass updates files the game ships; PKGs keep their own.
+static bool cache_context_replaces_emulators(
+    const fakelib_cache_context_t *context) {
+  return context->emulators_path[0] != '\0' && context->game_path[0] != '\0' &&
+         !(context->flags & FAKELIB_CACHE_PACKAGE);
+}
+
 static bool cache_signatures_equal(const fakelib_cache_signature_t *a,
                                    const fakelib_cache_signature_t *b) {
   return a->xor_hash == b->xor_hash && a->sum_hash == b->sum_hash &&
@@ -1220,7 +1327,9 @@ static bool read_cache_manifest(const char *cache_root,
     bool has_global = manifest->flags & FAKELIB_CACHE_HAS_GLOBAL;
     ok = (manifest->flags & ~FAKELIB_CACHE_FLAG_MASK) == 0 &&
          (!(manifest->flags & FAKELIB_CACHE_GLOBAL_PRIORITY) || has_global) &&
-         manifest->game_path[0] == '/' &&
+         (manifest->game_path[0] == '/' ||
+          (manifest->game_path[0] == '\0' &&
+           (manifest->flags & FAKELIB_CACHE_DLC_EMU))) &&
          (has_global ? manifest->global_path[0] == '/'
                      : manifest->global_path[0] == '\0') &&
          (has_global || manifest->emulator_file_count > 0 ||
@@ -1472,7 +1581,7 @@ void sm_fakelib_cleanup_caches(void) {
 
 static bool init_cache_context(const char *title_id, const char *game_path,
                                bool allow_emulator_updates,
-                               bool exclusive,
+                               bool exclusive, bool dlc_emu_requested,
                                fakelib_cache_context_t *context,
                                const runtime_config_t *cfg) {
   memset(context, 0, sizeof(*context));
@@ -1497,20 +1606,33 @@ static bool init_cache_context(const char *title_id, const char *game_path,
   } else {
     context->global_path[0] = '\0';
   }
-  int game_kernel = directory_entry_exists(game_path, "libkernel.sprx");
+  int game_kernel = directory_entry_exists(
+      game_path[0] ? game_path : NULL, "libkernel.sprx");
   int global_kernel = directory_entry_exists(
       context->global_path[0] ? context->global_path : NULL, "libkernel.sprx");
   if (game_kernel < 0 || global_kernel < 0)
     return false;
   if (game_kernel || global_kernel)
     context->flags |= FAKELIB_CACHE_FILTERED;
+  if (dlc_emu_requested && !exclusive && cfg->update_emulators_enabled) {
+    int needed = dlc_emu_needed(title_id, context, cfg->emulators_path);
+    if (needed < 0)
+      return false;
+    if (needed) {
+      context->flags |= FAKELIB_CACHE_DLC_EMU;
+      (void)strlcpy(context->emulators_path, cfg->emulators_path,
+                    sizeof(context->emulators_path));
+    }
+  }
   return true;
 }
 
 static bool compute_cache_context_signatures(
     fakelib_cache_context_t *context) {
-  if (!compute_fakelib_signature(context->game_path, context->flags,
-                                &context->game_signature)) {
+  memset(&context->game_signature, 0, sizeof(context->game_signature));
+  if (context->game_path[0] != '\0' &&
+      !compute_fakelib_signature(context->game_path, context->flags,
+                                 &context->game_signature)) {
     return false;
   }
   if ((context->flags & FAKELIB_CACHE_HAS_GLOBAL) &&
@@ -1518,7 +1640,11 @@ static bool compute_cache_context_signatures(
                                 &context->global_signature)) {
     return false;
   }
-  if (context->emulators_path[0] != '\0' &&
+  memset(&context->emulator_files_signature, 0,
+         sizeof(context->emulator_files_signature));
+  context->emulator_file_count = 0;
+  // The replace pass resets the signature, so dlc_emu files are added after it.
+  if (cache_context_replaces_emulators(context) &&
       !compute_emulator_files_signature(
           context->emulators_path, context->game_path,
           context->flags & FAKELIB_CACHE_GLOBAL_PRIORITY
@@ -1529,7 +1655,8 @@ static bool compute_cache_context_signatures(
           &context->emulator_file_count)) {
     return false;
   }
-  return true;
+  return !(context->flags & FAKELIB_CACHE_DLC_EMU) ||
+         add_dlc_emu_signature(context);
 }
 
 static bool cache_context_requires_cache(
@@ -1657,24 +1784,33 @@ static bool rebuild_fakelib_cache(
                               ? context->global_path
                               : context->game_path;
   bool built = written > 0 && (size_t)written < sizeof(temp_fakelib) &&
-               copy_fakelib_source(base_path, temp_fakelib, context->flags);
+               (base_path[0] != '\0'
+                    ? copy_fakelib_source(base_path, temp_fakelib,
+                                          context->flags)
+                    : mkdir(temp_fakelib, 0777) == 0);
   if (built && has_global && !global_priority) {
     built = copy_fakelib_source(context->game_path, temp_fakelib, context->flags);
   }
   size_t copied_emulator_files = 0;
-  if (built && context->emulator_file_count > 0) {
+  if (built && context->emulator_file_count > 0 &&
+      cache_context_replaces_emulators(context)) {
     built = copy_emulator_files_to_cache(context->emulators_path,
                                          context->game_path,
                                          global_priority
                                              ? context->global_path
                                              : NULL,
                                          temp_fakelib, context->flags,
-                                         &copied_emulator_files) &&
-            copied_emulator_files == context->emulator_file_count;
+                                         &copied_emulator_files);
   }
   if (built && has_global && global_priority) {
     built = copy_fakelib_source(context->global_path, temp_fakelib, context->flags);
   }
+  bool dlc_emu = context->flags & FAKELIB_CACHE_DLC_EMU;
+  if (built && dlc_emu) {
+    built = copy_dlc_emu_files_to_cache(context->emulators_path, temp_fakelib);
+    copied_emulator_files += DLC_EMU_FILE_COUNT;
+  }
+  built = built && copied_emulator_files == context->emulator_file_count;
 
   fakelib_cache_context_t current = *context;
   if (built) {
@@ -1725,10 +1861,10 @@ static bool rebuild_fakelib_cache(
   }
 
   log_debug("  [FAKELIB] cache updated for %s: game=%s global=%s "
-            "emulator_files=%u",
-            title_id, context->game_path,
+            "emulator_files=%u dlc_emu=%s",
+            title_id, context->game_path[0] ? context->game_path : "none",
             has_global ? context->global_path : "none",
-            (unsigned)context->emulator_file_count);
+            (unsigned)context->emulator_file_count, dlc_emu ? "yes" : "no");
   return true;
 }
 
@@ -1742,12 +1878,15 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
       sm_config_title_fakelib_mode(cfg, title_id) == SM_FAKELIB_DISABLED)
     return;
 
+  bool dlc_emu = title_requests_dlc_emu(title_id, game_path, include_backport);
   char game_source_path[MAX_PATH];
   fakelib_source_kind_t source_kind = resolve_game_fakelib_source_for_path(
       title_id, game_path, include_backport, game_source_path, NULL);
   bool exclusive = source_kind == FAKELIB_SOURCE_FAKELIB2;
+  // Without any fakelib, dlc_emu alone may still need a cache.
   if (source_kind == FAKELIB_SOURCE_NONE &&
-      !resolve_global_fakelib_source(title_id, game_source_path, cfg)) {
+      !resolve_global_fakelib_source(title_id, game_source_path, cfg) &&
+      !dlc_emu) {
     remove_title_cache(title_id);
     return;
   }
@@ -1758,7 +1897,7 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
     return;
   }
   if (allow_emulator_updates && !is_under_image_mount_base(game_path)) {
-    if (!remove_fakelib_kernel(game_source_path))
+    if (game_source_path[0] && !remove_fakelib_kernel(game_source_path))
       return;
     char global_path[MAX_PATH];
     if (!exclusive && resolve_global_fakelib_source(title_id, global_path, cfg) &&
@@ -1767,7 +1906,7 @@ static void prepare_title_cache(const char *title_id, const char *game_path,
   }
   fakelib_cache_context_t context;
   if (!init_cache_context(title_id, game_source_path, allow_emulator_updates,
-                          exclusive, &context, cfg))
+                          exclusive, dlc_emu, &context, cfg))
     return;
   if (!compute_cache_context_signatures(&context)) {
     log_debug("  [FAKELIB] cache fingerprint failed for %s", title_id);
@@ -1821,7 +1960,8 @@ static bool resolve_cached_fakelib_locked(
     const char *title_id, const char *game_path, bool allow_emulator_updates,
     char cache_path[MAX_PATH],
     size_t *emulator_file_count_out, bool *includes_global_out,
-    bool exclusive, bool *required_out, const runtime_config_t *cfg) {
+    bool exclusive, bool dlc_emu, bool *required_out,
+    const runtime_config_t *cfg) {
   *emulator_file_count_out = 0;
   *includes_global_out = false;
   *required_out = true;
@@ -1830,7 +1970,7 @@ static bool resolve_cached_fakelib_locked(
 
   fakelib_cache_context_t context;
   if (!init_cache_context(title_id, game_path, allow_emulator_updates,
-                          exclusive, &context, cfg))
+                          exclusive, dlc_emu, &context, cfg))
     return false;
   *required_out = (context.flags & FAKELIB_CACHE_FILTERED) != 0;
 
@@ -1867,13 +2007,14 @@ static bool resolve_cached_fakelib(const char *title_id,
                                     char cache_path[MAX_PATH],
                                     size_t *emulator_file_count_out,
                                     bool *includes_global_out,
-                                    bool exclusive, bool *required_out,
+                                    bool exclusive, bool dlc_emu,
+                                    bool *required_out,
                                     const runtime_config_t *cfg) {
   pthread_mutex_lock(&g_fakelib_cache_mutex);
   bool resolved = resolve_cached_fakelib_locked(
       title_id, game_path, allow_emulator_updates, cache_path,
       emulator_file_count_out,
-      includes_global_out, exclusive, required_out, cfg);
+      includes_global_out, exclusive, dlc_emu, required_out, cfg);
   pthread_mutex_unlock(&g_fakelib_cache_mutex);
   return resolved;
 }
@@ -2180,6 +2321,8 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
       has_global && has_game &&
       strcmp(global_source_path, game_source_path) != 0;
   bool has_source = has_game || has_global;
+  bool dlc_emu = fakelib_enabled && allows_composition &&
+                 title_requests_dlc_emu(title_id, game_path, true);
   const char *original_source_path =
       has_game ? game_source_path : global_source_path;
   const char *source_path = original_source_path;
@@ -2187,13 +2330,15 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
   bool cache_resolved = false;
   bool cache_includes_global = false;
   char cache_path[MAX_PATH];
-  if (has_source) {
+  if (has_source || dlc_emu) {
     bool required = false;
     cache_resolved = resolve_cached_fakelib(
         title_id, original_source_path,
         managed_title, cache_path,
-        &emulator_file_count, &cache_includes_global, !allows_composition, &required, &cfg);
+        &emulator_file_count, &cache_includes_global, !allows_composition,
+        dlc_emu, &required, &cfg);
     if (cache_resolved) {
+      has_source = true;
       source_path = cache_path;
       log_debug("  [FAKELIB] using cache for %s: %s", title_id,
                 cache_path);
@@ -2253,7 +2398,8 @@ static bool mount_fakelib_for_game_locked(pid_t pid, const char *title_id,
                 sizeof(g_fakelib_mount.mount_path));
   const char *label = !allows_composition
                           ? "fakelib2"
-                          : (has_game ? "game" : "global");
+                          : (has_game ? "game"
+                                      : (has_global ? "global" : "emulators"));
   if ((has_source && !track_sandbox_layer(title_id, source_path, mount_path,
                                         label, true, 0)) ||
       !ensure_sandbox_parent(sandbox_app0_path, "/mnt") ||

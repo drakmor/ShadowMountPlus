@@ -12,6 +12,8 @@
 #define DEFAULT_AMPR_UPDATE_URL                                             \
   "https://github.com/drakmor/ampr_emu/releases/latest/download/"         \
   "libSceAmpr.sprx"
+#define DEFAULT_DLC_EMU_UPDATE_URL                                          \
+  "https://api.github.com/repos/drakmor/dlc_emu/releases/latest"
 #define FAKELIB_CACHE_PATH "/data/shadowmount/cache"
 #define ICON_CACHE_DIR "/data/shadowmount/icon-cache"
 #define LOG_DIR "/data/shadowmount"

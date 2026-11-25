@@ -996,6 +996,7 @@
                 <p class="subtle console-hint" data-i18n="fakelibNextLaunch">Changes apply on the next game launch.</p>
                 <label class="check console-setting"><span data-i18n="updateFakelibEmulators">Update game fakelib emulators</span><input id="updateEmulators" form="settingsForm" type="checkbox" role="switch"></label>
                 <label class="check console-setting"><span data-i18n="autoUpdateAmpr">Update AMPR emulator from GitHub</span><input id="autoUpdateAmpr" form="settingsForm" type="checkbox" role="switch"></label>
+                <label class="check console-setting"><span data-i18n="autoUpdateDlcEmu">Update dlc_emu from GitHub</span><input id="autoUpdateDlcEmu" form="settingsForm" type="checkbox" role="switch"></label>
               </div>
               <div class="panel"><h3 data-i18n="consoleMaintenance">Library maintenance</h3>
                 <label class="check console-setting"><span data-i18n="autoRemoveMissingGames">Remove unavailable app icons</span><input id="autoRemoveMissingGames" form="settingsForm" type="checkbox" role="switch"></label>
@@ -1410,6 +1411,7 @@
           quietMode: "Quiet mode",
           updateFakelibEmulators: "Update game fakelib emulators",
           autoUpdateAmpr: "Update AMPR emulator from GitHub",
+          autoUpdateDlcEmu: "Update dlc_emu from GitHub",
           autoRemoveMissingGames: "Remove unavailable app icons",
           autoRemoveDelay: "Removal delay (seconds)",
           allowLanAccess: "Allow local network access",
@@ -1715,6 +1717,7 @@
           quietMode: "Тихий режим",
           updateFakelibEmulators: "Обновлять эмуляторы в папке fakelib игр",
           autoUpdateAmpr: "Обновлять эмулятор AMPR с GitHub",
+          autoUpdateDlcEmu: "Обновлять dlc_emu с GitHub",
           autoRemoveMissingGames: "Удалять иконки недоступных приложений",
           autoRemoveDelay: "Задержка удаления (секунды)",
           allowLanAccess: "Разрешить доступ из локальной сети",
@@ -1920,7 +1923,7 @@
         if (values.length !== translationKeys.length) throw new Error(`Invalid translation catalog: ${locale}`);
         translations[locale] = Object.fromEntries(translationKeys.map((key, index) => [key, values[index]]));
       }
-      const extendedTranslationKeys = ["changeFakelibMode","consoleTools","consoleSections","consoleOverview","consoleSystem","consoleSources","consoleLogs","consoleOverviewHint","consoleSystemHint","consoleNotifications","consoleNetwork","consoleCooling","consoleLibraryHint","consoleMounting","consoleMaintenance","consoleSourcesHint","consoleIndividualGames","consoleLogsHint","consoleKernelHint","consoleRecordLog","consoleSaveHint","back","navigate","controllerHint","confirmation","continueAction","chooseUnpackDestination","deleteAfterUnpack","selectAction","saveDataSize","downloadSize","saveDataSizeHint","detailSizes","sourceSize","patchSize","dlcSize","systemSize","sourceSizeHint","patchSizeHint","dlcSizeHint","systemSizeHint","copyToClipboard","logCopied","clipboardUnavailable","remountConfirm","chooseCopyDestination","noOtherDestinations","chooseMoveDestination","destinationDescription","customDestination","useDestination","totalSize","packagesTab","packagesHint","packageDevices","packageRemote","packageRemoteHint","packageChooseFile","packageStream","packageEmpty","packageInvalid","packageInstall","packageConfirm","packageBase","packageTruncated","operationInstall","jobInstalling","packageStreamLost","packageInstallError","packageBaseMissing","packageInstalled","packageUpdate","packageNoBase","packageEnqueue","packageQueued","packageQueue","packageQueueStart","packageQueueClear","packageQueueFull","packageReplace","browse","installBackport","replaceBackport","backport","unknownGame","deleteBackport","deleteBackportConfirm","baseVersionBeforePatch","noDlc","deletePatch","deleteDlc","deletePatchConfirm","deleteDlcConfirm","patchBadge","smbConnections","smbDescription","smbName","smbPath","smbUsername","smbPassword","smbActive","smbClearPassword","smbPasswordHint","smbSave","smbCheck","smbNew","smbEdit","smbRemove","smbRemoveConfirm","smbChecked","smbSavedOk","sourceDeleteConfirm","sourceDeleteBlocked","newFolder","folderName","createFolder","folderCreated","invalidFolderName","smbInvalid","smbEnabled","smbDisabled","smbEmpty","ejectStorage","ejectStorageConfirm","ejectedStorage","usbDiskBusy","usbEjectUnconfirmed","usbEjectFailed","usbMountChanged","usbMountBusy","usbPartitionBusy","usbImageBusy","smbGuestAccess","smbReadOnly","remainingTime"];
+      const extendedTranslationKeys = ["changeFakelibMode","consoleTools","consoleSections","consoleOverview","consoleSystem","consoleSources","consoleLogs","consoleOverviewHint","consoleSystemHint","consoleNotifications","consoleNetwork","consoleCooling","consoleLibraryHint","consoleMounting","consoleMaintenance","consoleSourcesHint","consoleIndividualGames","consoleLogsHint","consoleKernelHint","consoleRecordLog","consoleSaveHint","back","navigate","controllerHint","confirmation","continueAction","chooseUnpackDestination","deleteAfterUnpack","selectAction","saveDataSize","downloadSize","saveDataSizeHint","detailSizes","sourceSize","patchSize","dlcSize","systemSize","sourceSizeHint","patchSizeHint","dlcSizeHint","systemSizeHint","copyToClipboard","logCopied","clipboardUnavailable","remountConfirm","chooseCopyDestination","noOtherDestinations","chooseMoveDestination","destinationDescription","customDestination","useDestination","totalSize","packagesTab","packagesHint","packageDevices","packageRemote","packageRemoteHint","packageChooseFile","packageStream","packageEmpty","packageInvalid","packageInstall","packageConfirm","packageBase","packageTruncated","operationInstall","jobInstalling","packageStreamLost","packageInstallError","packageBaseMissing","packageInstalled","packageUpdate","packageNoBase","packageEnqueue","packageQueued","packageQueue","packageQueueStart","packageQueueClear","packageQueueFull","packageReplace","browse","installBackport","replaceBackport","backport","unknownGame","deleteBackport","deleteBackportConfirm","baseVersionBeforePatch","noDlc","deletePatch","deleteDlc","deletePatchConfirm","deleteDlcConfirm","patchBadge","smbConnections","smbDescription","smbName","smbPath","smbUsername","smbPassword","smbActive","smbClearPassword","smbPasswordHint","smbSave","smbCheck","smbNew","smbEdit","smbRemove","smbRemoveConfirm","smbChecked","smbSavedOk","sourceDeleteConfirm","sourceDeleteBlocked","newFolder","folderName","createFolder","folderCreated","invalidFolderName","smbInvalid","smbEnabled","smbDisabled","smbEmpty","ejectStorage","ejectStorageConfirm","ejectedStorage","usbDiskBusy","usbEjectUnconfirmed","usbEjectFailed","usbMountChanged","usbMountBusy","usbPartitionBusy","usbImageBusy","smbGuestAccess","smbReadOnly","remainingTime","autoUpdateDlcEmu"];
       const extendedTranslationCatalogs = {
         "ja-JP": [
           "選択してモードを切り替え", "本体", "本体の設定項目", "概要",
@@ -1963,7 +1966,8 @@
           "このドライブを使用するマウントがあります:\n{path}\n関連するゲームをアンマウントするかアプリを閉じて再試行してください。", "このドライブの別のパーティションがマウントされています:\n{path}\nそのパーティションをアンマウントして再試行してください。", "このドライブ上のイメージが接続されています:\n{path}\nライブラリーでそのゲームをアンマウントして再試行してください。",
           "ゲストアクセス",
           "読み取り専用",
-          "残り時間"
+          "残り時間",
+          "GitHub から dlc_emu エミュレータを更新する"
         ],
         "fr-FR": [
           "Sélectionner pour changer de mode", "Console", "Rubriques de la console", "Vue d’ensemble",
@@ -2006,7 +2010,8 @@
           "Un montage utilise ce disque :\n{path}\nDémontez le jeu associé ou fermez l’application, puis réessayez.", "Une autre partition de ce disque est montée :\n{path}\nDémontez cette partition, puis réessayez.", "Une image de ce disque est attachée :\n{path}\nDémontez son jeu dans la bibliothèque, puis réessayez.",
           "Accès invité",
           "Lecture seule",
-          "Temps restant"
+          "Temps restant",
+          "Mettre à jour l'émulateur dlc_emu depuis GitHub"
         ],
         "es-ES": [
           "Selecciona para cambiar de modo", "Consola", "Secciones de la consola", "Resumen",
@@ -2049,7 +2054,8 @@
           "Un montaje está usando este disco:\n{path}\nDesmonta el juego asociado o cierra la aplicación y vuelve a intentarlo.", "Otra partición de este disco está montada:\n{path}\nDesmonta esa partición y vuelve a intentarlo.", "Hay una imagen conectada desde este disco:\n{path}\nDesmonta su juego en la biblioteca y vuelve a intentarlo.",
           "Acceso de invitado",
           "Solo lectura",
-          "Tiempo restante"
+          "Tiempo restante",
+          "Actualizar el emulador dlc_emu desde GitHub"
         ],
         "de-DE": [
           "Auswählen, um den Modus zu wechseln", "Konsole", "Konsolenbereiche", "Übersicht",
@@ -2092,7 +2098,8 @@
           "Eine Einbindung verwendet dieses Laufwerk:\n{path}\nHänge das zugehörige Spiel aus oder schließe die Anwendung und versuche es erneut.", "Eine andere Partition dieses Laufwerks ist eingebunden:\n{path}\nHänge diese Partition aus und versuche es erneut.", "Ein Abbild auf diesem Laufwerk ist verbunden:\n{path}\nHänge sein Spiel in der Bibliothek aus und versuche es erneut.",
           "Gastzugriff",
           "Nur lesen",
-          "Verbleibend"
+          "Verbleibend",
+          "Aktualisieren Sie den dlc_emu-Emulator von GitHub"
         ],
         "it-IT": [
           "Seleziona per cambiare modalità", "Console", "Sezioni della console", "Panoramica",
@@ -2135,7 +2142,8 @@
           "Un montaggio utilizza questo disco:\n{path}\nSmonta il gioco associato o chiudi l’applicazione e riprova.", "Un’altra partizione di questo disco è montata:\n{path}\nSmonta quella partizione e riprova.", "Un’immagine su questo disco è collegata:\n{path}\nSmonta il suo gioco nella libreria e riprova.",
           "Accesso ospite",
           "Sola lettura",
-          "Tempo rimanente"
+          "Tempo rimanente",
+          "Aggiorna l'emulatore dlc_emu da GitHub"
         ],
         "nl-NL": [
           "Selecteer om van modus te wisselen", "Console", "Consoleonderdelen", "Overzicht",
@@ -2178,7 +2186,8 @@
           "Een koppeling gebruikt deze schijf:\n{path}\nOntkoppel de bijbehorende game of sluit de toepassing en probeer opnieuw.", "Een andere partitie van deze schijf is gekoppeld:\n{path}\nOntkoppel die partitie en probeer opnieuw.", "Een image op deze schijf is aangesloten:\n{path}\nOntkoppel de game in de bibliotheek en probeer opnieuw.",
           "Gasttoegang",
           "Alleen-lezen",
-          "Resterend"
+          "Resterend",
+          "Update de dlc_emu-emulator vanuit GitHub"
         ],
         "pt-PT": [
           "Selecionar para mudar de modo", "Consola", "Secções da consola", "Visão geral",
@@ -2221,7 +2230,8 @@
           "Uma montagem está a utilizar este disco:\n{path}\nDesmonte o jogo associado ou feche a aplicação e tente novamente.", "Outra partição deste disco está montada:\n{path}\nDesmonte essa partição e tente novamente.", "Uma imagem deste disco está ligada:\n{path}\nDesmonte o respetivo jogo na biblioteca e tente novamente.",
           "Acesso de convidado",
           "Só de leitura",
-          "Tempo restante"
+          "Tempo restante",
+          "Atualize o emulador dlc_emu do GitHub"
         ],
         "ko-KR": [
           "선택하여 모드 전환", "콘솔", "콘솔 메뉴", "개요",
@@ -2264,7 +2274,8 @@
           "다음 마운트가 드라이브를 사용 중입니다:\n{path}\n관련 게임을 마운트 해제하거나 앱을 닫은 후 다시 시도하세요.", "이 드라이브의 다른 파티션이 마운트되어 있습니다:\n{path}\n해당 파티션을 마운트 해제한 후 다시 시도하세요.", "이 드라이브의 이미지가 연결되어 있습니다:\n{path}\n라이브러리에서 해당 게임을 마운트 해제한 후 다시 시도하세요.",
           "게스트 액세스",
           "읽기 전용",
-          "남은 시간"
+          "남은 시간",
+          "GitHub에서 dlc_emu 에뮬레이터 업데이트"
         ],
         "zh-TW": [
           "選取以切換模式", "主機", "主機選單", "概覽",
@@ -2307,7 +2318,8 @@
           "以下掛載正在使用此磁碟：\n{path}\n請卸載相關遊戲或關閉應用程式後重試。", "此磁碟的另一個分割區已掛載：\n{path}\n請卸載該分割區後重試。", "此磁碟上有已連接的映像檔：\n{path}\n請在遊戲庫中卸載對應遊戲後重試。",
           "訪客存取",
           "唯讀",
-          "剩餘時間"
+          "剩餘時間",
+          "從 GitHub 更新 dlc_emu 模擬器"
         ],
         "zh-CN": [
           "选择以切换模式", "主机", "主机菜单", "概览",
@@ -2350,7 +2362,8 @@
           "以下挂载正在使用此磁盘：\n{path}\n请卸载相关游戏或关闭应用后重试。", "此磁盘的另一个分区已挂载：\n{path}\n请卸载该分区后重试。", "此磁盘上有已连接的镜像：\n{path}\n请在游戏库中卸载对应游戏后重试。",
           "访客访问",
           "只读",
-          "剩余时间"
+          "剩余时间",
+          "从 GitHub 更新 dlc_emu 模拟器"
         ],
         "fi-FI": [
           "Vaihda tilaa valitsemalla", "Konsoli", "Konsolin osiot", "Yleiskatsaus",
@@ -2393,7 +2406,8 @@
           "Liitos käyttää tätä levyä:\n{path}\nIrrota siihen liittyvä peli tai sulje sovellus ja yritä uudelleen.", "Tämän levyn toinen osio on liitetty:\n{path}\nIrrota kyseinen osio ja yritä uudelleen.", "Tämän levyn levykuva on liitetty:\n{path}\nIrrota sen peli kirjastossa ja yritä uudelleen.",
           "Vieraskäyttö",
           "Vain luku",
-          "Aikaa jäljellä"
+          "Aikaa jäljellä",
+          "Päivitä dlc_emu-emulaattori GitHubista"
         ],
         "sv-SE": [
           "Välj för att byta läge", "Konsol", "Konsolavsnitt", "Översikt",
@@ -2436,7 +2450,8 @@
           "En montering använder den här enheten:\n{path}\nAvmontera det tillhörande spelet eller stäng appen och försök igen.", "En annan partition på enheten är monterad:\n{path}\nAvmontera den partitionen och försök igen.", "En avbild på enheten är ansluten:\n{path}\nAvmontera dess spel i biblioteket och försök igen.",
           "Gäståtkomst",
           "Skrivskyddad",
-          "Tid kvar"
+          "Tid kvar",
+          "Uppdatera dlc_emu-emulatorn från GitHub"
         ],
         "da-DK": [
           "Vælg for at skifte tilstand", "Konsol", "Konsolafsnit", "Oversigt",
@@ -2479,7 +2494,8 @@
           "En montering bruger dette drev:\n{path}\nAfmontér det tilknyttede spil eller luk appen, og prøv igen.", "En anden partition på dette drev er monteret:\n{path}\nAfmontér den partition, og prøv igen.", "En afbildning på drevet er tilsluttet:\n{path}\nAfmontér dens spil i biblioteket, og prøv igen.",
           "Gæsteadgang",
           "Skrivebeskyttet",
-          "Tid tilbage"
+          "Tid tilbage",
+          "Opdater dlc_emu-emulator fra GitHub"
         ],
         "no-NO": [
           "Velg for å bytte modus", "Konsoll", "Konsollseksjoner", "Oversikt",
@@ -2522,7 +2538,8 @@
           "En montering bruker denne disken:\n{path}\nAvmonter det tilknyttede spillet eller lukk appen og prøv igjen.", "En annen partisjon på disken er montert:\n{path}\nAvmonter den partisjonen og prøv igjen.", "Et diskbilde på disken er tilkoblet:\n{path}\nAvmonter spillet i biblioteket og prøv igjen.",
           "Gjestetilgang",
           "Skrivebeskyttet",
-          "Tid igjen"
+          "Tid igjen",
+          "Oppdater dlc_emu-emulator fra GitHub"
         ],
         "pl-PL": [
           "Wybierz, aby zmienić tryb", "Konsola", "Sekcje konsoli", "Przegląd",
@@ -2565,7 +2582,8 @@
           "Punkt montowania korzysta z tego dysku:\n{path}\nOdmontuj powiązaną grę lub zamknij aplikację i spróbuj ponownie.", "Inna partycja tego dysku jest zamontowana:\n{path}\nOdmontuj tę partycję i spróbuj ponownie.", "Obraz na tym dysku jest podłączony:\n{path}\nOdmontuj jego grę w bibliotece i spróbuj ponownie.",
           "Dostęp gościa",
           "Tylko do odczytu",
-          "Pozostało"
+          "Pozostało",
+          "Zaktualizuj emulator dlc_emu z GitHub"
         ],
         "pt-BR": [
           "Selecione para alternar o modo", "Console", "Seções do console", "Visão geral",
@@ -2608,7 +2626,8 @@
           "Uma montagem está usando este disco:\n{path}\nDesmonte o jogo associado ou feche o aplicativo e tente novamente.", "Outra partição deste disco está montada:\n{path}\nDesmonte essa partição e tente novamente.", "Uma imagem deste disco está montada:\n{path}\nDesmonte o jogo dela na biblioteca e tente novamente.",
           "Acesso de convidado",
           "Somente leitura",
-          "Tempo restante"
+          "Tempo restante",
+          "Atualizar o emulador dlc_emu pelo GitHub"
         ],
         "tr-TR": [
           "Mod değiştirmek için seçin", "Konsol", "Konsol bölümleri", "Genel bakış",
@@ -2651,7 +2670,8 @@
           "Bir bağlama noktası bu sürücüyü kullanıyor:\n{path}\nİlgili oyunun bağlantısını kaldırın veya uygulamayı kapatıp tekrar deneyin.", "Bu sürücünün başka bir bölümü bağlı:\n{path}\nBu bölümün bağlantısını kaldırıp tekrar deneyin.", "Bu sürücüdeki bir imaj bağlı:\n{path}\nKitaplıkta oyunun bağlantısını kaldırıp tekrar deneyin.",
           "Misafir erişimi",
           "Salt okunur",
-          "Kalan süre"
+          "Kalan süre",
+          "dlc_emu öykünücüsünü GitHub'dan güncelleyin"
         ],
         "ar-SA": [
           "اختر لتغيير الوضع", "الجهاز", "أقسام الجهاز", "نظرة عامة",
@@ -2694,7 +2714,8 @@
           "تستخدم نقطة تركيب هذا القرص:\n{path}\nألغِ تركيب اللعبة المرتبطة أو أغلق التطبيق ثم أعد المحاولة.", "يوجد قسم آخر مركّب من هذا القرص:\n{path}\nألغِ تركيب هذا القسم ثم أعد المحاولة.", "توجد صورة قرص متصلة من هذا القرص:\n{path}\nألغِ تركيب لعبتها في المكتبة ثم أعد المحاولة.",
           "وصول الضيف",
           "للقراءة فقط",
-          "الوقت المتبقي"
+          "الوقت المتبقي",
+          "تحديث محاكي dlc_emu من GitHub"
         ],
         "cs-CZ": [
           "Vyberte pro změnu režimu", "Konzole", "Sekce konzole", "Přehled",
@@ -2737,7 +2758,8 @@
           "Připojení používá tento disk:\n{path}\nOdpojte související hru nebo zavřete aplikaci a zkuste to znovu.", "Je připojen jiný oddíl tohoto disku:\n{path}\nOdpojte tento oddíl a zkuste to znovu.", "Obraz na tomto disku je připojen:\n{path}\nOdpojte jeho hru v knihovně a zkuste to znovu.",
           "Přístup hosta",
           "Pouze pro čtení",
-          "Zbývá"
+          "Zbývá",
+          "Aktualizujte emulátor dlc_emu z GitHubu"
         ],
         "hu-HU": [
           "Válaszd ki a mód váltásához", "Konzol", "Konzol szakaszai", "Áttekintés",
@@ -2780,7 +2802,8 @@
           "Egy csatolás használja ezt a meghajtót:\n{path}\nVálassza le a kapcsolódó játékot, vagy zárja be az alkalmazást, majd próbálja újra.", "A meghajtó másik partíciója csatolva van:\n{path}\nVálassza le ezt a partíciót, majd próbálja újra.", "A meghajtón lévő lemezkép csatlakoztatva van:\n{path}\nVálassza le a játékát a könyvtárban, majd próbálja újra.",
           "Vendéghozzáférés",
           "Csak olvasható",
-          "Hátralévő idő"
+          "Hátralévő idő",
+          "Frissítse a dlc_emu emulátort a GitHubról"
         ],
         "el-GR": [
           "Επιλέξτε για αλλαγή λειτουργίας", "Κονσόλα", "Ενότητες κονσόλας", "Επισκόπηση",
@@ -2823,7 +2846,8 @@
           "Μια προσάρτηση χρησιμοποιεί αυτή τη μονάδα:\n{path}\nΑποπροσαρτήστε το σχετικό παιχνίδι ή κλείστε την εφαρμογή και δοκιμάστε ξανά.", "Ένα άλλο διαμέρισμα της μονάδας είναι προσαρτημένο:\n{path}\nΑποπροσαρτήστε το διαμέρισμα και δοκιμάστε ξανά.", "Ένα είδωλο σε αυτή τη μονάδα είναι συνδεδεμένο:\n{path}\nΑποπροσαρτήστε το παιχνίδι του στη βιβλιοθήκη και δοκιμάστε ξανά.",
           "Πρόσβαση επισκέπτη",
           "Μόνο για ανάγνωση",
-          "Χρόνος που απομένει"
+          "Χρόνος που απομένει",
+          "Ενημερώστε τον εξομοιωτή dlc_emu από το GitHub"
         ],
         "ro-RO": [
           "Selectează pentru a schimba modul", "Consolă", "Secțiunile consolei", "Prezentare generală",
@@ -2866,7 +2890,8 @@
           "O montare utilizează acest disc:\n{path}\nDemontează jocul asociat sau închide aplicația și încearcă din nou.", "O altă partiție a discului este montată:\n{path}\nDemontează acea partiție și încearcă din nou.", "O imagine de pe acest disc este atașată:\n{path}\nDemontează jocul ei din bibliotecă și încearcă din nou.",
           "Acces pentru oaspeți",
           "Doar citire",
-          "Timp rămas"
+          "Timp rămas",
+          "Actualizați emulatorul dlc_emu din GitHub"
         ],
         "th-TH": [
           "เลือกเพื่อเปลี่ยนโหมด", "คอนโซล", "ส่วนต่าง ๆ ของคอนโซล", "ภาพรวม",
@@ -2909,7 +2934,8 @@
           "มีจุดเมานต์ที่ใช้ไดรฟ์นี้อยู่:\n{path}\nยกเลิกการเมานต์เกมที่เกี่ยวข้องหรือปิดแอปแล้วลองอีกครั้ง", "มีพาร์ทิชันอื่นของไดรฟ์นี้เมานต์อยู่:\n{path}\nยกเลิกการเมานต์พาร์ทิชันนั้นแล้วลองอีกครั้ง", "มีอิมเมจจากไดรฟ์นี้เชื่อมต่ออยู่:\n{path}\nยกเลิกการเมานต์เกมนั้นในคลังแล้วลองอีกครั้ง",
           "การเข้าถึงแบบผู้เยี่ยมชม",
           "อ่านอย่างเดียว",
-          "เวลาที่เหลือ"
+          "เวลาที่เหลือ",
+          "อัปเดตโปรแกรมจำลอง dlc_emu จาก GitHub"
         ],
         "vi-VN": [
           "Chọn để chuyển chế độ", "Máy chơi game", "Các mục của máy chơi game", "Tổng quan",
@@ -2952,7 +2978,8 @@
           "Một điểm gắn đang dùng ổ đĩa này:\n{path}\nTháo gắn trò chơi liên quan hoặc đóng ứng dụng rồi thử lại.", "Một phân vùng khác của ổ đĩa này đang được gắn:\n{path}\nTháo gắn phân vùng đó rồi thử lại.", "Một ảnh đĩa trên ổ đĩa này đang được kết nối:\n{path}\nTháo gắn trò chơi của ảnh đĩa trong thư viện rồi thử lại.",
           "Truy cập khách",
           "Chỉ đọc",
-          "Thời gian còn lại"
+          "Thời gian còn lại",
+          "Cập nhật trình giả lập dlc_emu từ GitHub"
         ],
         "id-ID": [
           "Pilih untuk mengganti mode", "Konsol", "Bagian konsol", "Ringkasan",
@@ -2995,7 +3022,8 @@
           "Sebuah mount menggunakan drive ini:\n{path}\nLepaskan mount game terkait atau tutup aplikasinya, lalu coba lagi.", "Partisi lain pada drive ini terpasang:\n{path}\nLepaskan partisi tersebut, lalu coba lagi.", "Image pada drive ini terhubung:\n{path}\nLepaskan mount game-nya di pustaka, lalu coba lagi.",
           "Akses tamu",
           "Hanya baca",
-          "Waktu tersisa"
+          "Waktu tersisa",
+          "Perbarui emulator dlc_emu dari GitHub"
         ],
         "uk-UA": [
           "Натисніть, щоб змінити режим", "Приставка", "Розділи приставки", "Огляд",
@@ -3038,7 +3066,8 @@
           "Диск використовується точкою монтування:\n{path}\nВідмонтуйте пов’язану гру або закрийте застосунок і повторіть спробу.", "Змонтовано інший розділ цього диска:\n{path}\nВідмонтуйте цей розділ і повторіть спробу.", "З диска підключено образ:\n{path}\nВідмонтуйте його гру в бібліотеці та повторіть спробу.",
           "Гостьовий доступ",
           "Лише читання",
-          "Залишилося"
+          "Залишилося",
+          "Оновіть емулятор dlc_emu з GitHub"
         ],
       };
       for (const [locale, values] of Object.entries(extendedTranslationCatalogs)) {
@@ -3960,6 +3989,7 @@
           $("updateEmulators").checked = Boolean(settings.update_emulators);
           $("fakelibDefaultMode").value = settings.fakelib_default_mode || "full";
           $("autoUpdateAmpr").checked = Boolean(settings.auto_update_ampr);
+          $("autoUpdateDlcEmu").checked = Boolean(settings.auto_update_dlc_emu);
           $("autoRemoveMissingGames").checked = Boolean(settings.auto_remove_missing_games);
           $("autoRemoveMissingDelay").value = String(settings.auto_remove_missing_delay_seconds || 300);
           syncAutoRemoveControls();
@@ -4012,6 +4042,7 @@
             update_emulators: $("updateEmulators").checked,
             fakelib_default_mode: $("fakelibDefaultMode").value,
             auto_update_ampr: $("autoUpdateAmpr").checked,
+            auto_update_dlc_emu: $("autoUpdateDlcEmu").checked,
             auto_remove_missing_games: $("autoRemoveMissingGames").checked,
             auto_remove_missing_delay_seconds: Number($("autoRemoveMissingDelay").value),
             allow_lan_access: $("allowLanAccess").checked,

@@ -182,6 +182,7 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
   state->cfg.global_fakelib_game_priority = true;
   state->cfg.update_emulators_enabled = true;
   state->cfg.auto_update_ampr_enabled = false;
+  state->cfg.auto_update_dlc_emu_enabled = false;
   (void)strlcpy(state->cfg.api_bind_address, SM_API_DEFAULT_BIND_ADDRESS,
                 sizeof(state->cfg.api_bind_address));
   state->cfg.api_port = SM_API_DEFAULT_PORT;
@@ -191,6 +192,8 @@ static void init_runtime_config_defaults(runtime_config_state_t *state) {
                 sizeof(state->cfg.emulators_path));
   (void)strlcpy(state->cfg.ampr_update_url, DEFAULT_AMPR_UPDATE_URL,
                 sizeof(state->cfg.ampr_update_url));
+  (void)strlcpy(state->cfg.dlc_emu_update_url, DEFAULT_DLC_EMU_UPDATE_URL,
+                sizeof(state->cfg.dlc_emu_update_url));
   state->cfg.scan_depth = DEFAULT_SCAN_DEPTH;
   state->cfg.scan_interval_us = DEFAULT_SCAN_INTERVAL_US;
   state->cfg.stability_wait_seconds = DEFAULT_STABILITY_WAIT_SECONDS;
@@ -1229,6 +1232,30 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
       continue;
     }
 
+    if (strcasecmp(key, "auto_update_dlc_emu") == 0) {
+      if (!parse_bool_ini(value, &bval)) {
+        invalid = true;
+        log_debug("  [CFG] invalid bool at line %d: %s=%s", line_no, key, value);
+        continue;
+      }
+      state->cfg.auto_update_dlc_emu_enabled = bval;
+      continue;
+    }
+
+    if (strcasecmp(key, "dlc_emu_update_url") == 0) {
+      char url[MAX_PATH];
+      if (!normalize_http_url_value(value, url)) {
+        invalid = true;
+        log_debug("  [CFG] invalid dlc_emu update URL at line %d: %s=%s "
+                  "(HTTP or HTTPS required)",
+                  line_no, key, value);
+        continue;
+      }
+      (void)strlcpy(state->cfg.dlc_emu_update_url, url,
+                    sizeof(state->cfg.dlc_emu_update_url));
+      continue;
+    }
+
     if (strcasecmp(key, "fan_target_temperature") == 0) {
       if (strcasecmp(value, "system") == 0 ||
           strcasecmp(value, "auto") == 0) {
@@ -1402,7 +1429,7 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
             "global_fakelib=%d global_fakelib_priority=%s "
             "global_fakelib_path=%s global_fakelib_exclude=%u "
             "update_emulators=%d emulators_path=%s auto_update_ampr=%d "
-            "ampr_update_url=%s "
+            "ampr_update_url=%s auto_update_dlc_emu=%d dlc_emu_update_url=%s "
             "fan_target_temperature=%u (0=system) "
             "exfat_backend=%s ufs_backend=%s "
             "nested_pfs_index_cache=%d "
@@ -1432,6 +1459,8 @@ static config_load_status_t parse_runtime_config_state(runtime_config_state_t *s
             state->cfg.emulators_path,
             state->cfg.auto_update_ampr_enabled ? 1 : 0,
             state->cfg.ampr_update_url,
+            state->cfg.auto_update_dlc_emu_enabled ? 1 : 0,
+            state->cfg.dlc_emu_update_url,
             state->cfg.fan_target_temperature_c,
             attach_backend_name(state->cfg.exfat_backend),
             attach_backend_name(state->cfg.ufs_backend),
@@ -1657,6 +1686,7 @@ bool sm_config_set_title_fakelib_enabled(const char *title_id, bool enabled) {
 bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
                                   bool update_emulators_enabled,
                                   bool auto_update_ampr_enabled,
+                                  bool auto_update_dlc_emu_enabled,
                                   bool auto_remove_missing_games,
                                   uint32_t auto_remove_missing_delay_seconds,
                                   bool allow_lan_access,
@@ -1720,6 +1750,7 @@ bool sm_config_write_web_settings(bool debug_enabled, bool quiet_mode,
       sm_ini_set(&main, "general", "quiet_mode", quiet_mode ? "on" : "off") &&
       sm_ini_set(&main, "emulators", "update_enabled", update_emulators_enabled ? "on" : "off") &&
       sm_ini_set(&main, "emulators", "auto_update_ampr", auto_update_ampr_enabled ? "on" : "off") &&
+      sm_ini_set(&main, "emulators", "auto_update_dlc_emu", auto_update_dlc_emu_enabled ? "on" : "off") &&
       sm_ini_set(&main, "fakelib", "default_mode", sm_config_fakelib_mode_name(fakelib_default_mode)) &&
       sm_ini_set(&main, "library", "remove_missing", auto_remove_missing_games ? "on" : "off") &&
       sm_ini_set(&main, "library", "remove_delay_seconds", delay) &&

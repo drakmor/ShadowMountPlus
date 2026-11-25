@@ -293,6 +293,8 @@ You can also use a `backports/` directory under a configured scan root. Backport
 
 For compatible titles, fakelib can be controlled globally or per game. In the web interface, select **Default**, **Full**, **Emulators only**, or **Disabled** from the game's fakelib settings. Global fakelib defaults to `/data/shadowmount/fakelib`; the emulator library directory defaults to `/data/shadowmount/emus`.
 
+When a game has `dlc_emu.ini` at its root or at its backport root and its fakelib has none of the [dlc_emu](https://github.com/drakmor/dlc_emu) files (`libSceAppContent.sprx`, `libSceNpEntitlementAccess.sprx`, `libSceGameUpdate.sprx`), ShadowMountPlus adds all three from the emulator library directory to that game's fakelib cache. This needs `[emulators] update_enabled` and all three files in that directory; installed PKGs are included, `fakelib2` is not. Nothing is added to a fakelib that already has any of these files. With `update_enabled`, a game that is not an installed PKG gets those copies replaced from the emulator library directory like any other emulator file; an installed PKG keeps its own. With `[emulators] auto_update_dlc_emu = on` (off by default), ShadowMountPlus downloads these files from the latest dlc_emu GitHub release into the emulator library directory, on the same schedule as AMPR updates.
+
 Optional AMPR auto-update is controlled by `[emulators] auto_update_ampr` and is **off by default**. You may enable it when you want automatic update checks rather than managing the library manually.
 
 > [!IMPORTANT]
